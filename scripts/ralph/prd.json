@@ -192,8 +192,8 @@
         "Tests pass"
       ],
       "priority": 14,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added URL normalization and title similarity (Levenshtein) helpers. Integrated semantic deduplication into runParseAgent against current batch. Added tests."
     },
     {
       "id": "US-015",

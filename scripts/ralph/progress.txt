@@ -158,3 +158,15 @@ Feature: Приведение проекта в соответствие с ТЗ
   - Pure functions in agents should be exported for unit tests.
   - franc-min can misclassify very short snippets; use longer representative text in tests.
 ---
+
+## 2026-06-24 09:11 - US-014
+- Added normalizeUrl(), levenshteinDistance(), titleSimilarity() helpers.
+- Integrated semantic deduplication into runParseAgent current batch processing.
+- Duplicates detected by normalized URL match or title similarity >= 0.85.
+- Added unit tests for normalizeUrl and titleSimilarity.
+- Files changed: app/api/agent/parseAgent.ts, app/api/agent/parseAgent.test.ts.
+- Quality checks: npm run check ✅, npm run lint ✅, npm test ✅ (49 passed).
+- **Learnings for future iterations:**
+  - Deduplication against current batch prevents same article from multiple sources being inserted twice.
+  - Levenshtein similarity is simple and effective for title deduplication.
+---

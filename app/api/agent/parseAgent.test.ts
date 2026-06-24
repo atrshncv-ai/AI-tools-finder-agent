@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { containsAiKeywords, detectLanguage, makeDecisions } from "./parseAgent";
+import {
+  containsAiKeywords,
+  detectLanguage,
+  makeDecisions,
+  normalizeUrl,
+  titleSimilarity,
+} from "./parseAgent";
 import * as state from "./state";
 
 describe("parseAgent", () => {
@@ -31,7 +37,9 @@ describe("parseAgent", () => {
     });
 
     it("detects English", () => {
-      expect(detectLanguage("Scientists develop new artificial intelligence model for medical diagnosis")).toBe("en");
+      expect(
+        detectLanguage("Scientists develop new artificial intelligence model for medical diagnosis")
+      ).toBe("en");
     });
 
     it("detects German", () => {
@@ -41,6 +49,36 @@ describe("parseAgent", () => {
     it("returns unknown for short or empty text", () => {
       expect(detectLanguage("")).toBe("unknown");
       expect(detectLanguage("Hi")).toBe("unknown");
+    });
+  });
+
+  describe("normalizeUrl", () => {
+    it("removes tracking parameters", () => {
+      expect(normalizeUrl("https://example.com/article?utm_source=google")).toBe("example.com/article");
+    });
+
+    it("handles trailing slashes and www", () => {
+      expect(normalizeUrl("https://www.example.com/article/")).toBe("example.com/article");
+    });
+
+    it("is case-insensitive", () => {
+      expect(normalizeUrl("https://Example.COM/Article")).toBe("example.com/article");
+    });
+  });
+
+  describe("titleSimilarity", () => {
+    it("returns 1 for identical titles", () => {
+      expect(titleSimilarity("AI breakthrough", "AI breakthrough")).toBe(1);
+    });
+
+    it("returns high similarity for small typos", () => {
+      expect(
+        titleSimilarity("AI breakthrough announced", "AI breakthrough announce")
+      ).toBeGreaterThan(0.85);
+    });
+
+    it("returns low similarity for different titles", () => {
+      expect(titleSimilarity("AI breakthrough", "Football match results")).toBeLessThan(0.5);
     });
   });
 

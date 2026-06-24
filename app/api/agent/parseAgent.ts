@@ -60,6 +60,53 @@ export function detectLanguage(text: string): string {
   }
 }
 
+export function normalizeUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    // Remove common tracking params
+    ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "fbclid", "gclid", "ref"].forEach((param) => {
+      u.searchParams.delete(param);
+    });
+    let normalized = `${u.origin}${u.pathname}`.toLowerCase();
+    normalized = normalized.replace(/\/$/, ""); // trailing slash
+    normalized = normalized.replace(/^https?:\/\/(www\.)?/, ""); // www
+    return normalized;
+  } catch {
+    return url.toLowerCase().trim();
+  }
+}
+
+function levenshteinDistance(a: string, b: string): number {
+  const matrix: number[][] = [];
+  for (let i = 0; i <= b.length; i++) {
+    matrix[i] = [i];
+  }
+  for (let j = 0; j <= a.length; j++) {
+    matrix[0][j] = j;
+  }
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      matrix[i][j] =
+        b[i - 1] === a[j - 1]
+          ? matrix[i - 1][j - 1]
+          : Math.min(matrix[i - 1][j - 1] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j] + 1);
+    }
+  }
+  return matrix[b.length][a.length];
+}
+
+export function titleSimilarity(a: string, b: string): number {
+  const cleanA = a.toLowerCase().trim();
+  const cleanB = b.toLowerCase().trim();
+  if (cleanA === cleanB) return 1;
+  const maxLen = Math.max(cleanA.length, cleanB.length);
+  if (maxLen === 0) return 1;
+  const distance = levenshteinDistance(cleanA, cleanB);
+  return 1 - distance / maxLen;
+}
+
+const SIMILARITY_THRESHOLD = 0.85;
+
 const domainLastRequest = new Map<string, number>();
 
 async function throttleRequest(url: string): Promise<void> {
@@ -347,6 +394,7 @@ export async function runParseAgent(): Promise<ParseResult[]> {
 
     const decisions = makeDecisions(allSources);
     logger.info("Parse Agent: decisions made", { count: decisions.length });
+    const seenBatch: { title: string; url: string }[] = [];
 
     for (const decision of decisions) {
       const source = allSources.find((s) => s.id === decision.sourceId);
@@ -371,8 +419,21 @@ export async function runParseAgent(): Promise<ParseResult[]> {
 
         let newCount = 0;
         for (const article of unique) {
+          const normalizedUrl = normalizeUrl(article.url);
           const existing = await db.select().from(news).where(eq(news.originalUrl, article.url)).limit(1);
-          if (existing.length === 0) {
+          if (existing.length > 0) continue;
+
+          // Semantic deduplication against current batch
+          const isDuplicateInBatch = seenBatch.some(
+            (seen) =>
+              normalizeUrl(seen.url) === normalizedUrl ||
+              titleSimilarity(seen.title, article.title) >= SIMILARITY_THRESHOLD
+          );
+          if (isDuplicateInBatch) continue;
+
+          seenBatch.push({ title: article.title, url: article.url });
+
+          {
             newCount++;
             const pubDate = article.pubDate ? new Date(article.pubDate) : new Date();
             const classification = classifyArticle(article.title, article.description);
