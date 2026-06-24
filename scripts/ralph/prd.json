@@ -151,8 +151,8 @@
         "Nginx config syntax valid (nginx -t)"
       ],
       "priority": 11,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Replaced __DOMAIN__ placeholder with $DOMAIN in nginx/conf.d/default.conf so envsubst in deploy.sh works correctly."
     },
     {
       "id": "US-012",

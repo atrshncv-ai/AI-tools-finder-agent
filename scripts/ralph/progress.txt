@@ -128,3 +128,12 @@ Feature: Приведение проекта в соответствие с ТЗ
   - Token versioning is simpler than a blocklist table and provides global logout.
   - Always protect tokenVersion from being overwritten by upsertUser.
 ---
+
+## 2026-06-24 09:05 - US-011
+- Replaced __DOMAIN__ placeholders with $DOMAIN in nginx/conf.d/default.conf.
+- deploy.sh envsubst '$DOMAIN' now correctly substitutes the domain.
+- Files changed: nginx/conf.d/default.conf.
+- Quality checks: npm run check ✅, npm run lint ✅, npm test ✅ (32 passed).
+- **Learnings for future iterations:**
+  - envsubst replaces $VAR syntax, not __VAR__ placeholders. Use consistent templating.
+---
