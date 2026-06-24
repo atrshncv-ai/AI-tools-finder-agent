@@ -29,16 +29,12 @@ services:
       dockerfile: Dockerfile
     container_name: science_agent_app
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/science_agent
-      APP_ID: ${APP_ID}
-      APP_SECRET: ${APP_SECRET}
-      KIMI_AUTH_URL: ${KIMI_AUTH_URL}
-      KIMI_OPEN_URL: ${KIMI_OPEN_URL}
-      LM_STUDIO_URL: http://host.docker.internal:1234
-      LM_STUDIO_MODEL: ${LM_STUDIO_MODEL:-google/gemma-4-12b-qat}
-      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      # All other env vars are loaded from .env via env_file
     depends_on:
       postgres:
         condition: service_healthy

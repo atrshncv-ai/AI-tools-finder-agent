@@ -137,3 +137,13 @@ Feature: Приведение проекта в соответствие с ТЗ
 - **Learnings for future iterations:**
   - envsubst replaces $VAR syntax, not __VAR__ placeholders. Use consistent templating.
 ---
+
+## 2026-06-24 09:06 - US-012
+- app service in docker-compose.yml now uses env_file: .env to forward all environment variables.
+- Removed explicit env var duplication and hardcoded host.docker.internal LM_STUDIO_URL.
+- DATABASE_URL remains explicitly constructed from POSTGRES_PASSWORD.
+- Files changed: docker-compose.yml.
+- Quality checks: npm run check ✅, npm run lint ✅, npm test ✅ (32 passed).
+- **Learnings for future iterations:**
+  - env_file is the most maintainable way to pass environment variables in Docker Compose.
+---

@@ -165,8 +165,8 @@
         "docker-compose config is valid (docker compose config)"
       ],
       "priority": 12,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "App service now uses env_file: .env to load all environment variables. Removed hardcoded LM_STUDIO_URL. CORS_ORIGIN default already safe (localhost:3000)."
     },
     {
       "id": "US-013",
