@@ -34,3 +34,14 @@ Feature: Приведение проекта в соответствие с ТЗ
   - rawChatCompletion applies post-processing globally; any text-extraction must be opt-in per call.
   - Translation and detailed summaries need full multi-paragraph output.
 ---
+
+## 2026-06-24 08:51 - US-003
+- Replaced Bing/python-based translation with local LLM via translateArticle() from app/api/ai/client.
+- Removed translateViaBing(), translateTitleViaBing(), splitIntoChunks(), and child_process import.
+- Title and full text translated in parallel per article; Russian articles still copied as-is.
+- Files changed: app/api/agent/translateAgent.ts.
+- Quality checks: npm run check ✅, npm run lint ✅, npm test ✅ (32 passed).
+- **Learnings for future iterations:**
+  - Batch translation now shares the same LM Studio client config, retries, concurrency, and token limits as summarization.
+  - Keep DELAY_BETWEEN_ARTICLES_MS to avoid overwhelming the local LLM server.
+---

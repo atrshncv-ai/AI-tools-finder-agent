@@ -41,8 +41,8 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Replaced Bing/python translators with translateArticle() from ai/client. Removed translateViaBing, translateTitleViaBing, splitIntoChunks. Token and concurrency limits now handled by ai/client."
     },
     {
       "id": "US-004",
