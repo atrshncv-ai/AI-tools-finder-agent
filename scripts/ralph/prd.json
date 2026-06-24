@@ -27,8 +27,8 @@
         "Tests pass"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Made extractFirstParagraph optional via extractParagraph option in rawChatCompletion/chatCompletion. Short summary keeps extraction; detailed summary and translation return full text."
     },
     {
       "id": "US-003",

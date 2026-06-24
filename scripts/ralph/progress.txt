@@ -23,3 +23,14 @@ Feature: Приведение проекта в соответствие с ТЗ
   - Several pre-existing typecheck/lint errors blocked all stories; fixed as baseline hygiene.
   - Filesystem path for project directory uses decomposed Unicode for "Й" in "НАУЧНЫЙ" — use relative paths in Shell to avoid issues.
 ---
+
+## 2026-06-24 08:49 - US-002
+- Made extractFirstParagraph optional via extractParagraph option in rawChatCompletion/chatCompletion.
+- Short summary keeps first-paragraph extraction (3-5 sentences).
+- Detailed summary and translation now return full text (extractParagraph: false).
+- Files changed: app/api/ai/client.ts.
+- Quality checks: npm run check ✅, npm run lint ✅, npm test ✅ (32 passed).
+- **Learnings for future iterations:**
+  - rawChatCompletion applies post-processing globally; any text-extraction must be opt-in per call.
+  - Translation and detailed summaries need full multi-paragraph output.
+---

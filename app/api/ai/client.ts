@@ -68,9 +68,10 @@ async function rawChatCompletion(
     temperature?: number;
     max_tokens?: number;
     model?: string;
+    extractParagraph?: boolean;
   } = {}
 ): Promise<string> {
-  const { temperature = 0.3, max_tokens = 2048, model = DEFAULT_MODEL } = options;
+  const { temperature = 0.3, max_tokens = 2048, model = DEFAULT_MODEL, extractParagraph = true } = options;
 
   const systemMsg = messages.find((m) => m.role === "system");
   const userMsg = messages.find((m) => m.role === "user");
@@ -97,7 +98,7 @@ async function rawChatCompletion(
 
   const data = (await response.json()) as CompletionResponse;
   const text = data.choices[0]?.text?.trim() || "";
-  return extractFirstParagraph(text);
+  return extractParagraph ? extractFirstParagraph(text) : text;
 }
 
 export async function chatCompletion(
@@ -109,6 +110,7 @@ export async function chatCompletion(
     retries?: number;
     timeoutMs?: number;
     retryDelayMs?: number;
+    extractParagraph?: boolean;
   } = {}
 ): Promise<string> {
   const {
@@ -166,7 +168,7 @@ export async function summarizeArticle(
   ];
 
   const summary = await chatCompletion(summaryPrompt, { temperature: 0.3, max_tokens: SUMMARY_MAX_TOKENS });
-  const detailedSummary = await chatCompletion(detailedPrompt, { temperature: 0.3, max_tokens: DETAILED_MAX_TOKENS });
+  const detailedSummary = await chatCompletion(detailedPrompt, { temperature: 0.3, max_tokens: DETAILED_MAX_TOKENS, extractParagraph: false });
 
   return { summary, detailedSummary };
 }
@@ -191,7 +193,7 @@ export async function translateArticle(
     },
   ];
 
-  return chatCompletion(prompt, { temperature: 0.3, max_tokens: TRANSLATION_MAX_TOKENS });
+  return chatCompletion(prompt, { temperature: 0.3, max_tokens: TRANSLATION_MAX_TOKENS, extractParagraph: false });
 }
 
 export async function checkLmStudioConnection(): Promise<boolean> {
