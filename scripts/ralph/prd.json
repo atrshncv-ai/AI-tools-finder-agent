@@ -96,8 +96,8 @@
         "Typecheck passes"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Applied maxArticles slicing to RSS, Google News, and API results in parseSource."
     },
     {
       "id": "US-008",

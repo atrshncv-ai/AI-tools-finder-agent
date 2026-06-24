@@ -84,3 +84,12 @@ Feature: Приведение проекта в соответствие с ТЗ
   - franc-min is lightweight and pure JS; no native bindings needed.
   - Short snippets (< 20 chars) are unreliable for detection.
 ---
+
+## 2026-06-24 08:58 - US-007
+- Applied maxArticles limit to RSS, Google News, and API source results in parseSource().
+- HTML path already sliced; now all source types respect per-source article limit.
+- Files changed: app/api/agent/parseAgent.ts.
+- Quality checks: npm run check ✅, npm run lint ✅, npm test ✅ (32 passed).
+- **Learnings for future iterations:**
+  - parseSource() is the right place to enforce maxArticles uniformly.
+---

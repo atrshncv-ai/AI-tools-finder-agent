@@ -257,15 +257,15 @@ async function parseSource(
   const config = source.config as Record<string, unknown> | null;
 
   if (source.type === "rss" && config?.feedUrl) {
-    return fetchRssFeed(config.feedUrl as string);
+    return (await fetchRssFeed(config.feedUrl as string)).slice(0, maxArticles);
   }
 
   if (source.type === "google_news" && config?.feedUrl) {
-    return fetchRssFeed(config.feedUrl as string);
+    return (await fetchRssFeed(config.feedUrl as string)).slice(0, maxArticles);
   }
 
   if (source.type === "api") {
-    return fetchApiArticles(source);
+    return (await fetchApiArticles(source)).slice(0, maxArticles);
   }
 
   if (source.type === "html") {
