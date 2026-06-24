@@ -103,3 +103,15 @@ Feature: Приведение проекта в соответствие с ТЗ
 - **Learnings for future iterations:**
   - Google News RSS links redirect through news.google.com; resolving them is required for correct originalUrl.
 ---
+
+## 2026-06-24 09:02 - US-009
+- Added createOAuthLoginHandler() in app/api/kimi/auth.ts.
+- Generates cryptographically random state via randomBytes(32).toString("base64url").
+- Stores state and redirect URI in short-lived httpOnly cookies.
+- Updated callback to validate state and use stored redirect URI; removed atob(state).
+- Added /api/oauth/login route in app/api/boot.ts.
+- Files changed: app/api/kimi/auth.ts, app/contracts/constants.ts, app/api/boot.ts.
+- Quality checks: npm run check ✅, npm run lint ✅, npm test ✅ (32 passed).
+- **Learnings for future iterations:**
+  - OAuth state must be random and server-side validated; never trust client-provided state or encode sensitive data in it.
+---

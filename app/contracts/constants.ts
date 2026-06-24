@@ -10,5 +10,6 @@ export const ErrorMessages = {
 
 export const Paths = {
   login: "/login",
+  oauthLogin: "/api/oauth/login",
   oauthCallback: "/api/oauth/callback",
 } as const;

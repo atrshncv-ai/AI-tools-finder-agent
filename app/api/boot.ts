@@ -5,7 +5,7 @@ import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { appRouter } from "./router";
 import { createContext } from "./context";
 import { env } from "./lib/env";
-import { createOAuthCallbackHandler } from "./kimi/auth";
+import { createOAuthCallbackHandler, createOAuthLoginHandler } from "./kimi/auth";
 import { Paths } from "@contracts/constants";
 import { startScheduler, stopScheduler } from "./scheduler";
 import { rateLimit } from "./lib/rateLimit";
@@ -28,6 +28,7 @@ app.use("/api/trpc/*", rateLimit({
   max: 100,
 }));
 
+app.get(Paths.oauthLogin, createOAuthLoginHandler());
 app.get(Paths.oauthCallback, createOAuthCallbackHandler());
 
 app.get("/health", async (c) => {

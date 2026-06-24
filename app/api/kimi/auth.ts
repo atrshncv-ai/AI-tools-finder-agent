@@ -1,10 +1,11 @@
 import type { Context } from "hono";
-import { setCookie } from "hono/cookie";
+import { setCookie, getCookie, deleteCookie } from "hono/cookie";
+import { randomBytes } from "node:crypto";
 import * as jose from "jose";
 import * as cookie from "cookie";
 import { env } from "../lib/env";
 import { getSessionCookieOptions } from "../lib/cookies";
-import { Session } from "@contracts/constants";
+import { Session, Paths } from "@contracts/constants";
 import { Errors } from "@contracts/errors";
 import { signSessionToken, verifySessionToken } from "./session";
 import { users as kimiUsers } from "./platform";
@@ -71,6 +72,25 @@ export async function authenticateRequest(headers: Headers) {
   return user;
 }
 
+export function createOAuthLoginHandler() {
+  return async (c: Context) => {
+    const redirectUri = `${new URL(c.req.url).origin}${Paths.oauthCallback}`;
+    const state = randomBytes(32).toString("base64url");
+
+    const cookieOpts = getSessionCookieOptions(c.req.raw.headers);
+    setCookie(c, "kimi_oauth_state", state, { ...cookieOpts, maxAge: 600 });
+    setCookie(c, "kimi_oauth_redirect", redirectUri, { ...cookieOpts, maxAge: 600 });
+
+    const authUrl = new URL(`${env.kimiAuthUrl}/api/oauth/authorize`);
+    authUrl.searchParams.set("response_type", "code");
+    authUrl.searchParams.set("client_id", env.appId);
+    authUrl.searchParams.set("redirect_uri", redirectUri);
+    authUrl.searchParams.set("state", state);
+
+    return c.redirect(authUrl.toString(), 302);
+  };
+}
+
 export function createOAuthCallbackHandler() {
   return async (c: Context) => {
     const code = c.req.query("code");
@@ -92,8 +112,18 @@ export function createOAuthCallbackHandler() {
       return c.json({ error: "code and state are required" }, 400);
     }
 
+    const cookieOpts = getSessionCookieOptions(c.req.raw.headers);
+    const storedState = getCookie(c, "kimi_oauth_state");
+    const redirectUri = getCookie(c, "kimi_oauth_redirect");
+
+    if (!storedState || !redirectUri || storedState !== state) {
+      return c.json({ error: "Invalid or expired OAuth state" }, 403);
+    }
+
+    deleteCookie(c, "kimi_oauth_state", cookieOpts);
+    deleteCookie(c, "kimi_oauth_redirect", cookieOpts);
+
     try {
-      const redirectUri = atob(state);
       const tokenResp = await exchangeAuthCode(code, redirectUri);
       const { userId } = await verifyAccessToken(tokenResp.access_token);
       const userProfile = await kimiUsers.getProfile(tokenResp.access_token);

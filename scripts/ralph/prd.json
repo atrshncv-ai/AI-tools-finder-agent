@@ -124,8 +124,8 @@
         "Existing OAuth flow still works"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added createOAuthLoginHandler that generates random state and stores it in httpOnly cookie plus redirect URI cookie. Callback validates state against cookie and uses stored redirect URI."
     },
     {
       "id": "US-010",
