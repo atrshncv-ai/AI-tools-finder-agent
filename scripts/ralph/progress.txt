@@ -60,3 +60,15 @@ Feature: Приведение проекта в соответствие с ТЗ
   - Shared isRunning guard across runPipeline and runSciencePipeline prevents overlap; consider separate guards if pipelines should run concurrently.
   - Science pipeline still parses all sources but only processes isScience=true articles.
 ---
+
+## 2026-06-24 08:56 - US-005
+- Added extractPublishedAt() helper in app/api/agent/parseAgent.ts.
+- Checks common selectors: article:published_time, datePublished, pubdate, time[datetime], etc.
+- fetchHtmlPage() now returns pubDate for each article.
+- Falls back to current date when not found (existing behavior preserved).
+- Files changed: app/api/agent/parseAgent.ts.
+- Quality checks: npm run check ✅, npm run lint ✅, npm test ✅ (32 passed).
+- **Learnings for future iterations:**
+  - HTML date extraction is heuristic-based; different sites use different meta tags.
+  - Always validate parsed Date to avoid invalid dates in DB.
+---

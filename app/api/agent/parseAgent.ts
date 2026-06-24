@@ -75,7 +75,34 @@ async function fetchRssFeed(feedUrl: string): Promise<{ title: string; url: stri
   }
 }
 
-async function fetchHtmlPage(url: string, selector: string): Promise<{ title: string; url: string; description: string; imageUrl: string | null }[]> {
+function extractPublishedAt($: cheerio.CheerioAPI): string {
+  const selectors = [
+    'meta[property="article:published_time"]',
+    'meta[name="article:published_time"]',
+    'meta[property="og:article:published_time"]',
+    'meta[name="datePublished"]',
+    'meta[itemprop="datePublished"]',
+    'meta[name="pubdate"]',
+    'meta[name="PublishDate"]',
+    'time[datetime]',
+    'article time[datetime]',
+  ];
+
+  for (const selector of selectors) {
+    const el = $(selector).first();
+    const value = el.attr("content") || el.attr("datetime");
+    if (value) {
+      const parsed = new Date(value);
+      if (!isNaN(parsed.getTime())) {
+        return parsed.toISOString();
+      }
+    }
+  }
+
+  return "";
+}
+
+async function fetchHtmlPage(url: string, selector: string): Promise<{ title: string; url: string; description: string; pubDate: string; imageUrl: string | null }[]> {
   await throttleRequest(url);
   try {
     const res = await fetch(url, {
@@ -89,7 +116,7 @@ async function fetchHtmlPage(url: string, selector: string): Promise<{ title: st
     const decoder = new TextDecoder(charset === "windows-1251" ? "windows-1251" : "utf-8");
     const html = decoder.decode(buffer);
     const $ = cheerio.load(html);
-    const articles: { title: string; url: string; description: string; imageUrl: string | null }[] = [];
+    const articles: { title: string; url: string; description: string; pubDate: string; imageUrl: string | null }[] = [];
     $(selector).each((_, el) => {
       const titleEl = $(el).find("h1, h2, h3, a").first();
       const title = titleEl.text().trim();
@@ -102,7 +129,8 @@ async function fetchHtmlPage(url: string, selector: string): Promise<{ title: st
           const base = new URL(url);
           fullUrl = `${base.origin}${link.startsWith("/") ? "" : "/"}${link}`;
         }
-        articles.push({ title, url: fullUrl, description: desc, imageUrl: img });
+        const pubDate = extractPublishedAt($);
+        articles.push({ title, url: fullUrl, description: desc, pubDate, imageUrl: img });
       }
     });
     return articles;

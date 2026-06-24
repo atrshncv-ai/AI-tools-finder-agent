@@ -68,8 +68,8 @@
         "Typecheck passes"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added extractPublishedAt helper to parse common HTML meta tags and time elements. HTML parser now returns pubDate."
     },
     {
       "id": "US-006",
