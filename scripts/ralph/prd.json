@@ -110,8 +110,8 @@
         "Typecheck passes"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added fetchGoogleNews with URL resolution via redirects. Replaced Hacker News AI source with Google News AI source in seeds."
     },
     {
       "id": "US-009",

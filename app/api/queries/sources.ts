@@ -24,7 +24,7 @@ const ALL_SOURCES = [
   { name: "Analytics India Magazine", url: "https://analyticsindiamag.com/ai-technology/", type: "html", config: { selector: "h2 a, h3 a" }, enabled: true },
   { name: "AI News (Россия)", url: "https://ai-news.ru/", type: "html", config: { selector: "a[href$='.html']" }, enabled: true },
   { name: "Naked Science ИИ", url: "https://naked-science.ru/article", type: "html", config: { selector: "a[href*='/article/']" }, enabled: true },
-  { name: "Hacker News (AI)", url: "https://hn.algolia.com/", type: "html", config: { selector: ".Story_title a" }, enabled: true },
+  { name: "Google News AI", url: "https://news.google.com/search", type: "google_news", config: { feedUrl: "https://news.google.com/rss/search?q=artificial+intelligence&hl=en-US&gl=US&ceid=US:en" }, enabled: true },
 
   // ═══════════ 2. ХИМИЯ (20) ═══════════
   { name: "ArXiv chem-ph", url: "https://arxiv.org/list/chem-ph/recent", type: "rss", config: { feedUrl: "https://rss.arxiv.org/rss/chem-ph" }, enabled: true },

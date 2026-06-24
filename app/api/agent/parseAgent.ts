@@ -126,6 +126,44 @@ function extractPublishedAt($: cheerio.CheerioAPI): string {
   return "";
 }
 
+async function resolveGoogleNewsUrl(googleUrl: string): Promise<string> {
+  await throttleRequest(googleUrl);
+  try {
+    const res = await fetch(googleUrl, {
+      headers: { "User-Agent": USER_AGENT },
+      signal: AbortSignal.timeout(15000),
+      redirect: "follow",
+    });
+    const finalUrl = res.url;
+    if (finalUrl && finalUrl.startsWith("http")) {
+      return finalUrl;
+    }
+  } catch (e) {
+    logger.warn("Google News URL resolution failed", { url: googleUrl, error: String(e) });
+  }
+  return googleUrl;
+}
+
+async function fetchGoogleNews(feedUrl: string): Promise<{ title: string; url: string; description: string; pubDate: string; imageUrl: string | null }[]> {
+  await throttleRequest(feedUrl);
+  try {
+    const feed = await rssParser.parseURL(feedUrl);
+    const articles = await Promise.all(
+      feed.items.map(async (item) => ({
+        title: item.title?.trim() || "",
+        url: await resolveGoogleNewsUrl(item.link || ""),
+        description: item.contentSnippet?.trim() || item.content?.trim() || "",
+        pubDate: item.pubDate || item.isoDate || "",
+        imageUrl: item.enclosure?.url || null,
+      }))
+    );
+    return articles;
+  } catch (e) {
+    logger.error("Google News fetch error", { error: String(e) });
+    return [];
+  }
+}
+
 async function fetchHtmlPage(url: string, selector: string): Promise<{ title: string; url: string; description: string; pubDate: string; imageUrl: string | null }[]> {
   await throttleRequest(url);
   try {
@@ -261,7 +299,7 @@ async function parseSource(
   }
 
   if (source.type === "google_news" && config?.feedUrl) {
-    return (await fetchRssFeed(config.feedUrl as string)).slice(0, maxArticles);
+    return (await fetchGoogleNews(config.feedUrl as string)).slice(0, maxArticles);
   }
 
   if (source.type === "api") {

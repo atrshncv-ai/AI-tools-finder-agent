@@ -93,3 +93,13 @@ Feature: Приведение проекта в соответствие с ТЗ
 - **Learnings for future iterations:**
   - parseSource() is the right place to enforce maxArticles uniformly.
 ---
+
+## 2026-06-24 08:59 - US-008
+- Added fetchGoogleNews() and resolveGoogleNewsUrl() in app/api/agent/parseAgent.ts.
+- Google News RSS items now follow redirects to get real article URLs.
+- Replaced Hacker News (AI) source with Google News AI source in app/api/queries/sources.ts.
+- Files changed: app/api/agent/parseAgent.ts, app/api/queries/sources.ts.
+- Quality checks: npm run check ✅, npm run lint ✅, npm test ✅ (32 passed).
+- **Learnings for future iterations:**
+  - Google News RSS links redirect through news.google.com; resolving them is required for correct originalUrl.
+---
