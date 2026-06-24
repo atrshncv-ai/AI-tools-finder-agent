@@ -170,3 +170,12 @@ Feature: Приведение проекта в соответствие с ТЗ
   - Deduplication against current batch prevents same article from multiple sources being inserted twice.
   - Levenshtein similarity is simple and effective for title deduplication.
 ---
+
+## 2026-06-24 09:12 - US-015
+- Git repository was initialized during US-001; .gitignore created.
+- Added .github/workflows/ci.yml with typecheck, lint, and test jobs on push/PR to main.
+- Files changed: .github/workflows/ci.yml.
+- Quality checks: npm run check ✅, npm run lint ✅, npm test ✅ (49 passed).
+- **Learnings for future iterations:**
+  - CI must match local working directory structure (app/ subdirectory).
+---
