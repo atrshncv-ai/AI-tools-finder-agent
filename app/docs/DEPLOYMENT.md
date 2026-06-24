@@ -59,7 +59,7 @@ KIMI_OPEN_URL=https://kimi.platform/api/open
 
 # LM Studio (если запускаете на сервере)
 LM_STUDIO_URL=http://localhost:1234
-LM_STUDIO_MODEL=google/gemma-4-12b-qat
+LM_STUDIO_MODEL=google/gemma-4-e4b
 
 # CORS
 CORS_ORIGIN=https://your-domain.com
@@ -204,7 +204,7 @@ curl http://localhost:1234/v1/models
 curl -X POST http://localhost:1234/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "google/gemma-4-12b-qat",
+    "model": "google/gemma-4-e4b",
     "messages": [{"role": "user", "content": "Привет"}],
     "max_tokens": 50
   }'
@@ -257,6 +257,10 @@ docker compose exec nginx ls -la /etc/letsencrypt/live/your-domain.com/
 docker compose restart certbot
 ```
 
+### Локальный перевод
+
+Перевод полных статей выполняется локальной ONNX-моделью через Transformers.js. При первом запуске модель `LOCAL_TRANSLATE_MODEL` скачивается из Hugging Face и кешируется, дальнейшие вызовы работают офлайн.
+
 ### Проблема: LM Studio недоступен
 
 ```bash
@@ -279,9 +283,12 @@ curl http://localhost:1234/v1/models
 | `KIMI_AUTH_URL` | URL авторизации Kimi | Да |
 | `KIMI_OPEN_URL` | URL открытия Kimi | Да |
 | `LM_STUDIO_URL` | URL LM Studio сервера | Да |
-| `LM_STUDIO_MODEL` | Модель для суммаризации | Нет (default: google/gemma-4-12b-qat) |
+| `LM_STUDIO_MODEL` | Модель для суммаризации | Нет (default: google/gemma-4-e4b) |
 | `CORS_ORIGIN` | Разрешённый origin для CORS | Нет (default: *) |
 | `DOMAIN` | Домен для SSL сертификата | Нет (default: science-agent.ru) |
+| `LOCAL_TRANSLATE_MODEL` | Локальная модель перевода (Transformers.js) | Нет (default: Xenova/opus-mt-en-ru) |
+| `LOCAL_TRANSLATE_MAX_CHUNK_CHARS` | Макс. длина чанка для перевода | Нет (default: 400) |
+| `LOCAL_TRANSLATE_DEVICE` | Устройство для ONNX (`cpu`/`webgpu`) | Нет (default: cpu) |
 
 ---
 

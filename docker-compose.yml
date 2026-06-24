@@ -35,6 +35,9 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/science_agent
       # All other env vars are loaded from .env via env_file
+      LOCAL_TRANSLATE_MODEL: ${LOCAL_TRANSLATE_MODEL:-Xenova/opus-mt-en-ru}
+      LOCAL_TRANSLATE_MAX_CHUNK_CHARS: ${LOCAL_TRANSLATE_MAX_CHUNK_CHARS:-400}
+      LOCAL_TRANSLATE_DEVICE: ${LOCAL_TRANSLATE_DEVICE:-cpu}
     depends_on:
       postgres:
         condition: service_healthy
@@ -47,7 +50,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
+          memory: 2g
     networks:
       - internal
 

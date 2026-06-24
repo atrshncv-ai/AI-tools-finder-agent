@@ -14,7 +14,7 @@
       ],
       "priority": 1,
       "passes": true,
-      "notes": "Updated default model to google/gemma-4-12b-qat in client.ts, .env.example, docker-compose.yml, docs/DEPLOY.md, docs/ADMIN_GUIDE.md, app/README.md, app/docs/DEPLOYMENT.md, app/.env.example. Also fixed pre-existing typecheck/lint errors blocking quality checks."
+      "notes": "Updated default model to google/gemma-4-e4b in client.ts, .env.example, docker-compose.yml, docs/DEPLOY.md, docs/ADMIN_GUIDE.md, app/README.md, app/docs/DEPLOYMENT.md, app/.env.example. Also fixed pre-existing typecheck/lint errors blocking quality checks."
     },
     {
       "id": "US-002",

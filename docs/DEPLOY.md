@@ -28,7 +28,7 @@ CORS_ORIGIN=https://your-domain.com
 
 # AI (параметры для текущей модели; при смене модели достаточно изменить LM_STUDIO_MODEL)
 LM_STUDIO_URL=http://host.docker.internal:1234
-LM_STUDIO_MODEL=google/gemma-4-12b-qat
+LM_STUDIO_MODEL=google/gemma-4-e4b
 LM_STUDIO_TIMEOUT_MS=60000
 LM_STUDIO_MAX_INPUT_TOKENS=6000
 LM_STUDIO_SUMMARY_MAX_TOKENS=1024
@@ -37,6 +37,11 @@ LM_STUDIO_TRANSLATION_MAX_TOKENS=4096
 LM_STUDIO_RETRIES=3
 LM_STUDIO_RETRY_DELAY_MS=5000
 LM_STUDIO_CONCURRENCY=3
+
+# Локальный перевод (Transformers.js / ONNX)
+LOCAL_TRANSLATE_MODEL=Xenova/opus-mt-en-ru
+LOCAL_TRANSLATE_MAX_CHUNK_CHARS=400
+LOCAL_TRANSLATE_DEVICE=cpu
 ```
 
 ## Запуск

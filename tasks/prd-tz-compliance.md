@@ -22,7 +22,7 @@
 **Description:** As a developer, I want the AI module to use the model specified in the TZ so that summarization quality matches requirements.
 
 **Acceptance Criteria:**
-- [ ] Default model in `app/api/ai/client.ts` and `.env.example` changed to `gemma-4-12b-qat` (or exact model ID from LM Studio).
+- [ ] Default model in `app/api/ai/client.ts` and `.env.example` changed to `gemma-4-e4b` (or exact model ID from LM Studio).
 - [ ] `docs/DEPLOY.md` updated to mention Gemma 4 12B QAT instead of glm-4.6v-flash.
 - [ ] Typecheck passes.
 

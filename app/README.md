@@ -20,7 +20,7 @@
 | Фронтенд | React 19, Vite 7, TypeScript, TailwindCSS, shadcn/ui |
 | API | Hono 4, tRPC 11, Drizzle ORM |
 | База данных | PostgreSQL 16 |
-| ИИ-компонент | LM Studio (OpenAI-compatible API), GLM-4.6V Flash |
+| ИИ-компонент | LM Studio (OpenAI-compatible API), google/gemma-4-e4b; локальный перевод через Transformers.js/ONNX |
 | Инфраструктура | Docker, Docker Compose, Nginx, Let's Encrypt |
 
 ## Быстрый старт
@@ -29,7 +29,7 @@
 
 - Node.js 20+
 - PostgreSQL 16+ (или Docker)
-- LM Studio с моделью `google/gemma-4-12b-qat` (для ИИ-суммаризации)
+- LM Studio с моделью `google/gemma-4-e4b` (для ИИ-суммаризации)
 
 ### Локальная разработка
 
@@ -75,8 +75,14 @@ npm run dev
 ### Запуск LM Studio
 
 1. Скачайте и установите [LM Studio](https://lmstudio.ai/)
-2. Загрузите модель `google/gemma-4-12b-qat`
+2. Загрузите модель `google/gemma-4-e4b`
 3. Запустите сервер на порту 1234
+
+### Локальный перевод
+
+Полный перевод статей выполняется отдельной локальной моделью перевода (Transformers.js / ONNX), а не общей LLM.
+По умолчанию используется `Xenova/opus-mt-en-ru`. Модель скачивается один раз при первом запуске агента перевода и кешируется, после чего работает офлайн.
+Настройки: `LOCAL_TRANSLATE_MODEL`, `LOCAL_TRANSLATE_MAX_CHUNK_CHARS`, `LOCAL_TRANSLATE_DEVICE`.
 
 ### Docker деплой
 
@@ -183,7 +189,7 @@ KIMI_OPEN_URL=https://kimi.platform/api/open
 
 # LM Studio
 LM_STUDIO_URL=http://localhost:1234
-LM_STUDIO_MODEL=google/gemma-4-12b-qat
+LM_STUDIO_MODEL=google/gemma-4-e4b
 
 # CORS
 CORS_ORIGIN=https://your-domain.com

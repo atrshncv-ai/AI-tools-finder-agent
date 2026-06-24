@@ -2,7 +2,7 @@ import pLimit from "p-limit";
 import { encode, decode } from "gpt-tokenizer";
 
 const LM_STUDIO_URL = process.env.LM_STUDIO_URL || "http://localhost:1234";
-const DEFAULT_MODEL = process.env.LM_STUDIO_MODEL || "google/gemma-4-12b-qat";
+const DEFAULT_MODEL = process.env.LM_STUDIO_MODEL || "google/gemma-4-e4b";
 
 const AI_TIMEOUT_MS = parseInt(process.env.LM_STUDIO_TIMEOUT_MS || "600000", 10);
 const MAX_INPUT_TOKENS = parseInt(process.env.LM_STUDIO_MAX_INPUT_TOKENS || "6000", 10);

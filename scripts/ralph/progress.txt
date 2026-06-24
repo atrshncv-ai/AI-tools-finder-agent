@@ -8,7 +8,7 @@ Feature: Приведение проекта в соответствие с ТЗ
 ---
 
 ## 2026-06-24 08:48 - US-001
-- Updated default LM Studio model from zai-org/glm-4.6v-flash to google/gemma-4-12b-qat across codebase.
+- Updated default LM Studio model from zai-org/glm-4.6v-flash to google/gemma-4-e4b across codebase.
 - Files changed: app/api/ai/client.ts, .env.example, docker-compose.yml, docs/DEPLOY.md, docs/ADMIN_GUIDE.md, app/README.md, app/docs/DEPLOYMENT.md, app/.env.example.
 - Baseline cleanup required to pass quality checks:
   - Removed unused `and` import in app/api/agent/deployAgent.ts.
@@ -178,4 +178,16 @@ Feature: Приведение проекта в соответствие с ТЗ
 - Quality checks: npm run check ✅, npm run lint ✅, npm test ✅ (49 passed).
 - **Learnings for future iterations:**
   - CI must match local working directory structure (app/ subdirectory).
+---
+
+## 2026-06-24 09:27 - Model swap + local translation
+- Changed default LM Studio model from google/gemma-4-12b-qat to google/gemma-4-e4b across configs, docs, and PRD.
+- Replaced web/Bing/LLM full-article translation with local ONNX translation via Transformers.js.
+  - Added app/api/ai/translateLocal.ts using Xenova/opus-mt-en-ru (default), chunked by sentences.
+  - Updated translateAgent.ts to use translateLocal for title and full text; LLM now used only for summarization.
+  - Added LOCAL_TRANSLATE_MODEL / LOCAL_TRANSLATE_MAX_CHUNK_CHARS / LOCAL_TRANSLATE_DEVICE env vars.
+  - Marked @xenova/transformers and onnxruntime-node as external in esbuild build to keep native bindings working.
+  - Increased app container memory limit from 512m to 2g for model inference.
+- Verified local translation: "Artificial intelligence is transforming scientific research." -> "Искусственный интеллект преобразует научные исследования."
+- Quality: npm run check ✅, npm run lint ✅, npm test ✅ (49 passed), npm run build ✅.
 ---

@@ -3,10 +3,10 @@ import { news } from "@db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { getAgentState, updateAgentState } from "./state";
 import { logger } from "../lib/logger";
-import { translateArticle } from "../ai/client";
+import { translateLocal } from "../ai/translateLocal";
 
 const DEFAULT_BATCH_SIZE = 30;
-const DELAY_BETWEEN_ARTICLES_MS = 3000;
+const DELAY_BETWEEN_ARTICLES_MS = 1000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -70,10 +70,8 @@ export async function runTranslateAgent(limit?: number, scienceOnly?: boolean): 
         }
 
         const fullText = article.originalContent || article.content || article.summary;
-        const [translation, translatedTitle] = await Promise.all([
-          translateArticle(article.title, fullText, article.source),
-          translateArticle(article.title, article.title, article.source),
-        ]);
+        const translatedTitle = await translateLocal(article.title);
+        const translation = await translateLocal(fullText);
 
         await db
           .update(news)
