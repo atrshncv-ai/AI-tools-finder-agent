@@ -24,7 +24,7 @@ const AI_KEYWORDS = [
 const USER_AGENT = "Mozilla/5.0 (compatible; ScienceAgent/1.0; +https://science-agent.ru/bot)";
 const REQUEST_DELAY_MS = 1500;
 
-function containsAiKeywords(text: string): boolean {
+export function containsAiKeywords(text: string): boolean {
   const lower = text.toLowerCase();
   return AI_KEYWORDS.some((kw) => lower.includes(kw));
 }
@@ -47,7 +47,7 @@ const LANG_MAP: Record<string, string> = {
   hin: "hi",
 };
 
-function detectLanguage(text: string): string {
+export function detectLanguage(text: string): string {
   const trimmed = text.trim();
   if (trimmed.length < 20) return "unknown";
 
@@ -252,7 +252,7 @@ async function fetchApiArticles(source: { id: number; name: string; url: string;
   }
 }
 
-function makeDecisions(sourceList: { id: number; name: string; enabled: boolean }[]): ParseDecision[] {
+export function makeDecisions(sourceList: { id: number; name: string; enabled: boolean }[]): ParseDecision[] {
   const decisions: ParseDecision[] = [];
 
   for (const source of sourceList) {

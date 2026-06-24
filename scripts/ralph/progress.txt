@@ -147,3 +147,14 @@ Feature: Приведение проекта в соответствие с ТЗ
 - **Learnings for future iterations:**
   - env_file is the most maintainable way to pass environment variables in Docker Compose.
 ---
+
+## 2026-06-24 09:08 - US-013
+- Created app/api/agent/parseAgent.test.ts.
+- Added tests for containsAiKeywords, detectLanguage, makeDecisions.
+- Exported pure functions from app/api/agent/parseAgent.ts to enable unit testing.
+- Files changed: app/api/agent/parseAgent.ts, app/api/agent/parseAgent.test.ts.
+- Quality checks: npm run check ✅, npm run lint ✅, npm test ✅ (43 passed).
+- **Learnings for future iterations:**
+  - Pure functions in agents should be exported for unit tests.
+  - franc-min can misclassify very short snippets; use longer representative text in tests.
+---
