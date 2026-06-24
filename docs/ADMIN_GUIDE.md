@@ -52,7 +52,7 @@
 
 ## Перевод через GigaChat
 
-Полный перевод статей выполняется через GigaChat API (`GIGACHAT_API_KEY`, `GIGACHAT_MODEL`). LLM используется для саммари и/или перевода в зависимости от SUMMARY_PROVIDER и TRANSLATION_PROVIDER.
+Полный перевод статей выполняется через локальная LLM (LM Studio). Перевод выполняется локально через LLM; GigaChat можно включить через `TRANSLATION_PROVIDER=gigachat`.
 
 ## Подключение LLM
 

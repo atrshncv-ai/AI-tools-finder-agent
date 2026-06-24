@@ -228,3 +228,11 @@ Feature: Приведение проекта в соответствие с ТЗ
 - Updated .gitignore to exclude venv-mlx.
 - Quality: npm run check ✅, npm run lint ✅, npm test ✅ (49 passed), npm run build ✅.
 ---
+
+## 2026-06-24 13:04 - Revert to LM Studio + gemma + local translation
+- Removed local MLX venv (venv-mlx) and reverted app/.env to LM Studio URL http://localhost:1234 with model google/gemma-4-e4b.
+- Set SUMMARY_PROVIDER=lmstudio and TRANSLATION_PROVIDER=lmstudio so both summarization and translation use local LLM.
+- Updated test-cycle.ts to use LM Studio gemma with concurrency=1 and timeout=600000.
+- Updated env examples and docs: default TRANSLATION_PROVIDER changed back to lmstudio.
+- Quality: npm run check ✅, npm run lint ✅, npm test ✅ (49 passed), npm run build ✅.
+---

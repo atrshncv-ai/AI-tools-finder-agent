@@ -1,12 +1,12 @@
 import "dotenv/config";
 
 // Optimize LM Studio throughput for the test run without changing config files
-process.env.LM_STUDIO_URL = "http://localhost:8080";
-process.env.LM_STUDIO_MODEL = "default_model";
+process.env.LM_STUDIO_URL = "http://localhost:1234";
+process.env.LM_STUDIO_MODEL = "google/gemma-4-e4b";
 process.env.SUMMARY_PROVIDER = "lmstudio";
 process.env.TRANSLATION_PROVIDER = "lmstudio";
-process.env.LM_STUDIO_CONCURRENCY = "3";
-process.env.LM_STUDIO_TIMEOUT_MS = "300000";
+process.env.LM_STUDIO_CONCURRENCY = "1";
+process.env.LM_STUDIO_TIMEOUT_MS = "600000";
 
 import { getDb, closeDb } from "../api/queries/connection";
 import { news, sources } from "@db/schema";
