@@ -1,0 +1,214 @@
+{
+  "project": "ИИ-новостной агент",
+  "branchName": "ralph/tz-compliance",
+  "description": "Приведение проекта в соответствие с Техническим Заданием: ИИ-модель, расписание, парсинг, безопасность, деплой",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Настроить модель суммаризации на Gemma 4 12B QAT",
+      "description": "As a developer, I want the AI module to use the model specified in the TZ so that summarization quality matches requirements.",
+      "acceptanceCriteria": [
+        "Default model in app/api/ai/client.ts and .env.example changed to gemma-4-12b-qat (or exact model ID from LM Studio)",
+        "docs/DEPLOY.md updated to mention Gemma 4 12B QAT instead of glm-4.6v-flash",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Updated default model to google/gemma-4-12b-qat in client.ts, .env.example, docker-compose.yml, docs/DEPLOY.md, docs/ADMIN_GUIDE.md, app/README.md, app/docs/DEPLOYMENT.md, app/.env.example. Also fixed pre-existing typecheck/lint errors blocking quality checks."
+    },
+    {
+      "id": "US-002",
+      "title": "Исправить усечение подробного саммари",
+      "description": "As a user, I want the detailed article summary to contain 10-15 sentences as required, not just the first paragraph.",
+      "acceptanceCriteria": [
+        "Remove or make optional extractFirstParagraph for detailed summaries in app/api/ai/client.ts",
+        "Short summary still returns concise output (3-5 sentences)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Переводить статьи через LM Studio вместо Bing",
+      "description": "As a developer, I want batch translation to use the configured local LLM so that translation quality and privacy match the TZ.",
+      "acceptanceCriteria": [
+        "app/api/agent/translateAgent.ts uses translateArticle() from app/api/ai/client.ts instead of translators Python subprocess",
+        "Remove or deprecate translateViaBing() and translateTitleViaBing()",
+        "Token and concurrency limits from env vars are respected",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Реализовать расписание парсинга по ТЗ",
+      "description": "As an admin, I want parsing to run at 06:00 daily, science tools at 07:00, and additional parsing every 4 hours.",
+      "acceptanceCriteria": [
+        "app/api/scheduler/index.ts registers three separate cron jobs: 0 6 * * *, 0 7 * * *, 0 */4 * * *",
+        "06:00 and every-4h jobs run the full pipeline",
+        "07:00 job runs parsing and processing only for science sources",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Извлекать дату публикации из HTML-источников",
+      "description": "As a developer, I want HTML-parsed articles to have correct publishedAt so the feed is sorted properly.",
+      "acceptanceCriteria": [
+        "app/api/agent/parseAgent.ts extracts publishedAt from common HTML meta tags",
+        "Falls back to current date if not found",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Улучшить определение языка статьи",
+      "description": "As a developer, I want reliable language detection for non-English/Russian articles.",
+      "acceptanceCriteria": [
+        "Replace Cyrillic/Latin heuristic with franc or cld3 library",
+        "Detect at least ru/en/de/es/zh/ja/fr",
+        "Add confidence threshold; fallback to unknown",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Применить maxArticles ко всем типам источников",
+      "description": "As a developer, I want RSS and API sources to respect the per-source article limit.",
+      "acceptanceCriteria": [
+        "fetchRssFeed returns at most maxArticles items",
+        "fetchApiArticles returns at most maxArticles items",
+        "HTML path already respects it; verify",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Добавить dedicated-логику для Google News",
+      "description": "As a developer, I want Google News sources to be parsed correctly, not as generic RSS.",
+      "acceptanceCriteria": [
+        "Implement fetchGoogleNews() in app/api/agent/parseAgent.ts",
+        "Handle Google News RSS/Atom specifics and topic feeds",
+        "Add at least one Google News source to seeds",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Защитить OAuth state от CSRF",
+      "description": "As a security engineer, I want OAuth state to be a random CSRF token validated server-side.",
+      "acceptanceCriteria": [
+        "app/api/kimi/auth.ts generates cryptographically random state and stores it",
+        "Callback validates state against stored value",
+        "Typecheck passes",
+        "Existing OAuth flow still works"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Сократить срок жизни JWT и добавить инвалидацию сессий",
+      "description": "As a security engineer, I want sessions to expire reasonably and logout to invalidate the token server-side.",
+      "acceptanceCriteria": [
+        "JWT expiry reduced to 24 hours (configurable via env)",
+        "Server-side session blocklist or token versioning implemented",
+        "Logout invalidates the token",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Исправить nginx placeholder для домена",
+      "description": "As a DevOps engineer, I want deploy.sh to correctly substitute the domain in nginx config.",
+      "acceptanceCriteria": [
+        "Replace __DOMAIN__ with $DOMAIN in nginx/conf.d/default.conf OR update deploy.sh to replace __DOMAIN__ explicitly",
+        "deploy.sh still works after change",
+        "Nginx config syntax valid (nginx -t)"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "Прокинуть все env-переменные в docker-compose",
+      "description": "As a DevOps engineer, I want the app container to receive all required environment variables.",
+      "acceptanceCriteria": [
+        "docker-compose.yml forwards all variables used by the app or uses env_file: .env",
+        "CORS_ORIGIN defaults to a safe value, not *",
+        "LM_STUDIO_URL configurable, not hardcoded to host.docker.internal",
+        "docker-compose config is valid (docker compose config)"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Добавить тесты для parseAgent",
+      "description": "As a developer, I want parseAgent to have unit tests for key logic.",
+      "acceptanceCriteria": [
+        "Create app/api/agent/parseAgent.test.ts",
+        "Cover: containsAiKeywords, detectLanguage, makeDecisions, deduplication",
+        "Tests pass"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "Добавить семантическую дедупликацию новостей",
+      "description": "As a developer, I want duplicate articles with slightly different titles/URLs to be detected.",
+      "acceptanceCriteria": [
+        "Implement content-based deduplication using URL normalization + title similarity",
+        "Integrate into runParseAgent() before insert",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "Инициализировать git-репозиторий и добавить базовый CI",
+      "description": "As a project maintainer, I want version control and automated checks.",
+      "acceptanceCriteria": [
+        "git init in project root",
+        ".gitignore created/updated",
+        "Initial commit with current state",
+        "Add GitHub Actions workflow: typecheck, lint, test on PR/push",
+        "Workflow file valid"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

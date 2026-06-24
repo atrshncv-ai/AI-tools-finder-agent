@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+app/node_modules/
+
+# Build outputs
+app/dist/
+app/dist-ssr/
+*.local
+
+# Environment
+.env
+.env.*.local
+
+# Database
+backups/
+*.dump
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/*
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Testing
+coverage/
+
+# Docker volumes
+postgres_data/
+certbot_www/
+certbot_conf/
+
+# Temporary files
+tmp/
+*.tmp
+
+# Misc
+*.zip

@@ -1,0 +1,25 @@
+# Ralph Progress Log
+Started: 2026-06-24
+Feature: Приведение проекта в соответствие с ТЗ
+
+## Codebase Patterns
+(Patterns discovered during this feature build)
+
+---
+
+## 2026-06-24 08:48 - US-001
+- Updated default LM Studio model from zai-org/glm-4.6v-flash to google/gemma-4-12b-qat across codebase.
+- Files changed: app/api/ai/client.ts, .env.example, docker-compose.yml, docs/DEPLOY.md, docs/ADMIN_GUIDE.md, app/README.md, app/docs/DEPLOYMENT.md, app/.env.example.
+- Baseline cleanup required to pass quality checks:
+  - Removed unused `and` import in app/api/agent/deployAgent.ts.
+  - Removed unused `STAGE_ORDER` in app/api/agent/pipeline.ts.
+  - Removed unused GigaChat code in app/api/ai/client.ts (gigachat import, client, completion function).
+  - Fixed app/api/queries/favorites.ts and app/src/pages/Favorites.tsx to include full News type fields.
+  - Fixed lint errors in test-full-cycle.ts, test-gemma-speed.ts, test-gigachat.ts.
+  - Created .gitignore.
+- Quality checks: npm run check ✅, npm run lint ✅, npm test ✅ (32 passed).
+- **Learnings for future iterations:**
+  - Project was not under git; initialized repo to enable Ralph commits.
+  - Several pre-existing typecheck/lint errors blocked all stories; fixed as baseline hygiene.
+  - Filesystem path for project directory uses decomposed Unicode for "Й" in "НАУЧНЫЙ" — use relative paths in Shell to avoid issues.
+---

@@ -1,0 +1,12 @@
+node_modules
+.git
+.vscode
+test/
+*.test.ts
+*.test.tsx
+.env
+.env.local
+docker-compose*.yml
+scripts/
+nginx/
+Kimi_Agent_MVP*.zip
