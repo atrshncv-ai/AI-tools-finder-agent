@@ -293,6 +293,7 @@ curl http://localhost:1234/v1/models
 | `GIGACHAT_CONCURRENCY` | Одновременных запросов | Нет (default: 1) |
 | `GIGACHAT_MAX_TOKENS` | Макс. токенов в ответе | Нет (default: 4096) |
 | `SUMMARY_PROVIDER` | Провайдер саммаризации (`lmstudio`/`gigachat`) | Нет (default: lmstudio) |
+| `TRANSLATION_PROVIDER` | Провайдер перевода (`gigachat`/`lmstudio`) | Нет (default: gigachat) |
 | `GIGACHAT_SUMMARY_MAX_CHARS` | Макс. символов статьи для GigaChat-саммари | Нет (default: 12000) |
 
 ---

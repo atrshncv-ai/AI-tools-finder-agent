@@ -3,6 +3,7 @@ import { news } from "@db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { getAgentState, updateAgentState } from "./state";
 import { logger } from "../lib/logger";
+import { translateArticle } from "../ai/client";
 import { translateWithGigaChat } from "../ai/gigachatTranslate";
 
 const DEFAULT_BATCH_SIZE = 30;
@@ -32,6 +33,7 @@ export async function runTranslateAgent(limit?: number, scienceOnly?: boolean): 
 
   const errors: string[] = [];
   let translated = 0;
+  const useLocalLLM = process.env.TRANSLATION_PROVIDER === "lmstudio";
 
   try {
     const db = getDb();
@@ -70,8 +72,15 @@ export async function runTranslateAgent(limit?: number, scienceOnly?: boolean): 
         }
 
         const fullText = article.originalContent || article.content || article.summary;
-        const translatedTitle = await translateWithGigaChat(article.title);
-        const translation = await translateWithGigaChat(fullText);
+        const [translatedTitle, translation] = useLocalLLM
+          ? await Promise.all([
+              translateArticle(article.title, article.title, article.source),
+              translateArticle(article.title, fullText, article.source),
+            ])
+          : await Promise.all([
+              translateWithGigaChat(article.title),
+              translateWithGigaChat(fullText),
+            ]);
 
         await db
           .update(news)

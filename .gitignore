@@ -45,3 +45,6 @@ tmp/
 
 # Misc
 *.zip
+
+# Local MLX inference venv
+venv-mlx/

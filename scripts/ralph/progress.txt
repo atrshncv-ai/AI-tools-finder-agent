@@ -218,3 +218,13 @@ Feature: Приведение проекта в соответствие с ТЗ
 - Updated env examples and docs with SUMMARY_PROVIDER and GIGACHAT_SUMMARY_MAX_CHARS.
 - Quality: npm run check ✅, npm run lint ✅, npm test ✅ (49 passed), npm run build ✅.
 ---
+
+## 2026-06-24 12:42 - MLX inference experiments and provider switches
+- Added TRANSLATION_PROVIDER env switch (`gigachat` / `lmstudio`) in translateAgent.ts.
+- Added SUMMARY_PROVIDER env switch (`gigachat` / `lmstudio`) in summarizeAgent.ts with GigaChat summary via marked text.
+- Created local MLX inference venv (`venv-mlx`) with `mlx-lm` and tested `meta-llama-3.1-8b-instruct` via `mlx_lm.server`.
+- Findings: MLX server prompt processing is fast, but text generation for long outputs (~1024+2048 tokens per article) is still very slow on this machine (~5 min per article). Not viable for 30-article daily cycle.
+- gemma-4-E4B MLX 4bit model could not be loaded by `mlx-lm` ("Model type gemma4 not supported").
+- Updated .gitignore to exclude venv-mlx.
+- Quality: npm run check ✅, npm run lint ✅, npm test ✅ (49 passed), npm run build ✅.
+---
