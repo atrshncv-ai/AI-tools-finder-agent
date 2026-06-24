@@ -191,3 +191,15 @@ Feature: Приведение проекта в соответствие с ТЗ
 - Verified local translation: "Artificial intelligence is transforming scientific research." -> "Искусственный интеллект преобразует научные исследования."
 - Quality: npm run check ✅, npm run lint ✅, npm test ✅ (49 passed), npm run build ✅.
 ---
+
+## 2026-06-24 09:40 - Switch translation to GigaChat API
+- Replaced local Transformers.js/ONNX translation with GigaChat API translation.
+  - Added app/api/ai/gigachatTranslate.ts wrapping GigaChat SDK with retries, concurrency limit, and env-based config.
+  - Updated translateAgent.ts to call translateWithGigaChat for title and full text.
+  - Removed app/api/ai/translateLocal.ts, @xenova/transformers dependency, and onnxruntime-node external build hack.
+  - Removed app/test-gigachat.ts hardcoded key file.
+  - Added GIGACHAT_API_KEY, GIGACHAT_MODEL, GIGACHAT_TIMEOUT, GIGACHAT_RETRIES, GIGACHAT_CONCURRENCY, GIGACHAT_MAX_TOKENS env vars.
+  - Reverted docker-compose app memory limit back to 512m (cloud API, no local model).
+- Verified GigaChat translation: "Artificial intelligence is transforming scientific research." -> "Искусственный интеллект трансформирует научное исследование."
+- Quality: npm run check ✅, npm run lint ✅, npm test ✅ (49 passed), npm run build ✅.
+---

@@ -3,7 +3,7 @@ import { news } from "@db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { getAgentState, updateAgentState } from "./state";
 import { logger } from "../lib/logger";
-import { translateLocal } from "../ai/translateLocal";
+import { translateWithGigaChat } from "../ai/gigachatTranslate";
 
 const DEFAULT_BATCH_SIZE = 30;
 const DELAY_BETWEEN_ARTICLES_MS = 1000;
@@ -70,8 +70,8 @@ export async function runTranslateAgent(limit?: number, scienceOnly?: boolean): 
         }
 
         const fullText = article.originalContent || article.content || article.summary;
-        const translatedTitle = await translateLocal(article.title);
-        const translation = await translateLocal(fullText);
+        const translatedTitle = await translateWithGigaChat(article.title);
+        const translation = await translateWithGigaChat(fullText);
 
         await db
           .update(news)

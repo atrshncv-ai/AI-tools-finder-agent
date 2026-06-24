@@ -257,9 +257,9 @@ docker compose exec nginx ls -la /etc/letsencrypt/live/your-domain.com/
 docker compose restart certbot
 ```
 
-### Локальный перевод
+### Перевод через GigaChat
 
-Перевод полных статей выполняется локальной ONNX-моделью через Transformers.js. При первом запуске модель `LOCAL_TRANSLATE_MODEL` скачивается из Hugging Face и кешируется, дальнейшие вызовы работают офлайн.
+Перевод полных статей выполняется через GigaChat API. Убедитесь, что задан `GIGACHAT_API_KEY`.
 
 ### Проблема: LM Studio недоступен
 
@@ -286,9 +286,12 @@ curl http://localhost:1234/v1/models
 | `LM_STUDIO_MODEL` | Модель для суммаризации | Нет (default: google/gemma-4-e4b) |
 | `CORS_ORIGIN` | Разрешённый origin для CORS | Нет (default: *) |
 | `DOMAIN` | Домен для SSL сертификата | Нет (default: science-agent.ru) |
-| `LOCAL_TRANSLATE_MODEL` | Локальная модель перевода (Transformers.js) | Нет (default: Xenova/opus-mt-en-ru) |
-| `LOCAL_TRANSLATE_MAX_CHUNK_CHARS` | Макс. длина чанка для перевода | Нет (default: 400) |
-| `LOCAL_TRANSLATE_DEVICE` | Устройство для ONNX (`cpu`/`webgpu`) | Нет (default: cpu) |
+| `GIGACHAT_API_KEY` | Ключ авторизации GigaChat API | Да (если используется перевод) |
+| `GIGACHAT_MODEL` | Модель перевода | Нет (default: GigaChat) |
+| `GIGACHAT_TIMEOUT` | Таймаут запроса, сек | Нет (default: 120) |
+| `GIGACHAT_RETRIES` | Количество повторных попыток | Нет (default: 3) |
+| `GIGACHAT_CONCURRENCY` | Одновременных запросов | Нет (default: 1) |
+| `GIGACHAT_MAX_TOKENS` | Макс. токенов в ответе | Нет (default: 4096) |
 
 ---
 

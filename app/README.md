@@ -20,7 +20,7 @@
 | Фронтенд | React 19, Vite 7, TypeScript, TailwindCSS, shadcn/ui |
 | API | Hono 4, tRPC 11, Drizzle ORM |
 | База данных | PostgreSQL 16 |
-| ИИ-компонент | LM Studio (OpenAI-compatible API), google/gemma-4-e4b; локальный перевод через Transformers.js/ONNX |
+| ИИ-компонент | LM Studio (OpenAI-compatible API), google/gemma-4-e4b; перевод статей через GigaChat API |
 | Инфраструктура | Docker, Docker Compose, Nginx, Let's Encrypt |
 
 ## Быстрый старт
@@ -78,7 +78,6 @@ npm run dev
 2. Загрузите модель `google/gemma-4-e4b`
 3. Запустите сервер на порту 1234
 
-### Локальный перевод
 
 Полный перевод статей выполняется отдельной локальной моделью перевода (Transformers.js / ONNX), а не общей LLM.
 По умолчанию используется `Xenova/opus-mt-en-ru`. Модель скачивается один раз при первом запуске агента перевода и кешируется, после чего работает офлайн.
