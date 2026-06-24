@@ -64,6 +64,7 @@
     "dotenv": "^17.2.3",
     "drizzle-orm": "^0.45.1",
     "embla-carousel-react": "^8.6.0",
+    "franc-min": "^6.2.0",
     "gigachat": "^0.0.20",
     "gpt-tokenizer": "^3.4.0",
     "hono": "^4.8.3",

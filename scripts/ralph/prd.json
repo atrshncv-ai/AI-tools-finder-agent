@@ -82,8 +82,8 @@
         "Typecheck passes"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Replaced Cyrillic/Latin heuristic with franc-min. Maps ISO 639-3 to 2-letter codes. Returns unknown for short texts or undetected."
     },
     {
       "id": "US-007",

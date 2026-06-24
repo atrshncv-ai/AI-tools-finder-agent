@@ -1,4 +1,5 @@
 import * as cheerio from "cheerio";
+import { franc } from "franc-min";
 import Parser from "rss-parser";
 import { getDb } from "../queries/connection";
 import { news, sources } from "@db/schema";
@@ -28,12 +29,35 @@ function containsAiKeywords(text: string): boolean {
   return AI_KEYWORDS.some((kw) => lower.includes(kw));
 }
 
+const LANG_MAP: Record<string, string> = {
+  rus: "ru",
+  eng: "en",
+  deu: "de",
+  spa: "es",
+  zho: "zh",
+  jpn: "ja",
+  fra: "fr",
+  ita: "it",
+  por: "pt",
+  kor: "ko",
+  nld: "nl",
+  pol: "pl",
+  tur: "tr",
+  ara: "ar",
+  hin: "hi",
+};
+
 function detectLanguage(text: string): string {
-  const cyrillic = (text.match(/[а-яёА-ЯЁ]/g) || []).length;
-  const latin = (text.match(/[a-zA-Z]/g) || []).length;
-  if (cyrillic > latin) return "ru";
-  if (latin > cyrillic) return "en";
-  return "unknown";
+  const trimmed = text.trim();
+  if (trimmed.length < 20) return "unknown";
+
+  try {
+    const code3 = franc(trimmed);
+    if (code3 === "und") return "unknown";
+    return LANG_MAP[code3] || code3.slice(0, 2);
+  } catch {
+    return "unknown";
+  }
 }
 
 const domainLastRequest = new Map<string, number>();

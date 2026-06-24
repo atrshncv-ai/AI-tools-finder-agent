@@ -72,3 +72,15 @@ Feature: Приведение проекта в соответствие с ТЗ
   - HTML date extraction is heuristic-based; different sites use different meta tags.
   - Always validate parsed Date to avoid invalid dates in DB.
 ---
+
+## 2026-06-24 08:57 - US-006
+- Replaced naive Cyrillic/Latin language detection with franc-min library.
+- Maps ISO 639-3 codes to 2-letter codes for ru/en/de/es/zh/ja/fr/it/pt/ko/nl/pl/tr/ar/hi.
+- Returns "unknown" for texts shorter than 20 chars or when franc returns "und".
+- Installed dependency: franc-min.
+- Files changed: app/api/agent/parseAgent.ts, app/package.json, app/package-lock.json.
+- Quality checks: npm run check ✅, npm run lint ✅, npm test ✅ (32 passed).
+- **Learnings for future iterations:**
+  - franc-min is lightweight and pure JS; no native bindings needed.
+  - Short snippets (< 20 chars) are unreliable for detection.
+---
