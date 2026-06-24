@@ -4,6 +4,7 @@ import { news } from "@db/schema";
 import { eq, and, isNull, desc } from "drizzle-orm";
 import { getAgentState, updateAgentState } from "./state";
 import { summarizeArticle, checkLmStudioConnection } from "../ai/client";
+import { summarizeWithGigaChat } from "../ai/gigachatTranslate";
 import { logger } from "../lib/logger";
 
 const DEFAULT_BATCH_SIZE = 30;
@@ -42,13 +43,18 @@ export async function runSummarizeAgent(limit?: number, scienceOnly?: boolean): 
     return { summarized: 0, errors: [] };
   }
 
-  const lmStudioOk = await checkLmStudioConnection();
-  if (!lmStudioOk) {
-    logger.warn("Summarize Agent: LM Studio not available");
-    return { summarized: 0, errors: ["LM Studio is not available"] };
-  }
+  const useGigaChat = process.env.SUMMARY_PROVIDER === "gigachat";
 
-  logger.info("Summarize Agent: using LM Studio", { model: process.env.LM_STUDIO_MODEL });
+  if (!useGigaChat) {
+    const lmStudioOk = await checkLmStudioConnection();
+    if (!lmStudioOk) {
+      logger.warn("Summarize Agent: LM Studio not available");
+      return { summarized: 0, errors: ["LM Studio is not available"] };
+    }
+    logger.info("Summarize Agent: using LM Studio", { model: process.env.LM_STUDIO_MODEL });
+  } else {
+    logger.info("Summarize Agent: using GigaChat", { model: process.env.GIGACHAT_MODEL || "GigaChat" });
+  }
 
   updateAgentState("summarize-agent", {
     status: "running",
@@ -92,11 +98,9 @@ export async function runSummarizeAgent(limit?: number, scienceOnly?: boolean): 
           continue;
         }
 
-        const { summary, detailedSummary } = await summarizeArticle(
-          article.title,
-          text,
-          article.source
-        );
+        const { summary, detailedSummary } = useGigaChat
+          ? await summarizeWithGigaChat(article.title, text, article.source)
+          : await summarizeArticle(article.title, text, article.source);
 
         await db
           .update(news)

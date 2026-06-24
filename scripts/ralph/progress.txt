@@ -203,3 +203,18 @@ Feature: Приведение проекта в соответствие с ТЗ
 - Verified GigaChat translation: "Artificial intelligence is transforming scientific research." -> "Искусственный интеллект трансформирует научное исследование."
 - Quality: npm run check ✅, npm run lint ✅, npm test ✅ (49 passed), npm run build ✅.
 ---
+
+## 2026-06-24 11:15 - Token usage tracking + optional GigaChat summarization + 30-article test cycle
+- Added app/api/ai/tokenUsage.ts to accumulate prompt/completion/total tokens for LM Studio and GigaChat.
+- Integrated token recording into app/api/ai/client.ts (LM Studio) and app/api/ai/gigachatTranslate.ts (GigaChat).
+- Added summarizeWithGigaChat() in app/api/ai/gigachatTranslate.ts; summarizeAgent.ts switches provider via SUMMARY_PROVIDER env (`lmstudio` or `gigachat`).
+- Added app/scripts/test-cycle.ts to run full parse → summarize → translate → deploy pipeline on 30 articles and report time + tokens per stage.
+- Full test cycle results (GigaChat for both summary and translation, 30 articles):
+  - Parse: 6.81s, 0 tokens
+  - Summarize: 112.27s, 45,707 GigaChat tokens
+  - Translate: 312.48s, 67,033 GigaChat tokens
+  - Deploy: 0.13s, 0 tokens
+  - Total: 431.69s, 112,740 GigaChat tokens
+- Updated env examples and docs with SUMMARY_PROVIDER and GIGACHAT_SUMMARY_MAX_CHARS.
+- Quality: npm run check ✅, npm run lint ✅, npm test ✅ (49 passed), npm run build ✅.
+---

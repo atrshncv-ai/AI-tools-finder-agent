@@ -1,4 +1,5 @@
 import pLimit from "p-limit";
+import { recordUsage } from "./tokenUsage";
 import { encode, decode } from "gpt-tokenizer";
 
 const LM_STUDIO_URL = process.env.LM_STUDIO_URL || "http://localhost:1234";
@@ -97,6 +98,14 @@ async function rawChatCompletion(
   }
 
   const data = (await response.json()) as CompletionResponse;
+  if (data.usage) {
+    recordUsage(
+      "lmStudio",
+      data.usage.prompt_tokens || 0,
+      data.usage.completion_tokens || 0,
+      data.usage.total_tokens || 0
+    );
+  }
   const text = data.choices[0]?.text?.trim() || "";
   return extractParagraph ? extractFirstParagraph(text) : text;
 }
