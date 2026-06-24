@@ -115,3 +115,16 @@ Feature: Приведение проекта в соответствие с ТЗ
 - **Learnings for future iterations:**
   - OAuth state must be random and server-side validated; never trust client-provided state or encode sensitive data in it.
 ---
+
+## 2026-06-24 09:05 - US-010
+- Added tokenVersion column to users table (schema + migration 0004_parallel_lightspeed.sql).
+- JWT expiry reduced from 1 year to 24 hours; configurable via SESSION_EXPIRY_HOURS env.
+- verifySessionToken now checks tokenVersion against DB; mismatched versions reject the token.
+- Logout mutation increments tokenVersion, invalidating the token server-side.
+- Login/register/OAuth callback include current tokenVersion in JWT payload.
+- Files changed: app/db/schema.ts, app/db/migrations/0004_parallel_lightspeed.sql, app/api/kimi/session.ts, app/api/auth-router.ts, app/api/kimi/auth.ts, app/api/queries/users.ts, .env.example, app/.env.example.
+- Quality checks: npm run check ✅, npm run lint ✅, npm test ✅ (32 passed).
+- **Learnings for future iterations:**
+  - Token versioning is simpler than a blocklist table and provides global logout.
+  - Always protect tokenVersion from being overwritten by upsertUser.
+---

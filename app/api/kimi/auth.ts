@@ -138,9 +138,15 @@ export function createOAuthCallbackHandler() {
         lastSignInAt: new Date(),
       });
 
+      const user = await findUserByUnionId(userId);
+      if (!user) {
+        throw new Error("User not found after upsert");
+      }
+
       const token = await signSessionToken({
         unionId: userId,
         clientId: env.appId,
+        tokenVersion: user.tokenVersion,
       });
 
       const cookieOpts = getSessionCookieOptions(c.req.raw.headers);

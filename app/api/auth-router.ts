@@ -5,7 +5,7 @@ import { Session } from "@contracts/constants";
 import { getSessionCookieOptions } from "./lib/cookies";
 import { createRouter, authedQuery, publicQuery } from "./middleware";
 import { signSessionToken } from "./kimi/session";
-import { findUserByUnionId, upsertUser, findUserByEmail } from "./queries/users";
+import { findUserByUnionId, upsertUser, findUserByEmail, incrementTokenVersion } from "./queries/users";
 
 const BCRYPT_ROUNDS = 12;
 
@@ -39,6 +39,7 @@ export const authRouter = createRouter({
       const token = await signSessionToken({
         unionId,
         clientId: "app",
+        tokenVersion: 1,
       });
 
       const cookieOpts = getSessionCookieOptions(ctx.req.headers);
@@ -78,6 +79,7 @@ export const authRouter = createRouter({
       const token = await signSessionToken({
         unionId: user.unionId,
         clientId: "app",
+        tokenVersion: user.tokenVersion,
       });
 
       const cookieOpts = getSessionCookieOptions(ctx.req.headers);
@@ -98,6 +100,7 @@ export const authRouter = createRouter({
   me: authedQuery.query((opts) => opts.ctx.user),
 
   logout: authedQuery.mutation(async ({ ctx }) => {
+    await incrementTokenVersion(ctx.user.unionId);
     const opts = getSessionCookieOptions(ctx.req.headers);
     ctx.resHeaders.append(
       "set-cookie",

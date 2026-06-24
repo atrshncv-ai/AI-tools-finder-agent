@@ -40,6 +40,16 @@ export async function findAllUsers() {
     .orderBy(users.createdAt);
 }
 
+export async function incrementTokenVersion(unionId: string) {
+  const db = getDb();
+  const user = await findUserByUnionId(unionId);
+  if (!user) return;
+  await db
+    .update(users)
+    .set({ tokenVersion: user.tokenVersion + 1, updatedAt: new Date() })
+    .where(eq(users.unionId, unionId));
+}
+
 export async function updateUserRole(userId: number, role: string) {
   const db = getDb();
   await db
@@ -54,6 +64,7 @@ export async function upsertUser(data: InsertUser) {
     lastSignInAt: new Date(),
     ...data,
   };
+  delete (updateSet as Record<string, unknown>).tokenVersion;
 
   if (
     values.role === undefined &&

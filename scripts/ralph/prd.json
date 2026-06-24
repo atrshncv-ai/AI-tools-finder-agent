@@ -138,8 +138,8 @@
         "Typecheck passes"
       ],
       "priority": 10,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added tokenVersion column to users. JWT expiry reduced to 24h configurable via SESSION_EXPIRY_HOURS. verifySessionToken checks tokenVersion. Logout increments tokenVersion, invalidating all sessions."
     },
     {
       "id": "US-011",

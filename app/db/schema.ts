@@ -21,6 +21,7 @@ export const users = pgTable("users", {
   password: text("password"),
   avatar: text("avatar"),
   role: text("role").default("user").notNull(),
+  tokenVersion: integer("tokenVersion").default(1).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   lastSignInAt: timestamp("lastSignInAt").defaultNow().notNull(),
