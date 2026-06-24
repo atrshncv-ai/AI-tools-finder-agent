@@ -55,8 +55,8 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added three cron jobs in scheduler: daily digest 06:00, science tools 07:00, additional every 4h. Added scienceOnly flag to summarize/translate agents and runSciencePipeline."
     },
     {
       "id": "US-005",

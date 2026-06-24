@@ -191,6 +191,70 @@ export async function runPipeline(): Promise<{
   }
 }
 
+
+export async function runSciencePipeline(): Promise<{
+  cycleId: string;
+  stage: PipelineStage;
+  articlesProcessed: number;
+  error?: string;
+}> {
+  if (isRunning) {
+    logger.warn("Science Pipeline: already running, skipping");
+    return { cycleId: "skipped", stage: "idle", articlesProcessed: 0 };
+  }
+
+  isRunning = true;
+  const cycleId = generateCycleId();
+  currentCycleId = cycleId;
+
+  logger.info("Science Pipeline: starting cycle", { cycleId });
+
+  try {
+    await savePipelineState(cycleId, "parsing", 0, 0, new Date());
+    logger.info("Science Pipeline: stage 1/4 - parsing", { cycleId });
+
+    const parseResults = await runParseAgent();
+    const totalNew = parseResults.reduce((sum, r) => sum + r.articlesNew, 0);
+
+    if (totalNew === 0) {
+      logger.info("Science Pipeline: no new articles, completing", { cycleId });
+      await savePipelineState(cycleId, "completed", 0, 0, undefined, new Date());
+      isRunning = false;
+      return { cycleId, stage: "completed", articlesProcessed: 0 };
+    }
+
+    await savePipelineState(cycleId, "parsing", totalNew, totalNew);
+    logger.info("Science Pipeline: parsing complete", { cycleId, newArticles: totalNew });
+
+    await savePipelineState(cycleId, "summarizing", totalNew, 0, new Date());
+    logger.info("Science Pipeline: stage 2/4 - summarizing (science only)", { cycleId, count: totalNew });
+    const summarizeResult = await runSummarizeAgent(undefined, true);
+    await savePipelineState(cycleId, "summarizing", totalNew, summarizeResult.summarized);
+
+    await savePipelineState(cycleId, "translating", totalNew, 0, new Date());
+    logger.info("Science Pipeline: stage 3/4 - translating (science only)", { cycleId, count: totalNew });
+    const translateResult = await runTranslateAgent(undefined, true);
+    await savePipelineState(cycleId, "translating", totalNew, translateResult.translated);
+
+    await savePipelineState(cycleId, "deploying", totalNew, 0, new Date());
+    logger.info("Science Pipeline: stage 4/4 - deploying", { cycleId, count: totalNew });
+    const deployResult = await runDeployAgent();
+    await savePipelineState(cycleId, "deploying", totalNew, deployResult.deployed);
+
+    await savePipelineState(cycleId, "completed", totalNew, totalNew, undefined, new Date());
+    logger.info("Science Pipeline: cycle complete", { cycleId, totalArticles: totalNew });
+
+    isRunning = false;
+    return { cycleId, stage: "completed", articlesProcessed: totalNew };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error("Science Pipeline: cycle failed", { cycleId, error: msg });
+    await savePipelineState(cycleId, "failed", 0, 0, undefined, undefined, msg);
+    isRunning = false;
+    return { cycleId, stage: "failed", articlesProcessed: 0, error: msg };
+  }
+}
+
 export function getPipelineStatus(): {
   running: boolean;
   currentCycleId: string | null;

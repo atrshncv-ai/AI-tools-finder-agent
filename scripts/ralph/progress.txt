@@ -45,3 +45,18 @@ Feature: Приведение проекта в соответствие с ТЗ
   - Batch translation now shares the same LM Studio client config, retries, concurrency, and token limits as summarization.
   - Keep DELAY_BETWEEN_ARTICLES_MS to avoid overwhelming the local LLM server.
 ---
+
+## 2026-06-24 08:55 - US-004
+- Implemented TZ-compliant schedule with three cron jobs:
+  - 06:00 daily — full pipeline (runPipeline)
+  - 07:00 daily — science-only pipeline (runSciencePipeline)
+  - every 4 hours — additional full pipeline
+- Added optional scienceOnly parameter to runSummarizeAgent and runTranslateAgent.
+- Created runSciencePipeline() in app/api/agent/pipeline.ts.
+- Updated app/api/scheduler/index.ts to register and manage three cron tasks.
+- Files changed: app/api/agent/summarizeAgent.ts, app/api/agent/translateAgent.ts, app/api/agent/pipeline.ts, app/api/scheduler/index.ts.
+- Quality checks: npm run check ✅, npm run lint ✅, npm test ✅ (32 passed).
+- **Learnings for future iterations:**
+  - Shared isRunning guard across runPipeline and runSciencePipeline prevents overlap; consider separate guards if pipelines should run concurrently.
+  - Science pipeline still parses all sources but only processes isScience=true articles.
+---

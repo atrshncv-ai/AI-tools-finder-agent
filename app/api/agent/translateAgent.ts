@@ -1,6 +1,6 @@
 import { getDb } from "../queries/connection";
 import { news } from "@db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { getAgentState, updateAgentState } from "./state";
 import { logger } from "../lib/logger";
 import { translateArticle } from "../ai/client";
@@ -12,7 +12,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function runTranslateAgent(limit?: number): Promise<{
+export async function runTranslateAgent(limit?: number, scienceOnly?: boolean): Promise<{
   translated: number;
   errors: string[];
 }> {
@@ -35,10 +35,14 @@ export async function runTranslateAgent(limit?: number): Promise<{
 
   try {
     const db = getDb();
+    const whereConditions = [eq(news.status, "summarized")];
+    if (scienceOnly) {
+      whereConditions.push(eq(news.isScience, true));
+    }
     const untranslated = await db
       .select()
       .from(news)
-      .where(eq(news.status, "summarized"))
+      .where(and(...whereConditions))
       .orderBy(desc(news.publishedAt))
       .limit(batchSize);
 

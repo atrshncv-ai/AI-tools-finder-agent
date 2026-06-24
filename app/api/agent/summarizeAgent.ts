@@ -30,7 +30,7 @@ async function fetchAndCleanArticle(url: string): Promise<string | null> {
   }
 }
 
-export async function runSummarizeAgent(limit?: number): Promise<{
+export async function runSummarizeAgent(limit?: number, scienceOnly?: boolean): Promise<{
   summarized: number;
   errors: string[];
 }> {
@@ -61,15 +61,14 @@ export async function runSummarizeAgent(limit?: number): Promise<{
 
   try {
     const db = getDb();
+    const whereConditions = [eq(news.status, "pending"), isNull(news.content)];
+    if (scienceOnly) {
+      whereConditions.push(eq(news.isScience, true));
+    }
     const unsummarized = await db
       .select()
       .from(news)
-      .where(
-        and(
-          eq(news.status, "pending"),
-          isNull(news.content)
-        )
-      )
+      .where(and(...whereConditions))
       .orderBy(desc(news.publishedAt))
       .limit(batchSize);
 
