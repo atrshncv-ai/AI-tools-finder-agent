@@ -3,11 +3,124 @@ import { getDb } from "../queries/connection";
 import { news } from "@db/schema";
 import { eq, and, isNull, desc } from "drizzle-orm";
 import { getAgentState, updateAgentState } from "./state";
-import { summarizeArticle, checkLmStudioConnection } from "../ai/client";
-import { summarizeWithGigaChat } from "../ai/gigachatTranslate";
+import { summarizeArticle, checkZenConnection } from "../ai/zenClient";
 import { logger } from "../lib/logger";
 
 const DEFAULT_BATCH_SIZE = 30;
+
+const NOISE_SELECTORS = [
+  "script",
+  "style",
+  "nav",
+  "header",
+  "footer",
+  "aside",
+  "iframe",
+  "noscript",
+  "svg",
+  "canvas",
+  "form",
+  "button",
+  "input",
+  "textarea",
+  "select",
+  "label",
+  "[hidden]",
+  "#labstabs",
+  ".labstabs",
+  "#arxivlabs",
+  ".arxivlabs",
+  ".ltx_page_footer",
+  ".ltx_page_header",
+  ".ltx_notes",
+  ".footer",
+  "#footer",
+  ".page-footer",
+  ".site-footer",
+  ".sidebar",
+  "#sidebar",
+  ".nav",
+  ".navbar",
+  ".navigation",
+  ".menu",
+  ".mobile-menu",
+  ".comments",
+  "#comments",
+  ".advert",
+  ".ads",
+  ".ad",
+  ".cookie-banner",
+  ".cookies",
+  ".social",
+  ".share",
+  "#disqus_thread",
+  ".noprint",
+  ".hidden",
+  "#mw-navigation",
+  ".printfooter",
+];
+
+const CONTENT_SELECTORS = [
+  "article",
+  "main",
+  '[role="main"]',
+  "#content-inner",
+  ".content-inner",
+  "#content",
+  "#main",
+  ".content",
+  ".post",
+  ".entry",
+  ".abstract",
+  ".ltx_document",
+];
+
+function normalizeSpace(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function removeRepeatedBlocks(text: string): string {
+  const blocks = text
+    .split(/\n+/)
+    .map((b) => b.trim())
+    .filter((b) => b.length > 0);
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const block of blocks) {
+    if (seen.has(block)) continue;
+    seen.add(block);
+    result.push(block);
+  }
+  return result.join(" ");
+}
+
+function cleanExtractedText(raw: string): string {
+  let text = raw
+    .replace(/arXivLabs: experimental projects with community collaborators/gi, " ")
+    .replace(/\bDownload PDF\b/gi, " ")
+    .replace(/\bHTML \(experimental\)\b/gi, " ");
+  text = normalizeSpace(text);
+  text = removeRepeatedBlocks(text);
+  return normalizeSpace(text);
+}
+
+function isGarbageText(text: string): boolean {
+  if (!text || text.trim().length < 40) return true;
+  const lower = text.toLowerCase();
+  const arxivMatches = lower.match(/arXivLabs: experimental projects with community collaborators/g);
+  if (arxivMatches && arxivMatches.length > 1) return true;
+
+  const sentences = text.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+  const counts = new Map<string, number>();
+  for (const sentence of sentences) {
+    const key = sentence.toLowerCase();
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  for (const [, count] of counts) {
+    if (count > 3) return true;
+  }
+  return false;
+}
 
 async function fetchAndCleanArticle(url: string): Promise<string | null> {
   try {
@@ -22,8 +135,28 @@ async function fetchAndCleanArticle(url: string): Promise<string | null> {
     const decoder = new TextDecoder(charset === "windows-1251" ? "windows-1251" : "utf-8");
     const html = decoder.decode(buffer);
     const $ = cheerio.load(html);
-    $("script, style, nav, header, footer, aside, iframe, noscript").remove();
-    const text = $("body").text().replace(/\s+/g, " ").trim();
+
+    $(NOISE_SELECTORS.join(", ")).remove();
+
+    // Drop any remaining small nodes that mention arXivLabs or similar footer phrases.
+    $("body *").each((_, el) => {
+      const $el = $(el);
+      const txt = $el.text().trim();
+      if (txt.length > 0 && txt.length < 300 && /arxivlabs/i.test(txt)) {
+        $el.remove();
+      }
+    });
+
+    let container = $("body");
+    for (const selector of CONTENT_SELECTORS) {
+      const el = $(selector).first();
+      if (el.length && el.text().trim().length > 200) {
+        container = el;
+        break;
+      }
+    }
+
+    const text = cleanExtractedText(container.text());
     return text.length > 100 ? text : null;
   } catch (e) {
     logger.error("Failed to fetch article for summarization", { url, error: String(e) });
@@ -43,18 +176,12 @@ export async function runSummarizeAgent(limit?: number, scienceOnly?: boolean): 
     return { summarized: 0, errors: [] };
   }
 
-  const useGigaChat = process.env.SUMMARY_PROVIDER === "gigachat";
-
-  if (!useGigaChat) {
-    const lmStudioOk = await checkLmStudioConnection();
-    if (!lmStudioOk) {
-      logger.warn("Summarize Agent: LM Studio not available");
-      return { summarized: 0, errors: ["LM Studio is not available"] };
-    }
-    logger.info("Summarize Agent: using LM Studio", { model: process.env.LM_STUDIO_MODEL });
-  } else {
-    logger.info("Summarize Agent: using GigaChat", { model: process.env.GIGACHAT_MODEL || "GigaChat" });
+  const zenOk = await checkZenConnection();
+  if (!zenOk) {
+    logger.warn("Summarize Agent: Zen API not available");
+    return { summarized: 0, errors: ["Zen API is not available"] };
   }
+  logger.info("Summarize Agent: using Zen API", { model: process.env.ZEN_MODEL });
 
   updateAgentState("summarize-agent", {
     status: "running",
@@ -97,10 +224,19 @@ export async function runSummarizeAgent(limit?: number, scienceOnly?: boolean): 
           });
           continue;
         }
+        if (isGarbageText(text)) {
+          logger.warn("Summarize Agent: cleaned article text looks like garbage", {
+            id: article.id,
+            url: article.originalUrl,
+          });
+          continue;
+        }
 
-        const { summary, detailedSummary } = useGigaChat
-          ? await summarizeWithGigaChat(article.title, text, article.source)
-          : await summarizeArticle(article.title, text, article.source);
+        const { summary, detailedSummary } = await summarizeArticle(article.title, text, article.source);
+
+        if (isGarbageText(summary) || isGarbageText(detailedSummary)) {
+          throw new Error("Model returned unusable summary");
+        }
 
         await db
           .update(news)

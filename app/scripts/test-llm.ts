@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { summarizeArticle, translateArticle } from "../api/ai/client";
+import { summarizeArticle, translateArticle } from "../api/ai/zenClient";
 
 async function main() {
   const title = "OpenAI выпустила GPT-5";

@@ -3,8 +3,7 @@ import { news } from "@db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { getAgentState, updateAgentState } from "./state";
 import { logger } from "../lib/logger";
-import { translateArticle } from "../ai/client";
-import { translateWithGigaChat } from "../ai/gigachatTranslate";
+import { translateTitle } from "../ai/zenClient";
 
 const DEFAULT_BATCH_SIZE = 30;
 const DELAY_BETWEEN_ARTICLES_MS = 1000;
@@ -33,7 +32,6 @@ export async function runTranslateAgent(limit?: number, scienceOnly?: boolean): 
 
   const errors: string[] = [];
   let translated = 0;
-  const useLocalLLM = process.env.TRANSLATION_PROVIDER === "lmstudio";
 
   try {
     const db = getDb();
@@ -71,16 +69,16 @@ export async function runTranslateAgent(limit?: number, scienceOnly?: boolean): 
           continue;
         }
 
-        const fullText = article.originalContent || article.content || article.summary;
-        const [translatedTitle, translation] = useLocalLLM
-          ? await Promise.all([
-              translateArticle(article.title, article.title, article.source),
-              translateArticle(article.title, fullText, article.source),
-            ])
-          : await Promise.all([
-              translateWithGigaChat(article.title),
-              translateWithGigaChat(fullText),
-            ]);
+        // Summarization already produces Russian text, so we only translate the title.
+        let translatedTitle = (await translateTitle(article.title)).trim();
+        if (translatedTitle.length < 3) {
+          logger.warn("Translate Agent: title translation returned empty, keeping original", {
+            id: article.id,
+            originalTitle: article.title,
+          });
+          translatedTitle = article.title;
+        }
+        const translation = article.content || article.summary;
 
         await db
           .update(news)

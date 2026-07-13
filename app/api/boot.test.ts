@@ -5,15 +5,15 @@ vi.mock("./queries/connection", () => ({
   getDb: vi.fn(),
 }));
 
-vi.mock("./ai/client", () => ({
-  checkLmStudioConnection: vi.fn(),
+vi.mock("./ai/zenClient", () => ({
+  checkZenConnection: vi.fn(),
 }));
 
 import { getDb } from "./queries/connection";
-import { checkLmStudioConnection } from "./ai/client";
+import { checkZenConnection } from "./ai/zenClient";
 
 const mockGetDb = vi.mocked(getDb);
-const mockCheckLm = vi.mocked(checkLmStudioConnection);
+const mockCheckZen = vi.mocked(checkZenConnection);
 
 function createHealthApp() {
   const app = new Hono();
@@ -30,9 +30,9 @@ function createHealthApp() {
       status = "error";
     }
 
-    const lmStudioOk = await mockCheckLm();
-    checks.lmStudio = lmStudioOk ? "ok" : "unavailable";
-    if (!lmStudioOk && status === "ok") status = "degraded";
+    const zenOk = await mockCheckZen();
+    checks.zen = zenOk ? "ok" : "unavailable";
+    if (!zenOk && status === "ok") status = "degraded";
 
     return c.json({ status, checks, ts: Date.now() }, status === "error" ? 503 : 200);
   });
@@ -47,7 +47,7 @@ describe("health endpoint", () => {
   it("returns ok when all services healthy", async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     mockGetDb.mockReturnValue({ execute: vi.fn().mockResolvedValue(null) } as any);
-    mockCheckLm.mockResolvedValue(true);
+    mockCheckZen.mockResolvedValue(true);
 
     const app = createHealthApp();
     const res = await app.request("/health");
@@ -56,14 +56,14 @@ describe("health endpoint", () => {
     expect(res.status).toBe(200);
     expect(body.status).toBe("ok");
     expect(body.checks.database).toBe("ok");
-    expect(body.checks.lmStudio).toBe("ok");
+    expect(body.checks.zen).toBe("ok");
     expect(body.ts).toBeDefined();
   });
 
-  it("returns degraded when LM Studio unavailable", async () => {
+  it("returns degraded when Zen API unavailable", async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     mockGetDb.mockReturnValue({ execute: vi.fn().mockResolvedValue(null) } as any);
-    mockCheckLm.mockResolvedValue(false);
+    mockCheckZen.mockResolvedValue(false);
 
     const app = createHealthApp();
     const res = await app.request("/health");
@@ -71,13 +71,13 @@ describe("health endpoint", () => {
 
     expect(res.status).toBe(200);
     expect(body.status).toBe("degraded");
-    expect(body.checks.lmStudio).toBe("unavailable");
+    expect(body.checks.zen).toBe("unavailable");
   });
 
   it("returns 503 when database fails", async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     mockGetDb.mockReturnValue({ execute: vi.fn().mockRejectedValue(new Error("DB down")) } as any);
-    mockCheckLm.mockResolvedValue(true);
+    mockCheckZen.mockResolvedValue(true);
 
     const app = createHealthApp();
     const res = await app.request("/health");

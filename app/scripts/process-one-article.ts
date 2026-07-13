@@ -3,7 +3,7 @@ import * as cheerio from "cheerio";
 import { getDb } from "../api/queries/connection";
 import { news } from "@db/schema";
 import { eq } from "drizzle-orm";
-import { chatCompletion } from "../api/ai/client";
+import { chatCompletion } from "../api/ai/zenClient";
 
 const ARTICLE_ID = 1;
 const MAX_TEXT_LENGTH = 1500;

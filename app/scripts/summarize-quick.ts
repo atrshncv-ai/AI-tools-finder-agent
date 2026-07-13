@@ -3,7 +3,7 @@ import * as cheerio from "cheerio";
 import { getDb } from "../api/queries/connection";
 import { news } from "@db/schema";
 import { isNull, eq } from "drizzle-orm";
-import { chatCompletion } from "../api/ai/client";
+import { chatCompletion } from "../api/ai/zenClient";
 
 async function fetchText(url: string): Promise<string | null> {
   try {

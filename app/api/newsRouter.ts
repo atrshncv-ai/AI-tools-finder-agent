@@ -7,7 +7,7 @@ import {
   seedCategories,
   seedNews,
 } from "./queries/news";
-import { translateArticle } from "./ai/client";
+import { translateArticle } from "./ai/zenClient";
 import { getDb } from "./queries/connection";
 import { news } from "@db/schema";
 import { eq } from "drizzle-orm";

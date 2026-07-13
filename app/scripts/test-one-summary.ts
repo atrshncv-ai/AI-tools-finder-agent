@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { chatCompletion } from "../api/ai/client";
+import { chatCompletion } from "../api/ai/zenClient";
 async function main() {
   const text = "Computer Science > Artificial Intelligence arXiv:2606.19464 (cs) [Submitted on 17 Jun 2026] Title:Deontic Policies for Runtime Governance of Agentic AI Systems Authors:Anupam Joshi, Tim Finin, Karuna Pande Joshi, Lalana Kagal Abstract:Autonomous agentic AI systems driven by Large Language Models (LLMs) introduce a new class of security, privacy and governance challenges.";
   const messages = [

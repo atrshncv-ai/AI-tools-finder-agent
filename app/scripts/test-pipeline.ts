@@ -2,16 +2,16 @@ import "dotenv/config";
 import { runSummarizeAgent } from "../api/agent/summarizeAgent";
 import { runTranslateAgent } from "../api/agent/translateAgent";
 import { runDeployAgent } from "../api/agent/deployAgent";
-import { checkLmStudioConnection } from "../api/ai/client";
+import { checkZenConnection } from "../api/ai/zenClient";
 
 async function main() {
   console.log("=== Test Pipeline (skip parse) ===\n");
 
-  // Check LLM availability
-  const lmOk = await checkLmStudioConnection();
-  console.log("LM Studio:", lmOk ? "AVAILABLE" : "NOT AVAILABLE");
-  if (!lmOk) {
-    console.log("Start LM Studio and try again.");
+  // Check Zen API availability
+  const zenOk = await checkZenConnection();
+  console.log("Zen API:", zenOk ? "AVAILABLE" : "NOT AVAILABLE");
+  if (!zenOk) {
+    console.log("Check ZEN_BASE_URL and ZEN_API_KEY, then try again.");
     process.exit(1);
   }
 

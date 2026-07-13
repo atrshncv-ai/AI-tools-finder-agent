@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { chatCompletion } from "../api/ai/client";
+import { chatCompletion } from "../api/ai/zenClient";
 async function main() {
   const text = "OpenAI announced GPT-5 today. It is a large multimodal model with 2M context window.";
   const messages = [

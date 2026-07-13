@@ -12,7 +12,6 @@ import {
   Loader2,
   Play,
   Bot,
-  Activity,
   Plus,
   Trash2,
   Globe,
@@ -178,45 +177,18 @@ export default function Admin() {
             <Bot className="w-4 h-4" />
             Агентная система
           </h2>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4">
             <div className="flex items-center gap-2">
-              {status?.orchestrator ? (
-                <CheckCircle className="w-4 h-4 text-green-500" />
-              ) : (
-                <XCircle className="w-4 h-4 text-yellow-500" />
-              )}
-              <span className="text-sm" style={{ color: "var(--color-text-body)" }}>
-                Оркестратор {status?.orchestrator ? "активен" : "остановлен"}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              {status?.lmStudio ? (
+              {status?.zen ? (
                 <CheckCircle className="w-4 h-4 text-green-500" />
               ) : (
                 <XCircle className="w-4 h-4 text-red-500" />
               )}
               <span className="text-sm" style={{ color: "var(--color-text-body)" }}>
-                LM Studio {status?.lmStudio ? "подключён" : "недоступен"}
+                Zen API {status?.zen ? "подключён" : "недоступен"}
               </span>
             </div>
           </div>
-          {status?.agents && status.agents.length > 0 && (
-            <div className="mt-3 pt-3 border-t" style={{ borderColor: "var(--color-border)" }}>
-              <div className="flex flex-wrap gap-3">
-                {status.agents.map((agent: { id: string; status: string }) => (
-                  <div key={agent.id} className="flex items-center gap-2">
-                    <Activity className="w-3 h-3" style={{
-                      color: agent.status === "running" ? "rgb(34, 197, 94)" :
-                             agent.status === "error" ? "rgb(239, 68, 68)" : "var(--color-text-muted)"
-                    }} />
-                    <span className="text-xs" style={{ color: "var(--color-text-muted)" }}>
-                      {agent.id}: {agent.status}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Actions */}
@@ -247,12 +219,12 @@ export default function Admin() {
             </button>
             <button
               onClick={handleSummarize}
-              disabled={isSummarizing || !status?.lmStudio}
+              disabled={isSummarizing || !status?.zen}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-all"
               style={{
                 borderColor: "var(--color-border)",
                 color: "var(--color-text-body)",
-                opacity: isSummarizing || !status?.lmStudio ? 0.6 : 1,
+                opacity: isSummarizing || !status?.zen ? 0.6 : 1,
               }}
             >
               {isSummarizing ? (

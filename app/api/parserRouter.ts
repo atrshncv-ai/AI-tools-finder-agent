@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { createRouter, publicQuery, adminQuery } from "./middleware";
-import { runSummarizeAgent, getMetrics, getOrchestratorStatus, manualRun } from "./agent/index";
+import { runSummarizeAgent, getMetrics, manualRun } from "./agent/index";
 import { findRecentLogs } from "./queries/parsingLogs";
 import { findAllSources, addSource, removeSource, toggleSource } from "./queries/sources";
 import { findAllUsers, updateUserRole } from "./queries/users";
-import { checkLmStudioConnection } from "./ai/client";
+import { checkZenConnection } from "./ai/zenClient";
 
 export const parserRouter = createRouter({
   parse: adminQuery.mutation(async () => {
@@ -66,13 +66,10 @@ export const parserRouter = createRouter({
     }),
 
   status: publicQuery.query(async () => {
-    const lmStudioOk = await checkLmStudioConnection();
-    const orchestrator = getOrchestratorStatus();
+    const zenOk = await checkZenConnection();
     const metrics = getMetrics();
     return {
-      lmStudio: lmStudioOk,
-      orchestrator: orchestrator.running,
-      agents: orchestrator.agents,
+      zen: zenOk,
       sourcesHealth: metrics.sourcesHealth,
     };
   }),

@@ -6,7 +6,7 @@ config({ path: resolve(dirname(fileURLToPath(import.meta.url)), "../.env") });
 import { getDb } from "./api/queries/connection";
 import { news } from "@db/schema";
 import { eq, and, isNull, desc } from "drizzle-orm";
-import { summarizeArticle } from "./api/ai/client";
+import { summarizeArticle } from "./api/ai/zenClient";
 
 async function main() {
   const db = getDb();

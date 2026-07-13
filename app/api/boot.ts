@@ -7,11 +7,10 @@ import { createContext } from "./context";
 import { env } from "./lib/env";
 import { createOAuthCallbackHandler, createOAuthLoginHandler } from "./kimi/auth";
 import { Paths } from "@contracts/constants";
-import { startScheduler, stopScheduler } from "./scheduler";
 import { rateLimit } from "./lib/rateLimit";
 import { logger } from "./lib/logger";
 import { getDb, closeDb } from "./queries/connection";
-import { checkLmStudioConnection } from "./ai/client";
+import { checkZenConnection } from "./ai/zenClient";
 import { initAgentState, initSourceHealthState } from "./agent/state";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
@@ -44,9 +43,9 @@ app.get("/health", async (c) => {
     status = "error";
   }
 
-  const lmStudioOk = await checkLmStudioConnection();
-  checks.lmStudio = lmStudioOk ? "ok" : "unavailable";
-  if (!lmStudioOk && status === "ok") status = "degraded";
+  const zenOk = await checkZenConnection();
+  checks.zen = zenOk ? "ok" : "unavailable";
+  if (!zenOk && status === "ok") status = "degraded";
 
   return c.json({ status, checks, ts: Date.now() }, status === "error" ? 503 : 200);
 });
@@ -68,11 +67,9 @@ if (env.isProduction) {
   const { serveStaticFiles } = await import("./lib/vite");
   serveStaticFiles(app);
 
-  // Load persisted agent/source state before starting the scheduler
+  // Load persisted agent/source state
   await initAgentState(["parse-agent", "summarize-agent", "translate-agent", "deploy-agent"]);
   await initSourceHealthState();
-
-  startScheduler();
 
   const server = serve({ fetch: app.fetch, port: env.port }, () => {
     logger.info("Server started", { port: env.port, env: process.env.NODE_ENV });
@@ -80,7 +77,6 @@ if (env.isProduction) {
 
   const shutdown = async (signal: string) => {
     logger.info(`Received ${signal}, shutting down gracefully...`);
-    stopScheduler();
     server.close?.();
     await closeDb();
     process.exit(0);

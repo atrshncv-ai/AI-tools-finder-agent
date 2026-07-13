@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { summarizeArticle } from "../api/ai/client";
+import { summarizeArticle } from "../api/ai/zenClient";
 async function main() {
   const text = "OpenAI announced GPT-5 today. It is a large multimodal model with 2M context window. The model supports text, images and audio.";
   console.log("Testing summarizeArticle...");
