@@ -1,6 +1,6 @@
 import { getDb } from "./connection";
 import { news, categories } from "@db/schema";
-import { eq, desc, and, count, sql } from "drizzle-orm";
+import { eq, desc, and, count, sql, getTableColumns } from "drizzle-orm";
 import { classifyArticle } from "../lib/classify";
 
 // ─── Seed categories ───
@@ -10,11 +10,11 @@ export async function seedCategories() {
   if (existing.length > 0) return;
 
   const cats = [
-    { name: "Новая LLM", slug: "new-llm", type: "general" },
-    { name: "ИИ-агент", slug: "ai-agent", type: "general" },
-    { name: "Сравнение", slug: "comparison", type: "general" },
-    { name: "Бенчмарки", slug: "benchmarks", type: "general" },
-    { name: "Обновления", slug: "updates", type: "general" },
+    { name: "AI Agents", slug: "ai-agents", type: "general" },
+    { name: "Developer Tools", slug: "developer-tools", type: "general" },
+    { name: "Automation", slug: "automation", type: "general" },
+    { name: "RAG & Data", slug: "rag-data", type: "general" },
+    { name: "Frameworks", slug: "frameworks", type: "general" },
     { name: "Химия", slug: "chemistry", type: "science" },
     { name: "Материаловедение", slug: "materials", type: "science" },
     { name: "Биология", slug: "biology", type: "science" },
@@ -41,7 +41,7 @@ export async function seedNews() {
       content: "OpenAI анонсировала выпуск GPT-5 — следующего поколения большой языковой модели. Ключевые улучшения включают:\n\n• Мультимодальное рассуждение в реальном времени\n• Контекстное окно до 2 миллионов токенов\n• Улучшенные математические и научные способности\n• Поддержка видеоанализа\n• Снижение стоимости API на 40% по сравнению с GPT-4o\n\nБенчмарки показывают 15% improvement в MATH и 22% в Codeforces по сравнению с предыдущей версией.",
       originalUrl: "https://openai.com/blog/gpt-5",
       source: "OpenAI Blog",
-      categorySlug: "new-llm",
+      categorySlug: "frameworks",
       tags: "GPT-5,OpenAI,LLM,мультимодальность",
       publishedAt: new Date("2026-06-10T09:00:00Z"),
       isScience: false,
@@ -64,7 +64,7 @@ export async function seedNews() {
       content: "Anthropic представила Claude 4 с революционными агентскими возможностями:\n\n• Автономное выполнение многошаговых задач\n• Контекст до 1 миллиона токенов\n• Интеграция с 50+ инструментами\n• Улучшенная безопасность и контроль\n• Новый режим 'Research Agent' для глубокого анализа\n\nClaude 4 демонстрирует state-of-the-art результаты в SWE-bench и HumanEval.",
       originalUrl: "https://anthropic.com/news/claude-4",
       source: "Anthropic",
-      categorySlug: "ai-agent",
+      categorySlug: "ai-agents",
       tags: "Claude,Anthropic,агент,контекст",
       publishedAt: new Date("2026-06-08T11:00:00Z"),
       isScience: false,
@@ -87,7 +87,7 @@ export async function seedNews() {
       content: "Проведено масштабное сравнение трёх ведущих языковых моделей 2026 года:\n\n**GPT-5 (OpenAI):**\n• Лучший в креативном письме и генерации идей\n• Сильнейший мультимодальный анализ\n• Высокая стоимость API\n\n**Claude 4 (Anthropic):**\n• Лидер в агентских задачах и программировании\n• Лучшая безопасность и контроль\n• Отличная работа с длинным контекстом\n\n**Llama 4 (Meta):**\n• Наиболее эффективная с точки зрения ресурсов\n• Открытые веса\n• Хорошая производительность при локальном развёртывании\n\nВыбор модели зависит от конкретных задач и бюджета.",
       originalUrl: "https://arxiv.org/abs/2606.01234",
       source: "ArXiv / AI Benchmarks",
-      categorySlug: "comparison",
+      categorySlug: "rag-data",
       tags: "Llama,GPT-5,Claude,сравнение,бенчмарки",
       publishedAt: new Date("2026-06-06T16:00:00Z"),
       isScience: false,
@@ -133,7 +133,7 @@ export async function seedNews() {
       content: "xAI представила Grok 3 с интеграцией робототехники:\n\n• Управление Tesla Bot через текстовые команды\n• Понимание физических объектов и пространства\n• Выполнение бытовых задач: уборка, организация предметов\n• Интеграция с датчиками робота (камеры, тактильные сенсоры)\n• Обучение через имитационное обучение\n\nДемонстрация проведена на конференции xAI Robotics Summit 2026.",
       originalUrl: "https://x.ai/blog/grok-3-robotics",
       source: "xAI Blog",
-      categorySlug: "updates",
+      categorySlug: "frameworks",
       tags: "Grok,xAI,Tesla Bot,робототехника",
       publishedAt: new Date("2026-06-02T15:00:00Z"),
       isScience: false,
@@ -144,7 +144,7 @@ export async function seedNews() {
       content: "Cohere выпустила Command R Ultra для корпоративных задач:\n\n• Контекст 256K токенов\n• Интеграция с 40+ enterprise-системами\n• Лидерство в RAG-бенчмарках\n• Мультиязычная поддержка (23 языка)\n• Приватное развёртывание on-premise\n\nКомпания уже подписала контракты с 15 Fortune 500 компаниями.",
       originalUrl: "https://cohere.com/blog/command-r-ultra",
       source: "Cohere",
-      categorySlug: "new-llm",
+      categorySlug: "rag-data",
       tags: "Cohere,Command R,enterprise,RAG",
       publishedAt: new Date("2026-06-01T09:00:00Z"),
       isScience: false,
@@ -233,8 +233,12 @@ export async function findAllNews(opts: {
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
   const items = await db
-    .select()
+    .select({
+      ...getTableColumns(news),
+      categoryName: categories.name,
+    })
     .from(news)
+    .leftJoin(categories, eq(news.categoryId, categories.id))
     .where(where)
     .orderBy(desc(news.publishedAt))
     .limit(limit)

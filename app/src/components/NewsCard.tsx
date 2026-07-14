@@ -79,7 +79,7 @@ export default function NewsCard({ article, isRead = false, onMarkRead, showFavo
         <div className="flex-1 p-5">
           <div className="flex items-start justify-between gap-3">
             <div className="flex flex-wrap gap-1.5">
-              {article.categorySlug && (
+              {((article as any).categoryName || article.categorySlug) && (
                 <span
                   className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium uppercase tracking-wider"
                   style={{
@@ -87,7 +87,7 @@ export default function NewsCard({ article, isRead = false, onMarkRead, showFavo
                     color: "var(--color-tag-text)",
                   }}
                 >
-                  {article.categorySlug}
+                  {(article as any).categoryName || article.categorySlug}
                 </span>
               )}
               {tags.slice(0, 2).map((tag) => {

@@ -20,13 +20,14 @@ export default function Home() {
 
   const { data: newsData, isLoading, isFetching } = trpc.news.list.useQuery(
     {
+      isScience: false,
       categorySlug: activeCategory === "all" ? undefined : activeCategory,
       limit: PAGE_SIZE,
       offset,
     }
   );
 
-  const { data: categoriesData } = trpc.news.categories.useQuery({});
+  const { data: categoriesData } = trpc.news.categories.useQuery({ type: "general" });
 
   const { data: readStatuses } = trpc.readStatus.list.useQuery(undefined, {
     enabled: isAuthenticated,
@@ -80,7 +81,7 @@ export default function Home() {
                 className="text-2xl font-bold tracking-tight"
                 style={{ color: "var(--color-text-heading)", fontFamily: "Manrope, sans-serif" }}
               >
-                Лента новостей
+                IT-инструменты
               </h1>
               {isAuthenticated && unreadCount > 0 && (
                 <span
