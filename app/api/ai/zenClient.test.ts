@@ -365,3 +365,69 @@ describe("translateArticle", () => {
     expect(result).toContain("Параграф 2");
   });
 });
+
+// ─── Key Pool rotation ──────────────────────────────────────────────────────
+
+describe("key pool rotation", () => {
+  it("rotates to the next key on HTTP 429 and succeeds", async () => {
+    mockZenError(429, "rate limit exceeded");
+    mockZenSuccess("rotated ok");
+    const { chatCompletion, getKeyPoolState } = await importZen({
+      ZEN_API_KEYS: "key-aaa,key-bbb",
+    });
+
+    const result = await chatCompletion([{ role: "user", content: "test" }]);
+
+    expect(result).toBe("rotated ok");
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(getKeyPoolState().activeIndex).toBe(1);
+    const secondCall = mockFetch.mock.calls[1] as unknown as [string, { headers: Record<string, string> }];
+    expect(secondCall[1].headers["Authorization"]).toBe("Bearer key-bbb");
+  });
+
+  it("rotates on 401 credits/balance exhaustion", async () => {
+    mockZenError(401, '{"type":"error","error":{"type":"CreditsError","message":"No payment method"}}');
+    mockZenSuccess("recovered");
+    const { chatCompletion } = await importZen({ ZEN_API_KEYS: "k1,k2" });
+
+    const result = await chatCompletion([{ role: "user", content: "test" }]);
+
+    expect(result).toBe("recovered");
+  });
+
+  it("does NOT rotate on plain 401 (invalid key) — normal retry path", async () => {
+    mockZenError(401, "invalid api key");
+    mockZenError(401, "invalid api key");
+    mockZenError(401, "invalid api key");
+    const { chatCompletion } = await importZen({ ZEN_API_KEYS: "k1,k2" });
+
+    await expect(chatCompletion([{ role: "user", content: "test" }])).rejects.toThrow(
+      "chatCompletion failed after 3 attempts",
+    );
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  }, 10000);
+
+  it("throws pool-exhausted when every key hits quota", async () => {
+    mockZenError(429, "quota exceeded");
+    mockZenError(402, "balance depleted");
+    const { chatCompletion } = await importZen({ ZEN_API_KEYS: "k1,k2" });
+
+    await expect(chatCompletion([{ role: "user", content: "test" }])).rejects.toThrow(
+      "key pool exhausted",
+    );
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to legacy ZEN_API_KEY when ZEN_API_KEYS is absent", async () => {
+    mockZenSuccess("legacy ok");
+    delete process.env.ZEN_API_KEYS;
+    const { chatCompletion, getKeyPoolState } = await importZen();
+
+    const result = await chatCompletion([{ role: "user", content: "test" }]);
+
+    expect(result).toBe("legacy ok");
+    expect(getKeyPoolState().poolSize).toBe(1);
+    const firstCall = mockFetch.mock.calls[0] as unknown as [string, { headers: Record<string, string> }];
+    expect(firstCall[1].headers["Authorization"]).toBe("Bearer test-key");
+  });
+});

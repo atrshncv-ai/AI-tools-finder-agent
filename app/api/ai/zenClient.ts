@@ -4,8 +4,81 @@ import { encode, decode } from "gpt-tokenizer";
 // ─── Configuration (all from env vars) ──────────────────────────────────────
 
 const ZEN_BASE_URL = process.env.ZEN_BASE_URL || "https://api.opencode Zen.ai/v1";
-const ZEN_API_KEY = process.env.ZEN_API_KEY || "";
 const DEFAULT_MODEL = process.env.ZEN_MODEL || "zen-default";
+
+// ─── API Key Pool (rotation / fallback) ─────────────────────────────────────
+//
+// ZEN_API_KEYS — comma-separated pool of Opencode Zen keys. Legacy single-key
+// ZEN_API_KEY is still honored as a fallback. On quota/balance exhaustion
+// (HTTP 429, or 401/402/403 with credit/quota semantics) the adapter rotates
+// to the next key and retries the request automatically.
+
+const KEY_COOLDOWN_MS = parseInt(process.env.ZEN_KEY_COOLDOWN_MS || "3600000", 10); // 1h
+
+function parseKeyPool(): string[] {
+  const pooled = (process.env.ZEN_API_KEYS || "")
+    .split(",")
+    .map((k) => k.trim())
+    .filter(Boolean);
+  if (pooled.length > 0) return pooled;
+  const legacy = (process.env.ZEN_API_KEY || "").trim();
+  return legacy ? [legacy] : [];
+}
+
+const keyPool: string[] = parseKeyPool();
+let currentKeyIndex = 0;
+/** key index → timestamp until which the key is considered exhausted */
+const keyCooldownUntil = new Map<number, number>();
+
+function maskKey(key: string): string {
+  return key.length > 10 ? `${key.slice(0, 7)}…${key.slice(-4)}` : "***";
+}
+
+function getActiveKey(): string | null {
+  if (keyPool.length === 0) return null;
+  return keyPool[currentKeyIndex % keyPool.length];
+}
+
+function isKeyCooling(index: number): boolean {
+  return (keyCooldownUntil.get(index) ?? 0) > Date.now();
+}
+
+/** Rotate to the next non-cooling key. Returns false if the whole pool is exhausted. */
+function rotateKey(): boolean {
+  if (keyPool.length <= 1) return false;
+  for (let i = 1; i < keyPool.length; i++) {
+    const next = (currentKeyIndex + i) % keyPool.length;
+    if (!isKeyCooling(next)) {
+      console.log(
+        `[Zen] Key rotation: #${currentKeyIndex} (${maskKey(keyPool[currentKeyIndex])}) → #${next} (${maskKey(keyPool[next])})`,
+      );
+      currentKeyIndex = next;
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Mark the current key as quota-exhausted and rotate away from it. */
+function exhaustCurrentKeyAndRotate(): boolean {
+  keyCooldownUntil.set(currentKeyIndex, Date.now() + KEY_COOLDOWN_MS);
+  console.log(
+    `[Zen] Key #${currentKeyIndex} (${maskKey(keyPool[currentKeyIndex])}) marked quota-exhausted for ${KEY_COOLDOWN_MS / 60000}min`,
+  );
+  return rotateKey();
+}
+
+export function getKeyPoolState(): {
+  poolSize: number;
+  activeIndex: number;
+  coolingKeys: number;
+} {
+  return {
+    poolSize: keyPool.length,
+    activeIndex: keyPool.length ? currentKeyIndex : -1,
+    coolingKeys: keyPool.filter((_, i) => isKeyCooling(i)).length,
+  };
+}
 
 const AI_TIMEOUT_MS = parseInt(process.env.ZEN_TIMEOUT_MS || "120000", 10);
 const MAX_INPUT_TOKENS = parseInt(process.env.ZEN_MAX_INPUT_TOKENS || "6000", 10);
@@ -142,6 +215,28 @@ function cleanAiOutput(text: string): string {
 
 // ─── Core API call ──────────────────────────────────────────────────────────
 
+/** Quota/balance exhaustion — triggers key rotation (see Key Pool above). */
+export class ZenQuotaError extends Error {
+  readonly status: number;
+  constructor(status: number, body: string) {
+    super(`Zen API quota exhausted (HTTP ${status}): ${body.slice(0, 300)}`);
+    this.name = "ZenQuotaError";
+    this.status = status;
+  }
+}
+
+/**
+ * 429 is always rate/quota. 402/403 treated as quota. 401 only when the body
+ * indicates balance/credit exhaustion (not a plainly invalid key).
+ */
+function isQuotaError(status: number, body: string): boolean {
+  if (status === 429 || status === 402 || status === 403) return true;
+  if (status === 401) {
+    return /credit|balance|quota|limit|payment|billing|insufficient/i.test(body);
+  }
+  return false;
+}
+
 interface CompletionResponse {
   id: string;
   choices: {
@@ -187,8 +282,9 @@ async function rawChatCompletion(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  if (ZEN_API_KEY) {
-    headers["Authorization"] = `Bearer ${ZEN_API_KEY}`;
+  const activeKey = getActiveKey();
+  if (activeKey) {
+    headers["Authorization"] = `Bearer ${activeKey}`;
   }
 
   const response = await fetch(`${ZEN_BASE_URL}/chat/completions`, {
@@ -204,6 +300,9 @@ async function rawChatCompletion(
 
   if (!response.ok) {
     const errorBody = await response.text();
+    if (isQuotaError(response.status, errorBody)) {
+      throw new ZenQuotaError(response.status, errorBody);
+    }
     throw new Error(`Zen API error: ${response.status} - ${errorBody}`);
   }
 
@@ -256,6 +355,21 @@ export async function chatCompletion(
         circuitRecordSuccess();
         return result;
       } catch (error) {
+        // Key rotation: quota/balance exhaustion → swap key, retry immediately
+        // without consuming a backoff attempt.
+        if (error instanceof ZenQuotaError) {
+          if (exhaustCurrentKeyAndRotate()) {
+            console.log(`[Zen] Retrying request with rotated key...`);
+            attempt--;
+            continue;
+          }
+          circuitRecordFailure();
+          throw new Error(
+            `Zen API key pool exhausted: all ${keyPool.length} key(s) hit quota/balance limits. ` +
+              `Original error: ${error.message}`,
+          );
+        }
+
         circuitRecordFailure();
         const isLast = attempt === retries;
         const msg = error instanceof Error ? error.message : String(error);
@@ -382,8 +496,9 @@ export async function translateArticle(
 export async function checkZenConnection(): Promise<boolean> {
   try {
     const headers: Record<string, string> = {};
-    if (ZEN_API_KEY) {
-      headers["Authorization"] = `Bearer ${ZEN_API_KEY}`;
+    const activeKey = getActiveKey();
+    if (activeKey) {
+      headers["Authorization"] = `Bearer ${activeKey}`;
     }
     const response = await fetch(`${ZEN_BASE_URL}/models`, {
       headers,
