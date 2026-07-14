@@ -193,43 +193,44 @@ interface GhRepo {
   stargazers_count: number;
   license?: { spdx_id?: string } | null;
   created_at: string;
+  topics?: string[];
 }
 
 async function collectGithubTrending(): Promise<Candidate[]> {
-  // GitHub search already enforces created:>= lookback in the query;
-  // the strict Time Guard in main() re-verifies every candidate anyway.
+  // Global GitHub velocity search: top 50 repos created recently and sorted by
+  // stars. Rank is injected into metrics so evaluate-news can award Top-10 / Top-50
+  // trending points deterministically.
   const since = new Date(Date.now() - GITHUB_LOOKBACK_DAYS * 86400_000)
     .toISOString()
     .slice(0, 10);
-  const keywords = ["llm", "machine-learning", "ai-agent", "deep-learning"];
-  const seen = new Set<string>();
-  const out: Candidate[] = [];
-  for (const kw of keywords) {
-    const data = await fetchJson<{ items: GhRepo[] }>(
-      `https://api.github.com/search/repositories?q=${encodeURIComponent(
-        `${kw} in:name,description,readme created:>=${since} stars:>=${GITHUB_MIN_STARS}`,
-      )}&sort=stars&order=desc&per_page=10`,
-    );
-    if (!data?.items) continue;
-    for (const r of data.items) {
-      if (seen.has(r.full_name)) continue;
-      seen.add(r.full_name);
-      out.push({
-        title: `${r.full_name}${r.description ? " — " + r.description : ""}`,
-        url: r.html_url,
-        source: "github-trending",
-        publishedAt: new Date(r.created_at),
-        language: "en",
-        isScience: false,
-        scienceField: null,
-        metrics: {
-          origin: "github-api",
-          githubStars: r.stargazers_count,
-          githubLicense: r.license?.spdx_id ?? null,
-        },
-      });
-    }
-  }
+  // Keep <= 4 OR operators to stay inside GitHub's search query limit.
+  const q =
+    `("ai agent" OR mcp OR rag OR llm) ` +
+    `in:name,description,readme created:>=${since} stars:>=${GITHUB_MIN_STARS}`;
+  const data = await fetchJson<{ items: GhRepo[] }>(
+    `https://api.github.com/search/repositories?q=${encodeURIComponent(
+      q,
+    )}&sort=stars&order=desc&per_page=50`,
+  );
+  const items = data?.items ?? [];
+  const out: Candidate[] = items.map((r, idx) => ({
+    title: `${r.full_name}${r.description ? " — " + r.description : ""}`,
+    url: r.html_url,
+    source: "github-trending",
+    publishedAt: new Date(r.created_at),
+    language: "en",
+    isScience: false,
+    scienceField: null,
+    metrics: {
+      origin: "github-api",
+      githubTrendingRank: idx + 1,
+      githubStars: r.stargazers_count,
+      githubLicense: r.license?.spdx_id ?? null,
+      githubCreatedAt: r.created_at,
+      githubDescription: r.description,
+      githubTopics: r.topics ?? [],
+    },
+  }));
   console.error(`[collect] github-trending: ${out.length} repos`);
   return out;
 }

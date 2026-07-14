@@ -147,7 +147,7 @@ async function fetchAndCleanArticle(url: string): Promise<string | null> {
       }
     });
 
-    let container = $("body");
+    let container: any = $("body");
     for (const selector of CONTENT_SELECTORS) {
       const el = $(selector).first();
       if (el.length && el.text().trim().length > 200) {

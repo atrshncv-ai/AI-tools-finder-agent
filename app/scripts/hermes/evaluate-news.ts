@@ -4,28 +4,31 @@
  *
  * The LLM is NOT qualified to judge "scientific value" — so it doesn't.
  * This script collects CONCRETE metrics via lightweight HTTP/JSON APIs and
- * sums points deterministically:
+ * sums points deterministically.
  *
- * Tech criteria (AI tools) — VELOCITY, not absolute numbers:
- *   +40  Project is in GitHub Trending (fresh repo actively gaining stars)
- *        OR a major project (> 10k stars) shipped a NEW release/tag <= 72h ago
- *   +30  Hacker News post OR Reddit post with > 100 upvotes
- *   +20  Open source license (MIT / Apache-2.0)
+ * Tech scoring matrix (AI tools):
+ *   +40  GitHub Trending Top-10   +25  GitHub Trending Top-50
+ *   +30  GitHub stars > 10k       +20  GitHub stars > 1k
+ *        +25  GitHub stars > 500 AND repo age < 1 month
+ *   +30  HN/Reddit > 100 votes    +15  HN/Reddit > 30 votes
+ *   +15  Tech trend bonus (MCP / AI Agent / RAG signals)
+ *   +10  Open source license (MIT / Apache-2.0)
  *
- * Science criteria:
- *   +50  Published in a Tier-1 journal (Nature, Science, Lancet, Cell)
- *        or an official Tier-1 lab blog
- *   +40  arXiv preprint accompanied by open code / model / dataset link
- *   +30  High Altmetric score (>= 50) — proxy for active scientific discussion
+ * Science scoring matrix:
+ *   +45  Tier-1 source (Nature, Science, Lancet, Cell,
+ *        OpenAI/Anthropic/Google/DeepMind lab blog)
+ *   +30  Tier-2 source (NeurIPS/CVPR/ICLR, HuggingFace Blog, MIT Tech Review)
+ *   +35  ArXiv preprint WITH open code / model / dataset
+ *   +10  ArXiv preprint WITHOUT open code
+ *   +20  High Altmetric score (>= 50) — proxy for active scientific discussion
+ *   +15  Topic bonus: AI x chemistry/materials/biology/medicine/physics
  *
- * Gate: only articles with score > 75 reach the dashboard pipeline.
+ * Gate: only articles with score > 65 reach the dashboard pipeline.
  * Daily cap: at most --daily-cap (default 5) approved articles per UTC day.
  *
  * Usage:
  *   npx tsx scripts/hermes/evaluate-news.ts --batch [--daily-cap 5]
  *   npx tsx scripts/hermes/evaluate-news.ts --id 42
- *
- * Exit codes: 0 = success, 1 = fatal error
  */
 
 import "dotenv/config";
@@ -37,20 +40,51 @@ import { eq, and, isNull, isNotNull, inArray, gte, desc } from "drizzle-orm";
 const FETCH_TIMEOUT_MS = 20_000;
 const UA = "science-agent/2.0 (+https://159.194.236.68:3000)";
 
-const SCORE_GATE = 75; // strictly greater passes
-const GH_MAJOR_STARS = 10_000; // "major project" threshold for fresh releases
-const RELEASE_MAX_AGE_MS = 72 * 3600_000; // fresh release window
-const SOCIAL_THRESHOLD = 100;
-const ALTMETRIC_THRESHOLD = 50;
+const SCORE_GATE = 65; // strictly greater passes
+const RELEASE_MAX_AGE_MS = 72 * 3600_000;
 
-const TIER1_SOURCES = new Set(["nature", "science", "lancet", "cell"]);
-const TIER1_LAB_BLOGS = new Set([
+// ─── Source tiers for Science scoring ───────────────────────────────────────
+
+const TIER1_SCIENCE = new Set([
+  "nature",
+  "science",
+  "lancet",
+  "cell",
   "openai-blog",
   "anthropic-blog",
   "google-ai-blog",
   "deepmind-blog",
 ]);
+
+const TIER2_SCIENCE = new Set([
+  "mit-tech-review",
+  "huggingface-blog",
+  // arXiv/conference names detected by content regex, not source slug
+]);
+
 const OPEN_LICENSES = new Set(["MIT", "Apache-2.0"]);
+
+// ─── Regex helpers for text signals ─────────────────────────────────────────
+
+const AI_TERMS =
+  /\b(ai|artificial intelligence|machine learning|deep learning|neural network|llm|large language model|genai|generative ai)\b/gi;
+
+const TECH_TREND_TERMS =
+  /\b(mcp|model context protocol|ai agent|agent framework|autonomous agent|rag|retrieval[ -]augmented generation)\b/gi;
+
+const SCIENCE_DOMAIN_TERMS =
+  /\b(chemistry|materials? science|biology|biomedical|biotech|medicine|medical|oncology|physics|quantum)\b/gi;
+
+function hasAny(text: string, re: RegExp): boolean {
+  re.lastIndex = 0;
+  return re.test(text);
+}
+
+function hasAiAndDomain(text: string): boolean {
+  return hasAny(text, AI_TERMS) && hasAny(text, SCIENCE_DOMAIN_TERMS);
+}
+
+// ─── Types ──────────────────────────────────────────────────────────────────
 
 interface ScoreBreakdown {
   criterion: string;
@@ -65,6 +99,8 @@ interface EvalResult {
   breakdown: ScoreBreakdown[];
   metrics: Record<string, unknown>;
 }
+
+// ─── HTTP utilities ─────────────────────────────────────────────────────────
 
 function parseArgs(): { id: number | null; batch: boolean; dailyCap: number } {
   const a = process.argv.slice(2);
@@ -100,15 +136,14 @@ async function fetchJson<T>(url: string): Promise<T | null> {
   }
 }
 
-/** Extract outbound links + DOIs from the article page (light cheerio pass). */
-async function extractPageSignals(url: string): Promise<{ links: string[]; dois: string[] }> {
+async function extractPageSignals(url: string): Promise<{ links: string[]; dois: string[]; text: string }> {
   const res = await safeFetch(url);
-  if (!res) return { links: [], dois: [] };
+  if (!res) return { links: [], dois: [], text: "" };
   let html = "";
   try {
     html = await res.text();
   } catch {
-    return { links: [], dois: [] };
+    return { links: [], dois: [], text: "" };
   }
   const $ = cheerio.load(html);
   const links = new Set<string>();
@@ -119,38 +154,42 @@ async function extractPageSignals(url: string): Promise<{ links: string[]; dois:
   const dois = new Set<string>();
   const doiRe = /10\.\d{4,9}\/[-._;()/:A-Z0-9]+/gi;
   for (const m of html.matchAll(doiRe)) dois.add(m[0].replace(/[.)]+$/, ""));
-  return { links: [...links], dois: [...dois].slice(0, 5) };
+  return { links: [...links], dois: [...dois].slice(0, 5), text: $("body").text() };
 }
 
-interface GhInfo {
+// ─── GitHub helpers ─────────────────────────────────────────────────────────
+
+interface GhRepoDetails {
   stars: number;
   license: string | null;
+  createdAt: string;
+  description: string | null;
+  topics: string[];
 }
 
-async function githubRepoInfo(fullName: string): Promise<GhInfo | null> {
+async function githubRepoDetails(fullName: string): Promise<GhRepoDetails | null> {
   const data = await fetchJson<{
     stargazers_count?: number;
     license?: { spdx_id?: string } | null;
+    created_at?: string;
+    description?: string;
+    topics?: string[];
   }>(`https://api.github.com/repos/${fullName}`);
   if (!data || typeof data.stargazers_count !== "number") return null;
-  return { stars: data.stargazers_count, license: data.license?.spdx_id ?? null };
+  return {
+    stars: data.stargazers_count,
+    license: data.license?.spdx_id ?? null,
+    createdAt: data.created_at ?? "",
+    description: data.description ?? null,
+    topics: data.topics ?? [],
+  };
 }
 
-/** Latest GitHub release younger than 72h (velocity signal for major projects). */
-async function githubFreshRelease(
-  fullName: string,
-): Promise<{ tag: string; publishedAt: string } | null> {
-  const rel = await fetchJson<{ tag_name?: string; published_at?: string }[]>(
-    `https://api.github.com/repos/${fullName}/releases?per_page=1`,
-  );
-  const latest = rel?.[0];
-  if (
-    latest?.published_at &&
-    Date.now() - new Date(latest.published_at).getTime() <= RELEASE_MAX_AGE_MS
-  ) {
-    return { tag: latest.tag_name ?? "release", publishedAt: latest.published_at };
-  }
-  return null;
+function githubFullNameFromUrl(url: string): string | null {
+  const m = url.match(/github\.com\/([\w.-]+)\/([\w.-]+)/);
+  if (!m) return null;
+  if (["topics", "trending", "collections", "features"].includes(m[1])) return null;
+  return `${m[1]}/${m[2]}`;
 }
 
 async function hackerNewsPoints(url: string, title: string): Promise<number> {
@@ -188,7 +227,12 @@ async function altmetricScore(doi: string): Promise<number | null> {
   return typeof data?.score === "number" ? Math.round(data.score) : null;
 }
 
-/** Evaluate one article: collect hard metrics and sum points deterministically. */
+// ─── Core evaluator ─────────────────────────────────────────────────────────
+
+function isScienceSource(source: string): boolean {
+  return TIER1_SCIENCE.has(source) || TIER2_SCIENCE.has(source);
+}
+
 async function evaluate(article: {
   id: number;
   title: string;
@@ -201,59 +245,67 @@ async function evaluate(article: {
   const prev = (article.metrics as Record<string, unknown>) || {};
   const metrics: Record<string, unknown> = { ...prev };
 
-  // Pre-collected metrics from collector APIs (GitHub / HN / Reddit)
   let githubStars = typeof prev.githubStars === "number" ? prev.githubStars : null;
   let githubLicense = typeof prev.githubLicense === "string" ? prev.githubLicense : null;
+  let githubCreatedAt: string | null = typeof prev.githubCreatedAt === "string" ? prev.githubCreatedAt : null;
+  let githubDescription: string | null = typeof prev.githubDescription === "string" ? prev.githubDescription : null;
+  let githubTopics: string[] = Array.isArray(prev.githubTopics) ? (prev.githubTopics as string[]) : [];
   let hnPoints = typeof prev.hnPoints === "number" ? prev.hnPoints : null;
   let redditUpsN = typeof prev.redditUps === "number" ? prev.redditUps : null;
   let hasOpenArtifact = false;
 
-  // Page-level signals: outbound links, DOIs (skip for API-sourced GitHub items)
   const isGithubUrl = /github\.com\/[\w.-]+\/[\w.-]+/.test(article.originalUrl);
   let links: string[] = [];
   let dois: string[] = [];
+  let pageText = "";
+
+  // Page-level signals for non-GitHub items
   if (!isGithubUrl) {
     const signals = await extractPageSignals(article.originalUrl);
     links = signals.links;
     dois = signals.dois;
+    pageText = signals.text;
   }
 
-  // GitHub stars/license — from URL itself or first github link in content
+  // GitHub metadata: from URL itself or first github link in content
   let ghFullName: string | null = null;
   if (githubStars === null) {
     const ghLink = isGithubUrl
       ? article.originalUrl
       : links.find((l) => /github\.com\/[\w.-]+\/[\w.-]+/.test(l));
-    if (ghLink) {
-      const m = ghLink.match(/github\.com\/([\w.-]+)\/([\w.-]+)/);
-      if (m && !["topics", "trending", "collections", "features"].includes(m[1])) {
-        ghFullName = `${m[1]}/${m[2]}`;
-        hasOpenArtifact = true;
-        const info = await githubRepoInfo(ghFullName);
-        if (info) {
-          githubStars = info.stars;
-          githubLicense = info.license;
-        }
-      }
-    }
+    ghFullName = ghLink ? githubFullNameFromUrl(ghLink) : null;
   } else {
-    hasOpenArtifact = true;
-    const m = article.originalUrl.match(/github\.com\/([\w.-]+)\/([\w.-]+)/);
-    if (m) ghFullName = `${m[1]}/${m[2]}`;
+    ghFullName = githubFullNameFromUrl(article.originalUrl);
   }
+
+  if (ghFullName) {
+    const details = await githubRepoDetails(ghFullName);
+    if (details) {
+      githubStars = details.stars;
+      githubLicense = details.license;
+      githubCreatedAt = details.createdAt;
+      githubDescription = details.description;
+      githubTopics = details.topics;
+      hasOpenArtifact = true;
+    }
+  }
+
   if (!hasOpenArtifact) {
     hasOpenArtifact = links.some(
-      (l) => /huggingface\.co\/(models|datasets)\//.test(l) || /zenodo\.org|kaggle\.com\/datasets/.test(l),
+      (l) =>
+        /huggingface\.co\/(models|datasets)\//.test(l) ||
+        /zenodo\.org/.test(l) ||
+        /kaggle\.com\/datasets/.test(l),
     );
   }
 
-  // Social traction — only query APIs if collector didn't supply numbers
+  // Social traction
   if (hnPoints === null) hnPoints = await hackerNewsPoints(article.originalUrl, article.title);
   if (redditUpsN === null) redditUpsN = await redditUps(article.originalUrl);
 
   // Altmetric (science articles with DOI)
   let altmetric: number | null = null;
-  if (article.isScience) {
+  if (article.isScience || isScienceSource(article.source)) {
     const doiFromUrl = article.originalUrl.match(/10\.\d{4,9}\/[-._;()/:A-Z0-9]+/i);
     const doi = doiFromUrl ? doiFromUrl[0] : dois[0];
     if (doi) altmetric = await altmetricScore(doi);
@@ -262,89 +314,128 @@ async function evaluate(article: {
   metrics.githubStars = githubStars;
   metrics.githubLicense = githubLicense;
   metrics.githubRepo = ghFullName;
+  metrics.githubCreatedAt = githubCreatedAt;
+  metrics.githubDescription = githubDescription;
+  metrics.githubTopics = githubTopics;
   metrics.hnPoints = hnPoints;
   metrics.redditUps = redditUpsN;
   metrics.altmetricScore = altmetric;
   metrics.hasOpenArtifact = hasOpenArtifact;
   metrics.dois = dois;
 
-  // ── Sum points deterministically ──
+  // ── Score deterministically ──
   let score = 0;
+  const evidenceText = `${article.title} ${pageText} ${githubDescription ?? ""} ${githubTopics.join(" ")}`;
 
-  if (article.isScience) {
-    // Science criteria
-    if (TIER1_SOURCES.has(article.source) || TIER1_LAB_BLOGS.has(article.source)) {
-      score += 50;
-      breakdown.push({
-        criterion: "tier1-journal-or-lab",
-        points: 50,
-        evidence: `source=${article.source}`,
-      });
-    }
-    const isArxiv = /arxiv\.org/.test(article.originalUrl) || article.source === "arxiv";
-    if (isArxiv && hasOpenArtifact) {
-      score += 40;
-      breakdown.push({
-        criterion: "arxiv-with-open-artifact",
-        points: 40,
-        evidence: `openArtifact=${hasOpenArtifact}, githubStars=${githubStars ?? "n/a"}`,
-      });
-    }
-    if (altmetric !== null && altmetric >= ALTMETRIC_THRESHOLD) {
+  if (article.isScience || isScienceSource(article.source)) {
+    // ── Science scoring ──
+
+    // Source tier
+    if (TIER1_SCIENCE.has(article.source)) {
+      score += 45;
+      breakdown.push({ criterion: "tier1-source", points: 45, evidence: `source=${article.source}` });
+    } else if (TIER2_SCIENCE.has(article.source) || hasAny(evidenceText, /\bNeurIPS\b|\bCVPR\b|\bICLR\b/)) {
       score += 30;
+      breakdown.push({ criterion: "tier2-source", points: 30, evidence: `source=${article.source}` });
+    }
+
+    // Reproducibility
+    const isArxiv =
+      /arxiv\.org/.test(article.originalUrl) ||
+      article.source === "arxiv" ||
+      links.some((l) => /arxiv\.org/.test(l));
+    if (isArxiv) {
+      if (hasOpenArtifact) {
+        score += 35;
+        breakdown.push({
+          criterion: "arxiv-with-code",
+          points: 35,
+          evidence: `openArtifact=${hasOpenArtifact}, repo=${ghFullName ?? "n/a"}`,
+        });
+      } else {
+        score += 10;
+        breakdown.push({ criterion: "arxiv-preprint", points: 10, evidence: "no open artifact found" });
+      }
+    }
+
+    // Social proof
+    if (altmetric !== null && altmetric >= 50) {
+      score += 20;
+      breakdown.push({ criterion: "altmetric-buzz", points: 20, evidence: `altmetric=${altmetric}` });
+    }
+
+    // Topic bonus
+    if (hasAiAndDomain(evidenceText)) {
+      score += 15;
       breakdown.push({
-        criterion: "altmetric-buzz",
-        points: 30,
-        evidence: `altmetric=${altmetric}`,
+        criterion: "ai-domain-intersection",
+        points: 15,
+        evidence: "AI + chemistry/materials/biology/medicine/physics",
       });
     }
   } else {
-    // Tech criteria — VELOCITY paradigm:
-    // (a) project surfaced by our GitHub Trending collector (fresh repo gaining stars)
-    const isTrending = prev.origin === "github-api" && isGithubUrl;
-    // (b) major project (>10k stars) with a fresh release/tag <= 72h
-    let freshRelease: { tag: string; publishedAt: string } | null = null;
-    if (
-      !isTrending &&
-      ghFullName &&
-      githubStars !== null &&
-      githubStars > GH_MAJOR_STARS
-    ) {
-      freshRelease = await githubFreshRelease(ghFullName);
-    }
-    metrics.githubTrending = isTrending;
-    metrics.githubFreshRelease = freshRelease;
+    // ── Tech scoring ──
 
-    if (isTrending || freshRelease) {
+    // 1) GitHub Trending velocity (rank injected by collect-dual)
+    const trendingRank = typeof prev.githubTrendingRank === "number" ? prev.githubTrendingRank : null;
+    metrics.githubTrendingRank = trendingRank;
+    if (trendingRank !== null && trendingRank <= 10) {
       score += 40;
-      breakdown.push({
-        criterion: isTrending ? "github-trending-velocity" : "github-fresh-release",
-        points: 40,
-        evidence: isTrending
-          ? `repo=${ghFullName ?? article.originalUrl}, stars=${githubStars ?? "n/a"} (trending)`
-          : `repo=${ghFullName}, stars=${githubStars}, release=${freshRelease!.tag} @ ${freshRelease!.publishedAt}`,
-      });
+      breakdown.push({ criterion: "github-trending-top10", points: 40, evidence: `rank=${trendingRank}` });
+    } else if (trendingRank !== null && trendingRank <= 50) {
+      score += 25;
+      breakdown.push({ criterion: "github-trending-top50", points: 25, evidence: `rank=${trendingRank}` });
     }
-    if ((hnPoints ?? 0) > SOCIAL_THRESHOLD || (redditUpsN ?? 0) > SOCIAL_THRESHOLD) {
+
+    // 2) GitHub Stars (fresh repo / established project)
+    if (githubStars !== null) {
+      if (githubStars > 10_000) {
+        score += 30;
+        breakdown.push({ criterion: "github-stars-10k", points: 30, evidence: `stars=${githubStars}` });
+      } else if (githubStars > 1_000) {
+        score += 20;
+        breakdown.push({ criterion: "github-stars-1k", points: 20, evidence: `stars=${githubStars}` });
+      } else if (
+        githubStars > 500 &&
+        githubCreatedAt &&
+        Date.now() - new Date(githubCreatedAt).getTime() <= 30 * 24 * 3600_000
+      ) {
+        score += 25;
+        breakdown.push({
+          criterion: "github-stars-500-new",
+          points: 25,
+          evidence: `stars=${githubStars}, age<30d`,
+        });
+      }
+    }
+
+    // 3) Social traction
+    const social = Math.max(hnPoints ?? 0, redditUpsN ?? 0);
+    if (social > 100) {
       score += 30;
-      breakdown.push({
-        criterion: "social-traction-100",
-        points: 30,
-        evidence: `hnPoints=${hnPoints ?? 0}, redditUps=${redditUpsN ?? 0}`,
-      });
+      breakdown.push({ criterion: "social-traction-100", points: 30, evidence: `best=${social}` });
+    } else if (social > 30) {
+      score += 15;
+      breakdown.push({ criterion: "social-traction-30", points: 15, evidence: `best=${social}` });
     }
+
+    // 4) Tech trend bonus (MCP / AI Agent / RAG)
+    if (hasAny(evidenceText, TECH_TREND_TERMS)) {
+      score += 15;
+      breakdown.push({ criterion: "tech-trend-bonus", points: 15, evidence: "MCP/Agent/RAG detected" });
+    }
+
+    // 5) License
     if (githubLicense && OPEN_LICENSES.has(githubLicense)) {
-      score += 20;
-      breakdown.push({
-        criterion: "open-license",
-        points: 20,
-        evidence: `license=${githubLicense}`,
-      });
+      score += 10;
+      breakdown.push({ criterion: "open-license", points: 10, evidence: `license=${githubLicense}` });
     }
   }
 
   return { id: article.id, title: article.title, score, breakdown, metrics };
 }
+
+// ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
   const { id, batch, dailyCap } = parseArgs();
@@ -381,7 +472,13 @@ async function main() {
       );
     } catch (err) {
       console.error(`[evaluate] #${t.id} FAILED: ${(err as Error).message.slice(0, 120)}`);
-      results.push({ id: t.id, title: t.title, score: 0, breakdown: [], metrics: { evalError: (err as Error).message.slice(0, 200) } });
+      results.push({
+        id: t.id,
+        title: t.title,
+        score: 0,
+        breakdown: [],
+        metrics: { evalError: (err as Error).message.slice(0, 200) },
+      });
     }
   }
 
@@ -424,10 +521,7 @@ async function main() {
     if (approvedDecision) {
       slots--;
       approved++;
-      await db
-        .update(news)
-        .set({ score: r.score, metrics, updatedAt: new Date() })
-        .where(eq(news.id, r.id));
+      await db.update(news).set({ score: r.score, metrics, updatedAt: new Date() }).where(eq(news.id, r.id));
     } else {
       rejected++;
       await db
