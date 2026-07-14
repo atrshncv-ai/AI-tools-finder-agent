@@ -257,10 +257,6 @@ docker compose exec nginx ls -la /etc/letsencrypt/live/your-domain.com/
 docker compose restart certbot
 ```
 
-### Перевод через GigaChat
-
-Перевод полных статей выполняется через GigaChat API. Убедитесь, что задан `GIGACHAT_API_KEY`.
-
 ### Проблема: LM Studio недоступен
 
 ```bash
@@ -286,15 +282,10 @@ curl http://localhost:1234/v1/models
 | `LM_STUDIO_MODEL` | Модель для суммаризации | Нет (default: google/gemma-4-e4b) |
 | `CORS_ORIGIN` | Разрешённый origin для CORS | Нет (default: *) |
 | `DOMAIN` | Домен для SSL сертификата | Нет (default: science-agent.ru) |
-| `GIGACHAT_API_KEY` | Ключ авторизации GigaChat API | Да (если используется перевод) |
-| `GIGACHAT_MODEL` | Модель перевода | Нет (default: GigaChat) |
-| `GIGACHAT_TIMEOUT` | Таймаут запроса, сек | Нет (default: 120) |
-| `GIGACHAT_RETRIES` | Количество повторных попыток | Нет (default: 3) |
-| `GIGACHAT_CONCURRENCY` | Одновременных запросов | Нет (default: 1) |
-| `GIGACHAT_MAX_TOKENS` | Макс. токенов в ответе | Нет (default: 4096) |
-| `SUMMARY_PROVIDER` | Провайдер саммаризации (`lmstudio`/`gigachat`) | Нет (default: lmstudio) |
-| `TRANSLATION_PROVIDER` | Провайдер перевода (`gigachat`/`lmstudio`) | Нет (default: lmstudio) |
-| `GIGACHAT_SUMMARY_MAX_CHARS` | Макс. символов статьи для GigaChat-саммари | Нет (default: 12000) |
+| `LINEAR_WORKER_INTERVAL_MS` | Интервал линейного worker'а между статьями, мс | Нет (default: 600000) |
+| `LM_STUDIO_MAX_INPUT_TOKENS` | Макс. входных токенов для LM Studio | Нет (default: 4000) |
+| `LM_STUDIO_SUMMARY_MAX_TOKENS` | Макс. токенов краткого саммари | Нет (default: 512) |
+| `LM_STUDIO_DETAILED_MAX_TOKENS` | Макс. токенов подробного описания | Нет (default: 1024) |
 
 ---
 

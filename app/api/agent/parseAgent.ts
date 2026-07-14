@@ -372,7 +372,9 @@ async function parseSource(
   return [];
 }
 
-export async function runParseAgent(): Promise<ParseResult[]> {
+export async function runParseAgent(
+  options?: { sourceId?: number; maxArticles?: number }
+): Promise<ParseResult[]> {
   const state = getAgentState("parse-agent");
 
   if (state.status === "running") {
@@ -391,6 +393,81 @@ export async function runParseAgent(): Promise<ParseResult[]> {
   try {
     const db = getDb();
     const allSources = await db.select().from(sources).where(eq(sources.enabled, true));
+
+    // Single-source mode is used by the linear worker to avoid overloading the queue.
+    if (options?.sourceId) {
+      const source = allSources.find((s) => s.id === options.sourceId);
+      if (source) {
+        const maxArticles = options.maxArticles ?? 1;
+        const startTime = Date.now();
+        const log = await createParsingLog({ sourceId: source.id, status: "running" });
+        try {
+          const articles = await parseSource(source, maxArticles);
+          const aiArticles = articles.filter(
+            (a) => containsAiKeywords(a.title) || containsAiKeywords(a.description)
+          );
+          const seen = new Set<string>();
+          const unique = aiArticles.filter((a) => {
+            const key = a.title.toLowerCase().trim();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+
+          let newCount = 0;
+          for (const article of unique) {
+            const existing = await db.select().from(news).where(eq(news.originalUrl, article.url)).limit(1);
+            if (existing.length > 0) continue;
+            newCount++;
+            const pubDate = article.pubDate ? new Date(article.pubDate) : new Date();
+            const classification = classifyArticle(article.title, article.description);
+            await db.insert(news).values({
+              title: article.title,
+              summary: article.description || "Ожидает суммаризации...",
+              content: null,
+              originalUrl: article.url,
+              source: source.name,
+              categorySlug: classification.categorySlug,
+              imageUrl: article.imageUrl || null,
+              publishedAt: pubDate,
+              isScience: classification.isScience,
+              scienceField: classification.scienceField,
+              classificationType: classification.classificationType,
+              language: detectLanguage(`${article.title} ${article.description}`),
+              status: "pending",
+            });
+          }
+
+          await updateParsingLog(log.id, {
+            status: "completed",
+            articlesFound: articles.length,
+            articlesNew: newCount,
+          });
+          results.push({
+            sourceId: source.id,
+            sourceName: source.name,
+            articlesFound: articles.length,
+            articlesNew: newCount,
+            duration: Date.now() - startTime,
+            success: true,
+          });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          await updateParsingLog(log.id, { status: "failed", errorMessage: msg });
+          results.push({
+            sourceId: source.id,
+            sourceName: source.name,
+            articlesFound: 0,
+            articlesNew: 0,
+            duration: Date.now() - startTime,
+            success: false,
+            error: msg,
+          });
+        }
+      }
+      updateAgentState("parse-agent", { status: "idle" });
+      return results;
+    }
 
     const decisions = makeDecisions(allSources);
     logger.info("Parse Agent: decisions made", { count: decisions.length });

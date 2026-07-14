@@ -18,13 +18,13 @@ const { runSummarizeAgent } = await import("../api/agent/summarizeAgent");
 const { runTranslateAgent } = await import("../api/agent/translateAgent");
 const { runDeployAgent } = await import("../api/agent/deployAgent");
 
-const TARGET = 30;
+const TARGET = 1;
 
 interface StageResult {
   name: string;
   durationMs: number;
   articles: number;
-  tokens: { lmStudio: number; gigaChat: number };
+  tokens: { lmStudio: number };
 }
 
 function formatMs(ms: number): string {
@@ -33,13 +33,12 @@ function formatMs(ms: number): string {
 }
 
 function tokensSnapshot(total: ReturnType<typeof getTokenUsage>) {
-  return { lmStudio: total.lmStudio.totalTokens, gigaChat: total.gigaChat.totalTokens };
+  return { lmStudio: total.lmStudio.totalTokens };
 }
 
 function tokensDelta(before: ReturnType<typeof tokensSnapshot>, after: ReturnType<typeof tokensSnapshot>) {
   return {
     lmStudio: after.lmStudio - before.lmStudio,
-    gigaChat: after.gigaChat - before.gigaChat,
   };
 }
 
@@ -154,24 +153,23 @@ async function main() {
   const totalDuration = stages.reduce((sum, s) => sum + s.durationMs, 0);
   const totalTokens = {
     lmStudio: stages.reduce((sum, s) => sum + s.tokens.lmStudio, 0),
-    gigaChat: stages.reduce((sum, s) => sum + s.tokens.gigaChat, 0),
   };
 
   console.log("\n📊 Results");
   console.log("=".repeat(70));
-  console.log(`${"Stage".padEnd(12)} ${"Time".padStart(10)} ${"Articles".padStart(10)} ${"LM tokens".padStart(12)} ${"Giga tokens".padStart(12)}`);
+  console.log(`${"Stage".padEnd(12)} ${"Time".padStart(10)} ${"Articles".padStart(10)} ${"LM tokens".padStart(12)}`);
   console.log("-".repeat(70));
   for (const s of stages) {
     console.log(
-      `${s.name.padEnd(12)} ${formatMs(s.durationMs).padStart(10)} ${String(s.articles).padStart(10)} ${String(s.tokens.lmStudio).padStart(12)} ${String(s.tokens.gigaChat).padStart(12)}`
+      `${s.name.padEnd(12)} ${formatMs(s.durationMs).padStart(10)} ${String(s.articles).padStart(10)} ${String(s.tokens.lmStudio).padStart(12)}`
     );
   }
   console.log("-".repeat(70));
   console.log(
-    `${"Total".padEnd(12)} ${formatMs(totalDuration).padStart(10)} ${"-".padStart(10)} ${String(totalTokens.lmStudio).padStart(12)} ${String(totalTokens.gigaChat).padStart(12)}`
+    `${"Total".padEnd(12)} ${formatMs(totalDuration).padStart(10)} ${"-".padStart(10)} ${String(totalTokens.lmStudio).padStart(12)}`
   );
   console.log("=".repeat(70));
-  console.log(`Total AI tokens consumed: ${totalTokens.lmStudio + totalTokens.gigaChat}\n`);
+  console.log(`Total AI tokens consumed: ${totalTokens.lmStudio}\n`);
 
   // Restore original source enabled state
   if (previouslyEnabledIds.length > 0) {
