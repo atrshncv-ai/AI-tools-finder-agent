@@ -48,3 +48,12 @@ tmp/
 
 # Local MLX inference venv
 venv-mlx/
+
+# Local databases (SQLite leftovers)
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# Agent tooling state
+.mimocode/
