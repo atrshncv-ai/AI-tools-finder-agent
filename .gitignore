@@ -57,3 +57,6 @@ venv-mlx/
 
 # Agent tooling state
 .mimocode/
+
+# Seed content (large hand-curated list, not versioned)
+seed_data.md

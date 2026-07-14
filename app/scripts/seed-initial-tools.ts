@@ -1,0 +1,93 @@
+#!/usr/bin/env tsx
+/**
+ * seed-initial-tools.ts — one-off seed of elite hand-curated AI tools.
+ *
+ * Reads seed_data.md (JSON array) from the project root and inserts all
+ * records directly into `news` as published dashboard content.
+ */
+
+import "dotenv/config";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { getDb } from "../api/queries/connection";
+import { news } from "@db/schema";
+import { onConflictDoNothing } from "drizzle-orm/pg-core";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+interface SeedItem {
+  title: string;
+  summary: string;
+  original_url: string;
+}
+
+function loadSeedData(): SeedItem[] {
+  const filePath = path.resolve(__dirname, "../../seed_data.md");
+  const raw = fs.readFileSync(filePath, "utf8").trim();
+  return JSON.parse(raw) as SeedItem[];
+}
+
+function distributeDates(count: number): Date[] {
+  const now = Date.now();
+  const windowMs = 48 * 3600_000;
+  const start = now - windowMs;
+  if (count <= 1) return [new Date(now)];
+  const step = windowMs / (count - 1);
+  return Array.from({ length: count }, (_, i) => new Date(start + i * step));
+}
+
+async function main() {
+  const items = loadSeedData();
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error("seed_data.md is empty or not a JSON array");
+  }
+
+  const dates = distributeDates(items.length);
+  const rows = items.map((item, i) => ({
+    title: item.title,
+    summary: item.summary,
+    originalUrl: item.original_url,
+    content: null,
+    status: "published" as const,
+    isScience: false,
+    scienceField: null,
+    score: 95,
+    source: "seed-data",
+    language: "ru",
+    publishedAt: dates[i],
+    metrics: { origin: "seed-data" },
+  }));
+
+  const db = getDb();
+  const result = await db
+    .insert(news)
+    .values(rows)
+    .onConflictDoNothing({ target: news.originalUrl })
+    .returning({ id: news.id, title: news.title });
+
+  const inserted = result.length;
+  const skipped = items.length - inserted;
+
+  console.log(
+    JSON.stringify(
+      {
+        status: "ok",
+        total: items.length,
+        inserted,
+        skipped,
+        firstId: result[0]?.id ?? null,
+        lastId: result[result.length - 1]?.id ?? null,
+      },
+      null,
+      2,
+    ),
+  );
+  process.exit(0);
+}
+
+main().catch((err) => {
+  console.error("[seed-initial-tools] Failed:", err);
+  process.exit(1);
+});
