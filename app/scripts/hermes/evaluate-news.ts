@@ -6,8 +6,9 @@
  * This script collects CONCRETE metrics via lightweight HTTP/JSON APIs and
  * sums points deterministically:
  *
- * Tech criteria (AI tools):
- *   +40  GitHub repo with > 20 000 stars (recognized major project)
+ * Tech criteria (AI tools) — VELOCITY, not absolute numbers:
+ *   +40  Project is in GitHub Trending (fresh repo actively gaining stars)
+ *        OR a major project (> 10k stars) shipped a NEW release/tag <= 72h ago
  *   +30  Hacker News post OR Reddit post with > 100 upvotes
  *   +20  Open source license (MIT / Apache-2.0)
  *
@@ -37,7 +38,8 @@ const FETCH_TIMEOUT_MS = 20_000;
 const UA = "science-agent/2.0 (+https://159.194.236.68:3000)";
 
 const SCORE_GATE = 75; // strictly greater passes
-const GH_STARS_THRESHOLD = 20_000;
+const GH_MAJOR_STARS = 10_000; // "major project" threshold for fresh releases
+const RELEASE_MAX_AGE_MS = 72 * 3600_000; // fresh release window
 const SOCIAL_THRESHOLD = 100;
 const ALTMETRIC_THRESHOLD = 50;
 
@@ -134,6 +136,23 @@ async function githubRepoInfo(fullName: string): Promise<GhInfo | null> {
   return { stars: data.stargazers_count, license: data.license?.spdx_id ?? null };
 }
 
+/** Latest GitHub release younger than 72h (velocity signal for major projects). */
+async function githubFreshRelease(
+  fullName: string,
+): Promise<{ tag: string; publishedAt: string } | null> {
+  const rel = await fetchJson<{ tag_name?: string; published_at?: string }[]>(
+    `https://api.github.com/repos/${fullName}/releases?per_page=1`,
+  );
+  const latest = rel?.[0];
+  if (
+    latest?.published_at &&
+    Date.now() - new Date(latest.published_at).getTime() <= RELEASE_MAX_AGE_MS
+  ) {
+    return { tag: latest.tag_name ?? "release", publishedAt: latest.published_at };
+  }
+  return null;
+}
+
 async function hackerNewsPoints(url: string, title: string): Promise<number> {
   const byUrl = await fetchJson<{ hits: { points?: number }[] }>(
     `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(
@@ -200,6 +219,7 @@ async function evaluate(article: {
   }
 
   // GitHub stars/license — from URL itself or first github link in content
+  let ghFullName: string | null = null;
   if (githubStars === null) {
     const ghLink = isGithubUrl
       ? article.originalUrl
@@ -207,8 +227,9 @@ async function evaluate(article: {
     if (ghLink) {
       const m = ghLink.match(/github\.com\/([\w.-]+)\/([\w.-]+)/);
       if (m && !["topics", "trending", "collections", "features"].includes(m[1])) {
+        ghFullName = `${m[1]}/${m[2]}`;
         hasOpenArtifact = true;
-        const info = await githubRepoInfo(`${m[1]}/${m[2]}`);
+        const info = await githubRepoInfo(ghFullName);
         if (info) {
           githubStars = info.stars;
           githubLicense = info.license;
@@ -217,6 +238,8 @@ async function evaluate(article: {
     }
   } else {
     hasOpenArtifact = true;
+    const m = article.originalUrl.match(/github\.com\/([\w.-]+)\/([\w.-]+)/);
+    if (m) ghFullName = `${m[1]}/${m[2]}`;
   }
   if (!hasOpenArtifact) {
     hasOpenArtifact = links.some(
@@ -238,6 +261,7 @@ async function evaluate(article: {
 
   metrics.githubStars = githubStars;
   metrics.githubLicense = githubLicense;
+  metrics.githubRepo = ghFullName;
   metrics.hnPoints = hnPoints;
   metrics.redditUps = redditUpsN;
   metrics.altmetricScore = altmetric;
@@ -275,13 +299,30 @@ async function evaluate(article: {
       });
     }
   } else {
-    // Tech criteria
-    if (githubStars !== null && githubStars > GH_STARS_THRESHOLD) {
+    // Tech criteria — VELOCITY paradigm:
+    // (a) project surfaced by our GitHub Trending collector (fresh repo gaining stars)
+    const isTrending = prev.origin === "github-api" && isGithubUrl;
+    // (b) major project (>10k stars) with a fresh release/tag <= 72h
+    let freshRelease: { tag: string; publishedAt: string } | null = null;
+    if (
+      !isTrending &&
+      ghFullName &&
+      githubStars !== null &&
+      githubStars > GH_MAJOR_STARS
+    ) {
+      freshRelease = await githubFreshRelease(ghFullName);
+    }
+    metrics.githubTrending = isTrending;
+    metrics.githubFreshRelease = freshRelease;
+
+    if (isTrending || freshRelease) {
       score += 40;
       breakdown.push({
-        criterion: "github-stars-20k",
+        criterion: isTrending ? "github-trending-velocity" : "github-fresh-release",
         points: 40,
-        evidence: `stars=${githubStars}`,
+        evidence: isTrending
+          ? `repo=${ghFullName ?? article.originalUrl}, stars=${githubStars ?? "n/a"} (trending)`
+          : `repo=${ghFullName}, stars=${githubStars}, release=${freshRelease!.tag} @ ${freshRelease!.publishedAt}`,
       });
     }
     if ((hnPoints ?? 0) > SOCIAL_THRESHOLD || (redditUpsN ?? 0) > SOCIAL_THRESHOLD) {

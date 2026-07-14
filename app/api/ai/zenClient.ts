@@ -403,29 +403,45 @@ export async function summarizeOneShot(
 ): Promise<{ titleRu: string; summary: string }> {
   const truncatedContent = truncateToTokens(content, MAX_INPUT_TOKENS);
 
-  const prompt = [
-    {
-      role: "system",
-      content:
-        "Ты редактор научно-технических новостей. Верни СТРОГО валидный JSON без markdown и пояснений: " +
-        '{"title_ru": "...", "summary": "..."}. ' +
-        "title_ru — заголовок на русском (переведи или адаптируй, кратко и по делу). " +
-        "summary — краткая выжимка на русском (3-5 предложений): что за инструмент или открытие, ключевые факты, цифры, термины. " +
-        "Не добавляй оценок и воды. Не повторяй текст дословно — переформулируй. Выведи ТОЛЬКО JSON.",
-    },
-    {
-      role: "user",
-      content: `Название: ${title}\nИсточник: ${source}\n\n${truncatedContent}`,
-    },
-  ];
+  const systemContent =
+    "Ты редактор научно-технических новостей. Верни СТРОГО валидный JSON без markdown и пояснений: " +
+    '{"title_ru": "...", "summary": "..."}. ' +
+    "title_ru — заголовок на русском (переведи или адаптируй, кратко и по делу). " +
+    "summary — краткая выжимка на русском (3-5 предложений): что за инструмент или открытие, ключевые факты, цифры, термины. " +
+    "Не добавляй оценок и воды. Не повторяй текст дословно — переформулируй. Выведи ТОЛЬКО JSON.";
 
-  const raw = await chatCompletion(prompt, {
-    temperature: 0.2,
-    max_tokens: SUMMARY_MAX_TOKENS,
-    extractParagraph: false,
-  });
+  const userContent = `Название: ${title}\nИсточник: ${source}\n\n${truncatedContent}`;
 
-  const match = raw.match(/\{[\s\S]*\}/);
+  // Up to 2 attempts: free-tier models sometimes ignore the JSON instruction;
+  // the retry adds a few-shot example and an explicit anti-markdown reminder.
+  let raw = "";
+  let match: RegExpMatchArray | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const sys =
+      attempt === 0
+        ? systemContent
+        : systemContent +
+          '\n\nОБЯЗАТЕЛЬНЫЙ формат ответа (никакого markdown, заголовков и пояснений):\n{"title_ru": "Заголовок на русском", "summary": "Текст саммари на русском."}';
+    raw = await chatCompletion(
+      [
+        { role: "system", content: sys },
+        { role: "user", content: userContent },
+      ],
+      {
+        temperature: 0.2,
+        max_tokens: SUMMARY_MAX_TOKENS,
+        extractParagraph: false,
+      },
+    );
+    const cleaned = raw.replace(/```json\s*|```\s*/g, "");
+    match = cleaned.match(/\{[\s\S]*"title_ru"[\s\S]*"summary"[\s\S]*\}/) || cleaned.match(/\{[\s\S]*\}/);
+    if (match) {
+      raw = cleaned;
+      break;
+    }
+    console.log(`[Zen] summarizeOneShot: no JSON in output (attempt ${attempt + 1}/2)`);
+  }
+
   if (!match) {
     throw new Error(`summarizeOneShot: no JSON object in model output (${raw.slice(0, 120)})`);
   }

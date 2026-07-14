@@ -35,6 +35,19 @@ const GITHUB_LOOKBACK_DAYS = 3;
 const RSS_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 const MAX_AGE_HOURS_DEFAULT = 72;
+const MAX_AGE_MS = MAX_AGE_HOURS_DEFAULT * 3600_000;
+
+/**
+ * STRICT Time Guard: every candidate must carry a valid publication/creation
+ * date no older than 72h. Missing or unparseable date => REJECTED (fail-closed).
+ * Runs at collection time, BEFORE dedup/scoring — no exceptions for any source.
+ */
+function isFresh(publishedAt: Date | null | undefined, maxAgeMs = MAX_AGE_MS): boolean {
+  if (!publishedAt) return false;
+  const ts = publishedAt.getTime?.();
+  if (!ts || Number.isNaN(ts)) return false;
+  return Date.now() - ts <= maxAgeMs;
+}
 
 interface Candidate {
   title: string;
@@ -152,7 +165,7 @@ async function collectHackerNews(): Promise<Candidate[]> {
     "https://hn.algolia.com/api/v1/search_by_date?tags=story&query=AI%20OR%20LLM%20OR%20GPT%20OR%20%22machine%20learning%22&hitsPerPage=40",
   );
   if (!data) return [];
-  const cutoff = Date.now() / 1000 - 48 * 3600;
+  const cutoff = Date.now() / 1000 - MAX_AGE_MS / 1000;
   const out: Candidate[] = [];
   for (const h of data.hits) {
     const title = h.title || h.story_title || "";
@@ -183,6 +196,8 @@ interface GhRepo {
 }
 
 async function collectGithubTrending(): Promise<Candidate[]> {
+  // GitHub search already enforces created:>= lookback in the query;
+  // the strict Time Guard in main() re-verifies every candidate anyway.
   const since = new Date(Date.now() - GITHUB_LOOKBACK_DAYS * 86400_000)
     .toISOString()
     .slice(0, 10);
@@ -349,15 +364,13 @@ async function main() {
     candidates.push(...(await collectScience()));
   }
 
-  // Recency filter: elite curation cares about fresh stories only.
-  // RSS feeds of official blogs return full archives — drop stale items.
-  const cutoff = Date.now() - maxAgeHours * 3600_000;
-  const fresh = candidates.filter((c) => {
-    const ts = c.publishedAt?.getTime?.();
-    return !ts || Number.isNaN(ts) || ts >= cutoff;
-  });
+  // STRICT Time Guard: reject anything older than maxAgeHours — including
+  // items with missing/unparseable dates (fail-closed). Applies uniformly to
+  // RSS, GitHub, HN, Reddit and PubMed candidates BEFORE dedup/scoring.
+  const fresh = candidates.filter((c) => isFresh(c.publishedAt, maxAgeHours * 3600_000));
+  const staleDropped = candidates.length - fresh.length;
   console.error(
-    `[collect-dual] ${fresh.length}/${candidates.length} fresh (<= ${maxAgeHours}h), running dedup guard...`,
+    `[collect-dual] ${fresh.length}/${candidates.length} fresh (<= ${maxAgeHours}h, ${staleDropped} stale/no-date dropped), running dedup guard...`,
   );
 
   const db = getDb();
@@ -415,6 +428,7 @@ async function main() {
     stream,
     raw: candidates.length,
     fresh: fresh.length,
+    staleDropped,
     inserted,
     duplicates,
     errors,
