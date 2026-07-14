@@ -1,0 +1,433 @@
+#!/usr/bin/env tsx
+/**
+ * collect-dual.ts — Dual Pipeline collector (elite curation, no blind scraping).
+ *
+ * Tech stream (AI tools & IT):
+ *   - Official blogs RSS: OpenAI, Anthropic, Hugging Face, Google AI
+ *   - Trend signals via lightweight JSON APIs (no browser screenshots, no token burn):
+ *       Hacker News (Algolia API), GitHub (REST search API), Reddit (public JSON)
+ *
+ * Science stream:
+ *   - Tier-1 journals RSS: Nature, Science, Lancet, Cell
+ *   - MIT Technology Review, arXiv API, Naked Science (ru)
+ *
+ * Every candidate passes the Semantic Deduplication Guard (dedup.ts) BEFORE
+ * insertion: exact URL check, then Levenshtein >= 0.85 against last 20 titles.
+ * Inserted articles: status='pending', score=NULL (awaiting evaluate-news.ts).
+ *
+ * Usage:
+ *   npx tsx scripts/hermes/collect-dual.ts [--stream tech|science|both] [--dry-run]
+ *
+ * Exit codes: 0 = success, 1 = fatal error
+ */
+
+import "dotenv/config";
+import Parser from "rss-parser";
+import { getDb } from "../../api/queries/connection";
+import { news } from "@db/schema";
+import { isDuplicate } from "./dedup";
+
+const FETCH_TIMEOUT_MS = 20_000;
+const HN_MIN_POINTS = 100;
+const GITHUB_MIN_STARS = 300;
+const GITHUB_LOOKBACK_DAYS = 3;
+// Browser-like UA: some publishers (science.org, reddit) block bot UAs.
+const RSS_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+const MAX_AGE_HOURS_DEFAULT = 72;
+
+interface Candidate {
+  title: string;
+  url: string;
+  source: string;
+  publishedAt: Date;
+  language: string;
+  isScience: boolean;
+  scienceField: string | null;
+  /** Pre-collected hard metrics from the source API (if available). */
+  metrics: Record<string, unknown>;
+}
+
+const rss = new Parser({
+  timeout: FETCH_TIMEOUT_MS,
+  headers: { "User-Agent": RSS_UA },
+});
+
+function args() {
+  const a = process.argv.slice(2);
+  const streamIdx = a.indexOf("--stream");
+  const ageIdx = a.indexOf("--max-age-hours");
+  return {
+    stream: (streamIdx >= 0 ? a[streamIdx + 1] : "both") as "tech" | "science" | "both",
+    dryRun: a.includes("--dry-run"),
+    maxAgeHours: ageIdx >= 0 ? parseInt(a[ageIdx + 1] || "", 10) || MAX_AGE_HOURS_DEFAULT : MAX_AGE_HOURS_DEFAULT,
+  };
+}
+
+async function fetchText(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      headers: { "User-Agent": RSS_UA },
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchJson<T>(url: string): Promise<T | null> {
+  const text = await fetchText(url);
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
+function fromRssItem(
+  item: Parser.Item,
+  src: { name: string; isScience: boolean; scienceField: string | null; language: string },
+): Candidate | null {
+  const title = (item.title || "").trim();
+  const url = (item.link || "").trim();
+  if (!title || !url || !url.startsWith("http")) return null;
+  return {
+    title,
+    url,
+    source: src.name,
+    publishedAt: item.isoDate ? new Date(item.isoDate) : new Date(),
+    language: src.language,
+    isScience: src.isScience,
+    scienceField: src.scienceField,
+    metrics: { origin: "rss" },
+  };
+}
+
+// ─── Tech stream ─────────────────────────────────────────────────────────────
+
+const TECH_BLOG_FEEDS = [
+  { url: "https://openai.com/blog/rss.xml", name: "openai-blog" },
+  // NOTE: Anthropic has no public RSS feed (404 on all known endpoints).
+  // Anthropic releases are picked up via HN/GitHub trend sources instead.
+  { url: "https://huggingface.co/blog/feed.xml", name: "huggingface-blog" },
+  { url: "https://blog.google/technology/ai/rss/", name: "google-ai-blog" },
+];
+
+async function collectTechBlogs(): Promise<Candidate[]> {
+  const out: Candidate[] = [];
+  for (const feed of TECH_BLOG_FEEDS) {
+    try {
+      const parsed = await rss.parseURL(feed.url);
+      for (const item of parsed.items.slice(0, 10)) {
+        const c = fromRssItem(item, {
+          name: feed.name,
+          isScience: false,
+          scienceField: null,
+          language: "en",
+        });
+        if (c) out.push(c);
+      }
+      console.error(`[collect] ${feed.name}: ${parsed.items.length} items`);
+    } catch (err) {
+      console.error(`[collect] ${feed.name}: FAILED (${(err as Error).message})`);
+    }
+  }
+  return out;
+}
+
+interface HnHit {
+  objectID: string;
+  title?: string;
+  story_title?: string;
+  url?: string;
+  points?: number;
+  created_at_i?: number;
+}
+
+async function collectHackerNews(): Promise<Candidate[]> {
+  const data = await fetchJson<{ hits: HnHit[] }>(
+    "https://hn.algolia.com/api/v1/search_by_date?tags=story&query=AI%20OR%20LLM%20OR%20GPT%20OR%20%22machine%20learning%22&hitsPerPage=40",
+  );
+  if (!data) return [];
+  const cutoff = Date.now() / 1000 - 48 * 3600;
+  const out: Candidate[] = [];
+  for (const h of data.hits) {
+    const title = h.title || h.story_title || "";
+    if (!title || !h.url || (h.points ?? 0) < HN_MIN_POINTS) continue;
+    if ((h.created_at_i ?? 0) < cutoff) continue;
+    out.push({
+      title,
+      url: h.url,
+      source: "hackernews",
+      publishedAt: new Date((h.created_at_i ?? 0) * 1000),
+      language: "en",
+      isScience: false,
+      scienceField: null,
+      metrics: { origin: "hn-algolia", hnPoints: h.points, hnObjectId: h.objectID },
+    });
+  }
+  console.error(`[collect] hackernews: ${out.length} hot stories`);
+  return out;
+}
+
+interface GhRepo {
+  full_name: string;
+  description: string | null;
+  html_url: string;
+  stargazers_count: number;
+  license?: { spdx_id?: string } | null;
+  created_at: string;
+}
+
+async function collectGithubTrending(): Promise<Candidate[]> {
+  const since = new Date(Date.now() - GITHUB_LOOKBACK_DAYS * 86400_000)
+    .toISOString()
+    .slice(0, 10);
+  const keywords = ["llm", "machine-learning", "ai-agent", "deep-learning"];
+  const seen = new Set<string>();
+  const out: Candidate[] = [];
+  for (const kw of keywords) {
+    const data = await fetchJson<{ items: GhRepo[] }>(
+      `https://api.github.com/search/repositories?q=${encodeURIComponent(
+        `${kw} in:name,description,readme created:>=${since} stars:>=${GITHUB_MIN_STARS}`,
+      )}&sort=stars&order=desc&per_page=10`,
+    );
+    if (!data?.items) continue;
+    for (const r of data.items) {
+      if (seen.has(r.full_name)) continue;
+      seen.add(r.full_name);
+      out.push({
+        title: `${r.full_name}${r.description ? " — " + r.description : ""}`,
+        url: r.html_url,
+        source: "github-trending",
+        publishedAt: new Date(r.created_at),
+        language: "en",
+        isScience: false,
+        scienceField: null,
+        metrics: {
+          origin: "github-api",
+          githubStars: r.stargazers_count,
+          githubLicense: r.license?.spdx_id ?? null,
+        },
+      });
+    }
+  }
+  console.error(`[collect] github-trending: ${out.length} repos`);
+  return out;
+}
+
+/**
+ * Reddit via public RSS (top/day). JSON API is blocked from datacenter IPs,
+ * RSS still works with a browser UA. Note: RSS has no upvote counts, so
+ * Reddit is a discovery source only — social scoring happens via HN points.
+ */
+async function collectReddit(): Promise<Candidate[]> {
+  const subs = ["MachineLearning", "artificial", "LocalLLaMA"];
+  const out: Candidate[] = [];
+  for (const sub of subs) {
+    try {
+      const parsed = await rss.parseURL(
+        `https://www.reddit.com/r/${sub}/top/.rss?t=day&limit=25`,
+      );
+      for (const item of parsed.items) {
+        const c = fromRssItem(item, {
+          name: `reddit-${sub.toLowerCase()}`,
+          isScience: false,
+          scienceField: null,
+          language: "en",
+        });
+        if (c) {
+          c.metrics = { origin: "reddit-rss" };
+          out.push(c);
+        }
+      }
+    } catch (err) {
+      console.error(`[collect] reddit-${sub}: FAILED (${(err as Error).message})`);
+    }
+    // Reddit rate-limits aggressively — throttle between subreddits.
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  console.error(`[collect] reddit: ${out.length} top posts`);
+  return out;
+}
+
+// ─── Science stream ──────────────────────────────────────────────────────────
+
+const SCIENCE_FEEDS = [
+  { url: "https://www.nature.com/nature.rss", name: "nature", field: "multidisciplinary" },
+  { url: "https://www.science.org/rss/news_current.xml", name: "science", field: "multidisciplinary" },
+  // NOTE: Lancet killed its own RSS feeds (410 Gone) — collected via PubMed eutils below.
+  { url: "https://www.cell.com/cell/current.rss", name: "cell", field: "biology" },
+  { url: "https://www.technologyreview.com/feed/", name: "mit-tech-review", field: "technology" },
+  {
+    url: "http://export.arxiv.org/api/query?search_query=all:%22artificial+intelligence%22&sortBy=submittedDate&sortOrder=descending&max_results=25",
+    name: "arxiv",
+    field: "computer-science",
+  },
+  { url: "https://naked-science.ru/?feed=rss2", name: "naked-science", field: "multidisciplinary" },
+];
+
+interface PubmedSummary {
+  result: Record<string, { title?: string; fulljournalname?: string; pubdate?: string; elocationid?: string } | undefined>;
+}
+
+/** Lancet (and other journals without RSS) via NCBI PubMed eutils. */
+async function collectPubmedLancet(): Promise<Candidate[]> {
+  const search = await fetchJson<{ esearchresult?: { idlist?: string[] } }>(
+    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=%22Lancet%22%5Bjournal%5D+AND+(%22artificial+intelligence%22+OR+%22machine+learning%22+OR+%22deep+learning%22)&sort=pub+date&retmax=10&retmode=json",
+  );
+  const ids = search?.esearchresult?.idlist ?? [];
+  if (ids.length === 0) {
+    console.error("[collect] lancet(pubmed): 0 items (esearch empty or blocked)");
+    return [];
+  }
+  const summary = await fetchJson<PubmedSummary>(
+    `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${ids.join(",")}&retmode=json`,
+  );
+  const out: Candidate[] = [];
+  for (const pmid of ids) {
+    const rec = summary?.result?.[pmid];
+    if (!rec?.title) continue;
+    const doi = rec.elocationid?.match(/10\.\d{4,9}\/[-._;()/:A-Z0-9]+/i)?.[0];
+    out.push({
+      title: rec.title.replace(/\.$/, ""),
+      url: doi ? `https://doi.org/${doi}` : `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`,
+      source: "lancet",
+      publishedAt: rec.pubdate ? new Date(rec.pubdate) : new Date(),
+      language: "en",
+      isScience: true,
+      scienceField: "medicine",
+      metrics: { origin: "pubmed-eutils", pmid, doi: doi ?? null },
+    });
+  }
+  console.error(`[collect] lancet(pubmed): ${out.length} items`);
+  return out;
+}
+
+async function collectScience(): Promise<Candidate[]> {
+  const out: Candidate[] = [];
+  for (const feed of SCIENCE_FEEDS) {
+    try {
+      const parsed = await rss.parseURL(feed.url);
+      for (const item of parsed.items.slice(0, 15)) {
+        const c = fromRssItem(item, {
+          name: feed.name,
+          isScience: true,
+          scienceField: feed.field,
+          language: feed.name === "naked-science" ? "ru" : "en",
+        });
+        if (c) out.push(c);
+      }
+      console.error(`[collect] ${feed.name}: ${parsed.items.length} items`);
+    } catch (err) {
+      console.error(`[collect] ${feed.name}: FAILED (${(err as Error).message})`);
+    }
+  }
+  out.push(...(await collectPubmedLancet()));
+  return out;
+}
+
+// ─── Main ────────────────────────────────────────────────────────────────────
+
+async function main() {
+  const { stream, dryRun, maxAgeHours } = args();
+  console.error(`[collect-dual] Starting (stream=${stream}, dryRun=${dryRun}, maxAge=${maxAgeHours}h)`);
+
+  const candidates: Candidate[] = [];
+  if (stream === "tech" || stream === "both") {
+    candidates.push(
+      ...(await collectTechBlogs()),
+      ...(await collectHackerNews()),
+      ...(await collectGithubTrending()),
+      ...(await collectReddit()),
+    );
+  }
+  if (stream === "science" || stream === "both") {
+    candidates.push(...(await collectScience()));
+  }
+
+  // Recency filter: elite curation cares about fresh stories only.
+  // RSS feeds of official blogs return full archives — drop stale items.
+  const cutoff = Date.now() - maxAgeHours * 3600_000;
+  const fresh = candidates.filter((c) => {
+    const ts = c.publishedAt?.getTime?.();
+    return !ts || Number.isNaN(ts) || ts >= cutoff;
+  });
+  console.error(
+    `[collect-dual] ${fresh.length}/${candidates.length} fresh (<= ${maxAgeHours}h), running dedup guard...`,
+  );
+
+  const db = getDb();
+  let inserted = 0;
+  let duplicates = 0;
+  let errors = 0;
+  const insertedIds: number[] = [];
+
+  for (const c of fresh) {
+    try {
+      const dup = await isDuplicate(c.url, c.title);
+      if (dup.duplicate) {
+        duplicates++;
+        console.error(
+          `[dedup] skip "${c.title.slice(0, 60)}" (${dup.reason}${
+            dup.match ? ` ~${dup.match.similarity.toFixed(2)} vs #${dup.match.id}` : ""
+          })`,
+        );
+        continue;
+      }
+      if (dryRun) {
+        inserted++;
+        continue;
+      }
+      const rows = await db
+        .insert(news)
+        .values({
+          title: c.title.slice(0, 500),
+          summary: "",
+          originalUrl: c.url,
+          source: c.source,
+          publishedAt: c.publishedAt,
+          language: c.language,
+          isScience: c.isScience,
+          scienceField: c.scienceField,
+          status: "pending",
+          metrics: c.metrics,
+        })
+        .returning({ id: news.id });
+      inserted++;
+      insertedIds.push(rows[0].id);
+    } catch (err) {
+      const msg = (err as Error).message || "";
+      if (msg.includes("duplicate") || msg.includes("unique")) {
+        duplicates++;
+      } else {
+        errors++;
+        console.error(`[collect-dual] insert error: ${msg.slice(0, 120)}`);
+      }
+    }
+  }
+
+  const stats = {
+    status: "ok",
+    stream,
+    raw: candidates.length,
+    fresh: fresh.length,
+    inserted,
+    duplicates,
+    errors,
+    insertedIds: insertedIds.slice(0, 50),
+  };
+  console.log(JSON.stringify(stats));
+  console.error(
+    `[collect-dual] Done: ${inserted} inserted, ${duplicates} duplicates blocked, ${errors} errors`,
+  );
+  process.exit(0);
+}
+
+main().catch((err) => {
+  console.error("[collect-dual] Fatal error:", err);
+  process.exit(1);
+});

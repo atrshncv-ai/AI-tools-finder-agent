@@ -10,7 +10,7 @@
 #   cd app && bash scripts/hermes/test-e2e.sh
 
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 echo "╔══════════════════════════════════════════════════════╗"
 echo "║   Hermes CLI E2E Test — Ralph Loop Smoke Test      ║"
@@ -26,8 +26,8 @@ NC='\033[0m'
 PASS=0
 FAIL=0
 
-pass() { echo -e "${GREEN}✓ PASS${NC}: $1"; ((PASS++)); }
-fail() { echo -e "${RED}✗ FAIL${NC}: $1"; ((FAIL++)); }
+pass() { echo -e "${GREEN}✓ PASS${NC}: $1"; PASS=$((PASS + 1)); }
+fail() { echo -e "${RED}✗ FAIL${NC}: $1"; FAIL=$((FAIL + 1)); }
 info() { echo -e "${YELLOW}→${NC} $1"; }
 
 # ─── Test 1: Check env vars ──────────────────────────────────────────────────
@@ -50,7 +50,8 @@ fi
 
 # ─── Test 2: DB connection ────────────────────────────────────────────────────
 info "Test 2: Testing database connection..."
-if npx tsx -e "import { getDb } from './api/queries/connection'; const db = getDb(); console.log('connected')" 2>&1 | grep -q "connected"; then
+DB_TEST_OUTPUT=$(npx tsx -e "import { getDb } from './api/queries/connection'; const db = getDb(); console.log('connected')" 2>&1) || true
+if echo "$DB_TEST_OUTPUT" | grep -q "connected"; then
   pass "Database connection OK"
 else
   fail "Cannot connect to database"
@@ -68,9 +69,12 @@ EXISTING=$(npx tsx -e "
 import { getDb } from './api/queries/connection';
 import { news } from '@db/schema';
 import { eq } from 'drizzle-orm';
+(async () => {
 const db = getDb();
 const r = await db.select({id: news.id}).from(news).where(eq(news.originalUrl, '$TEST_URL')).limit(1);
 console.log(r.length > 0 ? r[0].id : '');
+process.exit(0);
+})();
 " 2>/dev/null)
 
 if [ -n "$EXISTING" ]; then
@@ -80,6 +84,7 @@ else
   ARTICLE_ID=$(npx tsx -e "
 import { getDb } from './api/queries/connection';
 import { news } from '@db/schema';
+(async () => {
 const db = getDb();
 const r = await db.insert(news).values({
   title: '$TEST_TITLE',
@@ -91,6 +96,8 @@ const r = await db.insert(news).values({
   status: 'pending',
 }).returning({ id: news.id });
 console.log(r[0].id);
+process.exit(0);
+})();
 " 2>/dev/null)
   info "Inserted test article (ID=$ARTICLE_ID)"
 fi
@@ -150,9 +157,12 @@ FINAL_STATUS=$(npx tsx -e "
 import { getDb } from './api/queries/connection';
 import { news } from '@db/schema';
 import { eq } from 'drizzle-orm';
+(async () => {
 const db = getDb();
 const r = await db.select({status: news.status}).from(news).where(eq(news.id, $ARTICLE_ID)).limit(1);
 console.log(r[0]?.status || 'unknown');
+process.exit(0);
+})();
 " 2>/dev/null)
 
 if [ "$FINAL_STATUS" = "published" ]; then

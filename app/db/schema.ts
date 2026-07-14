@@ -63,6 +63,8 @@ export const news = pgTable(
     scienceField: text("scienceField"),
     classificationType: text("classificationType"),
     language: text("language"),
+    score: integer("score"),
+    metrics: jsonb("metrics"),
     status: text("status").default("pending").notNull(),
     modelUsed: text("modelUsed"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -79,6 +81,7 @@ export const news = pgTable(
     index("idx_news_status").on(table.status),
     uniqueIndex("idx_news_original_url").on(table.originalUrl),
     index("idx_news_language").on(table.language),
+    index("idx_news_score").on(table.score),
     index("idx_news_fts").using(
       "gin",
       sql`to_tsvector('russian', ${table.title} || ' ' || coalesce(${table.summary}, '') || ' ' || coalesce(${table.content}, '') || ' ' || coalesce(${table.translation}, ''))`,

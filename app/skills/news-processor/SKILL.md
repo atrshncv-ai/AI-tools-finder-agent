@@ -1,257 +1,153 @@
-# News Processor — Ralph Loop
+# News Processor — Ralph Loop (v2: Elite Curation)
 
 Этот файл описывает алгоритм обработки новостей для Hermes Agent.
-Hermes выполняет **Ralph Loop** — цикл обработки статей из БД через CLI-скрипты.
+Hermes выполняет **Ralph Loop** — автономный цикл сбора, оценки и обработки
+3–5 лучших новостей в день в двух потоках: **ИИ-инструменты (Tech)** и
+**научные открытия с применением ИИ (Science)**.
 
-## Архитектура
+> Ключевой принцип v2: отказ от слепого парсинга 140 случайных сайтов.
+> Оценка строго **data-driven** — LLM не оценивает «научную ценность»,
+> баллы начисляются только за жёсткие, проверяемые метрики.
+
+## Архитектура конвейера
 
 ```
-manifest-gen.ts  →  fetch-article.ts  →  save-summary.ts  →  translate-title.ts  →  deploy-ready.ts
-     ↓                    ↓                     ↓                    ↓                     ↓
-  SELECT pending       HTTP fetch +         Zen API call:        Zen API call:          UPDATE status
-  FROM news WHERE      cheerio clean        summarizeArticle     translateTitle          → 'published'
-  status='pending'     → stdout             → save to DB         → save to DB
+collect-dual.ts  →  evaluate-news.ts  →  manifest-gen.ts  →  fetch/summarize/translate/deploy
+   Dual pipeline      Data-driven          approved            per-article CLI chain
+   + Dedup Guard      scoring (>75)         pending only         (v1, unchanged)
 ```
 
 Все скрипты расположены в `scripts/hermes/`.
-Все используют общий модуль подключения к БД: `api/queries/connection.ts`.
-AI-вызовы идут через `api/ai/zenClient.ts` (OpenAI-compatible API).
+Подключение к БД: `api/queries/connection.ts`. AI-вызовы: `api/ai/zenClient.ts`.
 
-## Ralph Loop — пошаговый алгоритм
+---
 
-### Шаг 1: Генерация манифеста
-
-```bash
-cd app && npx tsx scripts/hermes/manifest-gen.ts --output /tmp/manifest.json --limit 50
-```
-
-**Что делает:**
-- Запрашивает из БД статьи со статусом `pending` и `content=NULL`
-- Формирует `manifest.json` с полным списком кандидатов
-- Выводит статистику в stderr
-
-**Decision:**
-- Если `manifest.json` содержит `articles: []` — **закончить работу** (ожидание следующего запуска)
-- Если есть статьи — перейти к Шагу 2
-
-**Пример вывода:**
-```
-[manifest-gen] Generating manifest (limit=50, scienceOnly=false)...
-[manifest-gen] Written 12 articles to /tmp/manifest.json
-[manifest-gen] Cycle ID: cycle-2026-07-14T07-58-00-manifest
-```
-
-### Шаг 2: Взять первую статью из манифеста
+## Шаг 0a: Dual Pipeline Collection (`collect-dual.ts`)
 
 ```bash
-ARTICLE_ID=$(cat /tmp/manifest.json | python3 -c "import sys,json; m=json.load(sys.stdin); print(m['articles'][0]['id'] if m['articles'] else '')")
-ARTICLE_URL=$(cat /tmp/manifest.json | python3 -c "import sys,json; m=json.load(sys.stdin); print(m['articles'][0]['originalUrl'] if m['articles'] else '')")
-ARTICLE_TITLE=$(cat /tmp/manifest.json | python3 -c "import sys,json; m=json.load(sys.stdin); print(m['articles'][0]['title'] if m['articles'] else '')")
+cd app && npx tsx scripts/hermes/collect-dual.ts --stream both   # tech|science|both
 ```
 
-**Decision:**
-- Если `ARTICLE_ID` пуст — остановиться
-- Иначе — перейти к обработке статьи
+**Tech-поток (ИИ-инструменты):**
+- Официальные блоги (RSS): OpenAI, Anthropic, Hugging Face, Google AI
+- Тренды через лёгкие JSON-API (без браузера, без скриншотов, без токенов):
+  - **Hacker News** — Algolia API (`hn.algolia.com`), посты >100 points за 48ч
+  - **GitHub Trending** — REST search API: новые AI/LLM-репозитории >300 звёзд за 3 дня
+  - **Reddit** — публичный JSON r/MachineLearning, r/artificial, r/LocalLLaMA (>100 ups)
 
-### Шаг 3: Цепочка обработки статьи
+**Science-поток (лёгкий RSS/HTTP-парсинг):**
+- Tier-1 журналы: Nature, Science, Lancet, Cell
+- MIT Technology Review, arXiv API, Naked Science (ru)
 
-Для каждой статьи последовательно выполняются 4 скрипта:
+**Semantic Deduplication Guard** (модуль `dedup.ts`) — строго ДО вставки:
+1. Проверка по URL — есть в БД → skip.
+2. Levenshtein-схожесть заголовка (нормализация: lowercase, без стоп-слов)
+   с последними 20 статьями в БД; порог **0.85** → skip.
+   Один инфоповод из разных СМИ = одна новость.
 
-#### 3a. Скачивание и очистка HTML
+Кандидаты вставляются со `status='pending'`, `score=NULL`, предсобранными
+метриками источника в `metrics` (githubStars, hnPoints, redditUps).
+
+**Routing при вставке:** `isScience` и `scienceField` проставляются сразу:
+lancet→medicine, cell→biology, nature/science/naked-science→multidisciplinary,
+arxiv→computer-science, mit-tech-review→technology, tech-поток→`isScience=false`.
+
+## Шаг 0b: Data-Driven Scoring (`evaluate-news.ts`)
 
 ```bash
-ARTICLE_TEXT=$(cd app && npx tsx scripts/hermes/fetch-article.ts --url "$ARTICLE_URL" 2>/dev/null)
+cd app && npx tsx scripts/hermes/evaluate-news.ts --batch --daily-cap 5
 ```
 
-**Что делает:**
-- Скачивает HTML по URL
-- Удаляет шумовые элементы (навигация, реклама, скрипты)
-- Извлекает основной контент через cheerio
-- Выводит чистый текст в stdout
+LLM **не участвует** в оценке. Скрипт собирает конкретные цифры через
+HTTP/JSON-API (GitHub REST, HN Algolia, Reddit JSON, Altmetric API, DOI из
+контента) и детерминированно суммирует баллы.
 
-**Decision:**
-- Если exit code != 0 — залогировать ошибку, перейти к следующей статье (Шаг 2)
-- Если текст < 100 символов — залогировать, перейти к следующей статье
+**Критерии Tech (ИИ-инструменты):**
+| Метрика | Баллы |
+|---|---|
+| > 20 000 звёзд GitHub | +40 |
+| HN пост или Reddit пост > 100 апвоутов | +30 |
+| Открытая лицензия MIT / Apache-2.0 | +20 |
 
-#### 3b. Саммаризация через Zen API
+**Критерии Science:**
+| Метрика | Баллы |
+|---|---|
+| Tier-1 журнал (Nature/Science/Lancet/Cell) или блог Tier-1 лаборатории | +50 |
+| arXiv-препринт + открытый код/модель/датасет | +40 |
+| Altmetric score ≥ 50 (прокси обсуждения в научном X/Twitter) | +30 |
+
+**Gate:** в дашборд проходят только статьи с баллом **> 75**.
+**Daily cap:** не более 5 одобренных статей в сутки (UTC) — элитная курация.
+Решение и доказательная база (`scoreBreakdown`, метрики) сохраняются в
+`news.score` / `news.metrics`; отбракованные → `status='rejected'`.
+
+## Шаги 1–4: Обработка одобренных статей (v1, без изменений)
 
 ```bash
-cd app && npx tsx scripts/hermes/save-summary.ts --id "$ARTICLE_ID" --auto
+# Манифест одобренных (pending + score>75 + content IS NULL)
+npx tsx scripts/hermes/manifest-gen.ts --output /tmp/hermes-manifest.json --limit 50
+
+# По каждой статье из манифеста:
+npx tsx scripts/hermes/fetch-article.ts --url "$URL"        # 3a: fetch+clean
+npx tsx scripts/hermes/save-summary.ts --id "$ID" --auto    # 3b: Zen саммари
+npx tsx scripts/hermes/translate-title.ts --id "$ID" --auto # 3c: Zen перевод
+npx tsx scripts/hermes/deploy-ready.ts --batch-size 1       # 3d: публикация
 ```
 
-**Что делает (auto mode):**
-- Берёт статью из БД по ID
-- Скачивает и очищает HTML (повторно, для надёжности)
-- Вызывает `summarizeArticle()` из `zenClient.ts`
-- Сохраняет в БД: `summary`, `content` (detailed), `originalContent`, `status='summarized'`
+Если манифест пуст — цикл завершается, ожидание следующего запуска.
 
-**Output (JSON в stdout):**
-```json
-{"status":"ok","articleId":42,"summaryLength":320,"contentLength":1200,"model":"zen-default"}
-```
-
-**Decision:**
-- Если exit code != 0 — залогировать ошибку, перейти к следующей статье
-
-#### 3c. Перевод заголовка
+## Запуск всего цикла
 
 ```bash
-cd app && npx tsx scripts/hermes/translate-title.ts --id "$ARTICLE_ID" --auto
+cd app && bash scripts/hermes/ralph-loop.sh
+# Под PM2: процесс hermes-ralph-loop (см. ecosystem.config.cjs)
+# Интервал между циклами: LINEAR_WORKER_INTERVAL_MS (default 600000 = 10 мин)
+# Дневной лимит: HERMES_DAILY_CAP (default 5)
 ```
 
-**Что делает (auto mode):**
-- Берёт статью из БД
-- Если `language='ru'` — пропускает Zen, использует оригинальный контент
-- Иначе вызывает `translateTitle()` из `zenClient.ts`
-- Сохраняет в БД: `title` (переведённый), `translation`, `status='translated'`
+## Статусы статей в БД
 
-**Output (JSON в stdout):**
-```json
-{"status":"ok","articleId":42,"translatedTitle":"Новое открытие в квантовых вычислениях","translationLength":1200}
+```
+(pending, score=NULL)  →  evaluate: score>75 & slot → pending (approved)
+                      ↘  score≤75 или нет слота     → rejected
+approved pending → summarized → translated → published
 ```
 
-**Decision:**
-- Если exit code != 0 — залогировать ошибку, перейти к следующей статье
-
-#### 3d. Публикация
-
-```bash
-cd app && npx tsx scripts/hermes/deploy-ready.ts --batch-size 1
-```
-
-**Что делает:**
-- Находит статьи со статусом `translated`
-- Меняет статус на `published`
-
-**Output (текст в stdout):**
-```
-[deploy-ready] Deploying up to 1 translated articles...
-[deploy-ready] Deployed 1/1 articles
-```
-
-### Шаг 4: Прогресс и переход к следующей статье
-
-- Залогировать результат обработки статьи (ID, статус, время)
-- Вернуться к Шагу 2 (взять следующую статью из манифеста)
-- Повторять пока все статьи не обработаны
-
-### Завершение
-
-После обработки всех статей:
-- Вывести итоговую статистику (обработано / ошибки / пропущено)
-- Завершить работу
-
-## Полный пример Ralph Loop (один проход)
-
-```bash
-#!/bin/bash
-set -e
-cd "$(dirname "$0")/../../app"
-
-MANIFEST="/tmp/hermes-manifest.json"
-
-# Шаг 1: Манифест
-echo "=== Step 1: Generate manifest ==="
-npx tsx scripts/hermes/manifest-gen.ts --output "$MANIFEST" --limit 50
-
-# Проверяем есть ли статьи
-COUNT=$(python3 -c "import json; m=json.load(open('$MANIFEST')); print(len(m['articles']))")
-if [ "$COUNT" = "0" ]; then
-  echo "No pending articles. Done."
-  exit 0
-fi
-
-echo "Found $COUNT articles to process"
-
-# Шаг 2-4: Обработка каждой статьи
-for i in $(seq 0 $((COUNT - 1))); do
-  ARTICLE_ID=$(python3 -c "import json; m=json.load(open('$MANIFEST')); print(m['articles'][$i]['id'])")
-  ARTICLE_URL=$(python3 -c "import json; m=json.load(open('$MANIFEST')); print(m['articles'][$i]['originalUrl'])")
-
-  echo ""
-  echo "=== Processing article #$ARTICLE_ID ==="
-
-  # 3a: Fetch
-  echo "[fetch] Downloading..."
-  TEXT=$(npx tsx scripts/hermes/fetch-article.ts --url "$ARTICLE_URL" 2>/dev/null) || {
-    echo "[fetch] FAILED - skipping"
-    continue
-  }
-  echo "[fetch] OK: ${#TEXT} chars"
-
-  # 3b: Summarize
-  echo "[summarize] Calling Zen API..."
-  npx tsx scripts/hermes/save-summary.ts --id "$ARTICLE_ID" --auto 2>/dev/null || {
-    echo "[summarize] FAILED - skipping"
-    continue
-  }
-  echo "[summarize] OK"
-
-  # 3c: Translate
-  echo "[translate] Translating title..."
-  npx tsx scripts/hermes/translate-title.ts --id "$ARTICLE_ID" --auto 2>/dev/null || {
-    echo "[translate] FAILED - skipping"
-    continue
-  }
-  echo "[translate] OK"
-
-  # 3d: Deploy
-  echo "[deploy] Publishing..."
-  npx tsx scripts/hermes/deploy-ready.ts --batch-size 1 2>/dev/null
-  echo "[deploy] OK"
-
-  echo "=== Article #$ARTICLE_ID done ==="
-done
-
-echo ""
-echo "=== Ralph Loop complete ==="
-```
+| Статус | Описание |
+|--------|----------|
+| `pending` + score NULL | Собран коллектором, ждёт оценки |
+| `pending` + score > 75 | Одобрен data-driven скорингом, ждёт обработки |
+| `rejected` | Не прошёл gate 75 или дневной лимит (метрики сохранены) |
+| `summarized` | Получено саммари через Zen API |
+| `translated` | Заголовок переведён |
+| `published` | Видна пользователям в дашборде |
 
 ## Обработка ошибок
 
 | Скрипт | Тип ошибки | Действие |
 |--------|-----------|----------|
-| manifest-gen | DB connection | Прервать цикл |
-| manifest-gen | Пустой манифест | Завершить (success) |
-| fetch-article | HTTP error | Пропустить статью |
-| fetch-article | Текст < 100 chars | Пропустить статью |
-| save-summary | Zen API unavailable | Прервать цикл |
-| save-summary | Garbage output | Пропустить статью |
-| translate-title | Zen API unavailable | Прервать цикл |
+| collect-dual | RSS/API недоступен | Пропустить источник, продолжить |
+| collect-dual | Дубликат (URL/semantic) | Skip, счётчик duplicates |
+| evaluate-news | Метрика недоступна | Метрика = null, 0 баллов за критерий |
+| evaluate-news | Score ≤ 75 / нет слота | status='rejected' |
+| manifest-gen | Пустой манифест | Завершить цикл (success) |
+| fetch-article | HTTP error / < 100 chars | Пропустить статью |
+| save-summary | Zen unavailable | Прервать обработку статьи |
 | translate-title | Empty translation | Использовать оригинал |
-| deploy-ready | DB error | Залогировать, продолжить |
-
-## Статусы статей в БД
-
-```
-pending → summarized → translated → published
-```
-
-| Статус | Описание |
-|--------|----------|
-| `pending` | Статья найдена парсером, ждёт обработки |
-| `summarized` | Получено саммари через Zen API |
-| `translated` | Заголовок переведён, контент готов к публикации |
-| `published` | Опубликована, видна пользователям |
-
-## Зависимости
-
-- **Node.js** + **tsx** (для запуска .ts файлов)
-- **PostgreSQL** (подключение через `DATABASE_URL`)
-- **Zen API** (OpenAI-compatible endpoint через `ZEN_BASE_URL`)
-- **cheerio** (парсинг HTML)
-- **drizzle-orm** (запросы к БД)
 
 ## Конфигурация (env)
 
 ```env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/science_agent
-ZEN_BASE_URL=https://api.zen.ai/v1
-ZEN_API_KEY=your_key_here
-ZEN_MODEL=zen-default
-ZEN_TIMEOUT_MS=120000
-ZEN_MAX_INPUT_TOKENS=6000
-ZEN_SUMMARY_MAX_TOKENS=1024
-ZEN_DETAILED_MAX_TOKENS=2048
-ZEN_TRANSLATION_MAX_TOKENS=4096
+DATABASE_URL=postgresql://postgres:***@localhost:5432/science_agent
+ZEN_BASE_URL=https://opencode.ai/zen/v1
+ZEN_API_KEY=sk-***
+ZEN_MODEL=nemotron-3-ultra-free
+LINEAR_WORKER_INTERVAL_MS=600000   # интервал цикла Ralph Loop
+HERMES_DAILY_CAP=5                 # лимит одобренных статей в сутки
 ```
+
+## Зависимости
+
+- Node.js + tsx, PostgreSQL, Zen API (OpenAI-compatible)
+- `rss-parser` (RSS/Atom), `cheerio` (извлечение ссылок/DOI), `drizzle-orm`
+- Внешние read-only API: GitHub REST, HN Algolia, Reddit JSON, Altmetric
