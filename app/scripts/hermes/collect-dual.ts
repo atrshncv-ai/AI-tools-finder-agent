@@ -24,8 +24,10 @@
 import "dotenv/config";
 import Parser from "rss-parser";
 import { getDb } from "../../api/queries/connection";
-import { news } from "@db/schema";
+import { news, categories } from "@db/schema";
+import { eq } from "drizzle-orm";
 import { isDuplicate } from "./dedup";
+import { classifyScience } from "../ensure-science-categories";
 
 const FETCH_TIMEOUT_MS = 20_000;
 const HN_MIN_POINTS = 100;
@@ -375,6 +377,11 @@ async function main() {
   );
 
   const db = getDb();
+
+  // Pre-load science categories so we can route science candidates immediately.
+  const scienceCats = await db.select().from(categories).where(eq(categories.type, "science"));
+  const scienceCatBySlug = new Map(scienceCats.map((c) => [c.slug, c]));
+
   let inserted = 0;
   let duplicates = 0;
   let errors = 0;
@@ -396,6 +403,22 @@ async function main() {
         inserted++;
         continue;
       }
+      let categoryId: number | null = null;
+      let categorySlug: string | null = null;
+      if (c.isScience) {
+        const slug = classifyScience({
+          title: c.title,
+          summary: "",
+          source: c.source,
+          scienceField: c.scienceField,
+        });
+        const cat = scienceCatBySlug.get(slug);
+        if (cat) {
+          categoryId = cat.id;
+          categorySlug = cat.slug;
+        }
+      }
+
       const rows = await db
         .insert(news)
         .values({
@@ -407,6 +430,8 @@ async function main() {
           language: c.language,
           isScience: c.isScience,
           scienceField: c.scienceField,
+          categoryId,
+          categorySlug,
           status: "pending",
           metrics: c.metrics,
         })
