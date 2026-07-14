@@ -40,11 +40,11 @@ else
   exit 1
 fi
 
-if [ -n "${ZEN_API_KEY:-}" ]; then
-  pass "ZEN_API_KEY is set"
+if [ -n "${ZEN_API_KEYS:-}" ] || [ -n "${ZEN_API_KEY:-}" ]; then
+  pass "Zen key pool is set (ZEN_API_KEYS)"
 else
-  fail "ZEN_API_KEY is not set"
-  echo "  Set it in app/.env or export ZEN_API_KEY=..."
+  fail "ZEN_API_KEYS is not set"
+  echo "  Set it in app/.env or export ZEN_API_KEYS=key1,key2,..."
   exit 1
 fi
 
@@ -133,17 +133,8 @@ else
   fail "save-summary.ts: failed (output: $SUMMARY_RESULT)"
 fi
 
-# ─── Test 7: translate-title.ts (--auto) ──────────────────────────────────────
-info "Test 7: Testing translate-title.ts --auto..."
-TRANSLATE_RESULT=$(npx tsx scripts/hermes/translate-title.ts --id "$ARTICLE_ID" --auto 2>/dev/null) || true
-if echo "$TRANSLATE_RESULT" | grep -q '"status":"ok"'; then
-  pass "translate-title.ts: translated successfully"
-else
-  fail "translate-title.ts: failed (output: $TRANSLATE_RESULT)"
-fi
-
-# ─── Test 8: deploy-ready.ts ──────────────────────────────────────────────────
-info "Test 8: Testing deploy-ready.ts..."
+# ─── Test 7: deploy-ready.ts ──────────────────────────────────────────────────
+info "Test 7: Testing deploy-ready.ts (summarized → published)..."
 DEPLOY_OUTPUT=$(npx tsx scripts/hermes/deploy-ready.ts --batch-size 1 2>/dev/null) || true
 if echo "$DEPLOY_OUTPUT" | grep -q "Deployed"; then
   pass "deploy-ready.ts: deployed successfully"
@@ -151,8 +142,8 @@ else
   fail "deploy-ready.ts: failed (output: $DEPLOY_OUTPUT)"
 fi
 
-# ─── Test 9: Verify final status ──────────────────────────────────────────────
-info "Test 9: Verifying final article status..."
+# ─── Test 8: Verify final status ──────────────────────────────────────────────
+info "Test 8: Verifying final article status..."
 FINAL_STATUS=$(npx tsx -e "
 import { getDb } from './api/queries/connection';
 import { news } from '@db/schema';

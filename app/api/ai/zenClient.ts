@@ -392,8 +392,62 @@ export async function chatCompletion(
 // ─── Domain functions (prompts transferred from old client.ts) ──────────────
 
 /**
+ * One-shot summarization (token-optimized): a SINGLE Zen API call returns
+ * both the Russian title and the Russian summary as JSON.
+ * Replaces the old fan-out (summary + detailed + separate title translation).
+ */
+export async function summarizeOneShot(
+  title: string,
+  content: string,
+  source: string,
+): Promise<{ titleRu: string; summary: string }> {
+  const truncatedContent = truncateToTokens(content, MAX_INPUT_TOKENS);
+
+  const prompt = [
+    {
+      role: "system",
+      content:
+        "Ты редактор научно-технических новостей. Верни СТРОГО валидный JSON без markdown и пояснений: " +
+        '{"title_ru": "...", "summary": "..."}. ' +
+        "title_ru — заголовок на русском (переведи или адаптируй, кратко и по делу). " +
+        "summary — краткая выжимка на русском (3-5 предложений): что за инструмент или открытие, ключевые факты, цифры, термины. " +
+        "Не добавляй оценок и воды. Не повторяй текст дословно — переформулируй. Выведи ТОЛЬКО JSON.",
+    },
+    {
+      role: "user",
+      content: `Название: ${title}\nИсточник: ${source}\n\n${truncatedContent}`,
+    },
+  ];
+
+  const raw = await chatCompletion(prompt, {
+    temperature: 0.2,
+    max_tokens: SUMMARY_MAX_TOKENS,
+    extractParagraph: false,
+  });
+
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) {
+    throw new Error(`summarizeOneShot: no JSON object in model output (${raw.slice(0, 120)})`);
+  }
+  let parsed: { title_ru?: unknown; summary?: unknown };
+  try {
+    parsed = JSON.parse(match[0]);
+  } catch (err) {
+    throw new Error(`summarizeOneShot: invalid JSON from model: ${(err as Error).message}`);
+  }
+  if (typeof parsed.title_ru !== "string" || typeof parsed.summary !== "string" ||
+      !parsed.title_ru.trim() || !parsed.summary.trim()) {
+    throw new Error("summarizeOneShot: JSON missing title_ru/summary fields");
+  }
+  return { titleRu: parsed.title_ru.trim(), summary: parsed.summary.trim() };
+}
+
+/**
  * Summarize an article: produces a brief summary (3-5 sentences) and
  * a detailed summary (10-15 sentences), both in Russian.
+ *
+ * @deprecated Legacy fan-out (2 parallel calls). Use summarizeOneShot() —
+ * the production pipeline issues exactly ONE Zen call per article.
  */
 export async function summarizeArticle(
   title: string,

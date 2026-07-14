@@ -10,7 +10,6 @@ import {
   Tag,
   Loader2,
   FileText,
-  Languages,
   Share2,
   Sun,
   Moon,
@@ -26,7 +25,6 @@ export default function NewsDetail() {
   const newsId = Number(id);
   const { isAuthenticated } = useAuth();
   const { theme, toggleTheme } = useTheme();
-  const [showTranslation, setShowTranslation] = useState(false);
   const [readingMode, setReadingMode] = useState(false);
 
   const { data: article, isLoading } = trpc.news.byId.useQuery(
@@ -65,12 +63,6 @@ export default function NewsDetail() {
       utils.favorite.check.invalidate({ newsId });
       utils.favorite.count.invalidate();
       utils.favorite.list.invalidate();
-    },
-  });
-
-  const translateMutation = trpc.news.translate.useMutation({
-    onError: () => {
-      toast.error("Ошибка перевода. Убедитесь, что LM Studio запущен.");
     },
   });
 
@@ -257,14 +249,14 @@ export default function NewsDetail() {
               href={article.originalUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-all duration-150"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-150 hover:opacity-90"
               style={{
-                borderColor: "var(--color-border)",
-                color: "var(--color-accent)",
+                backgroundColor: "var(--color-accent)",
+                color: "#fff",
               }}
             >
               <ExternalLink className="w-4 h-4" />
-              Читать оригинал
+              Перейти к источнику
             </a>
             <button
               onClick={() => {
@@ -279,29 +271,6 @@ export default function NewsDetail() {
             >
               <Share2 className="w-4 h-4" />
               Поделиться
-            </button>
-            <button
-              onClick={() => {
-                if (!showTranslation && !translateMutation.data) {
-                  translateMutation.mutate({ id: newsId });
-                }
-                setShowTranslation(!showTranslation);
-              }}
-              disabled={translateMutation.isPending}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-all duration-150"
-              style={{
-                borderColor: showTranslation ? "var(--color-accent)" : "var(--color-border)",
-                backgroundColor: showTranslation ? "var(--color-tag-bg)" : "transparent",
-                color: "var(--color-accent)",
-                opacity: translateMutation.isPending ? 0.6 : 1,
-              }}
-            >
-              {translateMutation.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Languages className="w-4 h-4" />
-              )}
-              Полный перевод
             </button>
           </div>
 
@@ -349,86 +318,8 @@ export default function NewsDetail() {
             </div>
           )}
 
-          {/* Full translation */}
-          {article.translation && (
-            <div className="mt-6">
-              <div className="my-6 h-px" style={{ backgroundColor: "var(--color-border)" }} />
-              <h2
-                className="text-lg font-semibold mb-3"
-                style={{ color: "var(--color-text-heading)", fontFamily: "Manrope, sans-serif" }}
-              >
-                Полный перевод на русский
-              </h2>
-              <div
-                className="rounded-lg p-5"
-                style={{ backgroundColor: "var(--color-search-bg)" }}
-              >
-                <div
-                  className="prose prose-sm max-w-none leading-relaxed"
-                  style={{ color: "var(--color-text-body)" }}
-                >
-                  {(article.translation as string).split("\n").map((paragraph: string, i: number) => (
-                    <p key={i} className="mb-3 text-[15px] leading-[1.7]">
-                      {paragraph}
-                    </p>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* On-demand translation fallback */}
-          {!(article.translation) && (
-            <div className="mt-6">
-              <button
-                onClick={() => {
-                  if (!showTranslation && !translateMutation.data) {
-                    translateMutation.mutate({ id: newsId });
-                  }
-                  setShowTranslation(!showTranslation);
-                }}
-                disabled={translateMutation.isPending}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-all duration-150"
-                style={{
-                  borderColor: showTranslation ? "var(--color-accent)" : "var(--color-border)",
-                  backgroundColor: showTranslation ? "var(--color-tag-bg)" : "transparent",
-                  color: "var(--color-accent)",
-                  opacity: translateMutation.isPending ? 0.6 : 1,
-                }}
-              >
-                {translateMutation.isPending ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Languages className="w-4 h-4" />
-                )}
-                Получить перевод
-              </button>
-              {showTranslation && translateMutation.data && (
-                <div className="mt-4">
-                  <div
-                    className="rounded-lg p-5"
-                    style={{ backgroundColor: "var(--color-search-bg)" }}
-                  >
-                    <div
-                      className="prose prose-sm max-w-none leading-relaxed"
-                      style={{ color: "var(--color-text-body)" }}
-                    >
-                      {translateMutation.data.translation.split("\n").map((paragraph: string, i: number) => (
-                        <p key={i} className="mb-3 text-[15px] leading-[1.7]">
-                          {paragraph}
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-              {showTranslation && translateMutation.error && (
-                <p className="text-sm py-4" style={{ color: "var(--color-text-muted)" }}>
-                  Ошибка при переводе. Попробуйте позже.
-                </p>
-              )}
-            </div>
-          )}
+          {/* Full translation section removed — pipeline now produces
+              Russian title + summary in a single Zen call (no full translation). */}
         </article>
 
         {/* Navigation */}
@@ -448,7 +339,7 @@ export default function NewsDetail() {
             className="inline-flex items-center gap-1.5 text-sm font-medium transition-colors hover:underline"
             style={{ color: "var(--color-accent)" }}
           >
-            Читать оригинал
+            Перейти к источнику
             <ExternalLink className="w-4 h-4" />
           </a>
         </div>

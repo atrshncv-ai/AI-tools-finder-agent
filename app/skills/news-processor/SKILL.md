@@ -1,20 +1,24 @@
-# News Processor — Ralph Loop (v2: Elite Curation)
+# News Processor — Ralph Loop (v3: Single Agent, No Translation)
 
 Этот файл описывает алгоритм обработки новостей для Hermes Agent.
 Hermes выполняет **Ralph Loop** — автономный цикл сбора, оценки и обработки
 3–5 лучших новостей в день в двух потоках: **ИИ-инструменты (Tech)** и
 **научные открытия с применением ИИ (Science)**.
 
-> Ключевой принцип v2: отказ от слепого парсинга 140 случайных сайтов.
-> Оценка строго **data-driven** — LLM не оценивает «научную ценность»,
-> баллы начисляются только за жёсткие, проверяемые метрики.
+> Ключевые принципы v3:
+> - **Token-optimized:** ОДИН вызов Zen API на статью — one-shot саммари
+>   возвращает сразу русский заголовок + русскую выжимку (JSON).
+>   Шаг перевода (translate-title, полный перевод) **упразднён**.
+> - **Single Agent:** строгая последовательная обработка — одна статья за раз,
+>   никакого fan-out/параллелизма агентов.
+> - Оценка строго **data-driven** (v2): LLM не оценивает «научную ценность».
 
 ## Архитектура конвейера
 
 ```
-collect-dual.ts  →  evaluate-news.ts  →  manifest-gen.ts  →  fetch/summarize/translate/deploy
-   Dual pipeline      Data-driven          approved            per-article CLI chain
-   + Dedup Guard      scoring (>75)         pending only         (v1, unchanged)
+collect-dual.ts → evaluate-news.ts → manifest-gen.ts → fetch → save-summary (1 Zen call) → deploy-ready
+  Dual pipeline     Data-driven        approved           per-article, SEQUENTIAL, no translation
+  + Dedup Guard     scoring (>75)      pending only
 ```
 
 Все скрипты расположены в `scripts/hermes/`.
@@ -81,18 +85,23 @@ HTTP/JSON-API (GitHub REST, HN Algolia, Reddit JSON, Altmetric API, DOI из
 Решение и доказательная база (`scoreBreakdown`, метрики) сохраняются в
 `news.score` / `news.metrics`; отбракованные → `status='rejected'`.
 
-## Шаги 1–4: Обработка одобренных статей (v1, без изменений)
+## Шаги 1–3: Обработка одобренных статей (строго последовательно)
 
 ```bash
 # Манифест одобренных (pending + score>75 + content IS NULL)
 npx tsx scripts/hermes/manifest-gen.ts --output /tmp/hermes-manifest.json --limit 50
 
-# По каждой статье из манифеста:
-npx tsx scripts/hermes/fetch-article.ts --url "$URL"        # 3a: fetch+clean
-npx tsx scripts/hermes/save-summary.ts --id "$ID" --auto    # 3b: Zen саммари
-npx tsx scripts/hermes/translate-title.ts --id "$ID" --auto # 3c: Zen перевод
-npx tsx scripts/hermes/deploy-ready.ts --batch-size 1       # 3d: публикация
+# По каждой статье из манифеста — ОДНА за раз, без параллелизма:
+npx tsx scripts/hermes/fetch-article.ts --url "$URL"       # 3a: fetch+clean (probe)
+npx tsx scripts/hermes/save-summary.ts --id "$ID" --auto   # 3b: ONE Zen call → RU title + RU summary
+npx tsx scripts/hermes/deploy-ready.ts --batch-size 1      # 3c: публикация (summarized → published)
 ```
+
+**save-summary.ts (auto)** вызывает `summarizeOneShot()` из `zenClient.ts`:
+единственный chatCompletion с JSON-ответом `{"title_ru", "summary"}`.
+Сохраняет: `title` (RU), `summary` (RU), `originalContent`, `status='summarized'`,
+`modelUsed`. Перевод заголовка и полный перевод статей больше НЕ выполняются —
+в UI вместо этого кнопка «Перейти к источнику» (открывает `originalUrl`).
 
 Если манифест пуст — цикл завершается, ожидание следующего запуска.
 
@@ -110,7 +119,7 @@ cd app && bash scripts/hermes/ralph-loop.sh
 ```
 (pending, score=NULL)  →  evaluate: score>75 & slot → pending (approved)
                       ↘  score≤75 или нет слота     → rejected
-approved pending → summarized → translated → published
+approved pending → summarized (RU title+summary, 1 Zen call) → published
 ```
 
 | Статус | Описание |
@@ -118,9 +127,10 @@ approved pending → summarized → translated → published
 | `pending` + score NULL | Собран коллектором, ждёт оценки |
 | `pending` + score > 75 | Одобрен data-driven скорингом, ждёт обработки |
 | `rejected` | Не прошёл gate 75 или дневной лимит (метрики сохранены) |
-| `summarized` | Получено саммари через Zen API |
-| `translated` | Заголовок переведён |
+| `summarized` | RU заголовок + RU саммари получены за 1 вызов Zen |
 | `published` | Видна пользователям в дашборде |
+
+> Статус `translated` упразднён (v3): шаг перевода удалён из конвейера.
 
 ## Обработка ошибок
 
@@ -132,8 +142,8 @@ approved pending → summarized → translated → published
 | evaluate-news | Score ≤ 75 / нет слота | status='rejected' |
 | manifest-gen | Пустой манифест | Завершить цикл (success) |
 | fetch-article | HTTP error / < 100 chars | Пропустить статью |
-| save-summary | Zen unavailable | Прервать обработку статьи |
-| translate-title | Empty translation | Использовать оригинал |
+| save-summary | Zen unavailable / no JSON | Прервать обработку статьи |
+| deploy-ready | DB error | Залогировать, продолжить |
 
 ## Конфигурация (env)
 

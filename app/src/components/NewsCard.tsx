@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { Star, ArrowRight, Clock } from "lucide-react";
+import { Star, ArrowRight, Clock, ExternalLink } from "lucide-react";
 import { trpc } from "@/providers/trpc";
 import { useAuth } from "@/hooks/useAuth";
 import type { News } from "@db/schema";
@@ -90,18 +90,21 @@ export default function NewsCard({ article, isRead = false, onMarkRead, showFavo
                   {article.categorySlug}
                 </span>
               )}
-              {tags.slice(0, 2).map((tag) => (
-                <span
-                  key={tag}
-                  className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium"
-                  style={{
-                    backgroundColor: "var(--color-search-bg)",
-                    color: "var(--color-text-muted)",
-                  }}
-                >
-                  {tag.trim()}
-                </span>
-              ))}
+              {tags.slice(0, 2).map((tag) => {
+                const isTestTag = tag.trim() === "ТестГемма1поток";
+                return (
+                  <span
+                    key={tag}
+                    className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium"
+                    style={{
+                      backgroundColor: isTestTag ? "rgba(34, 197, 94, 0.15)" : "var(--color-search-bg)",
+                      color: isTestTag ? "#16a34a" : "var(--color-text-muted)",
+                    }}
+                  >
+                    {tag.trim()}
+                  </span>
+                );
+              })}
             </div>
             {showFavorite && isAuthenticated && (
               <button
@@ -131,15 +134,6 @@ export default function NewsCard({ article, isRead = false, onMarkRead, showFavo
             {article.summary}
           </p>
 
-          {article.translation && (
-            <p
-              className="mt-2 text-sm leading-relaxed line-clamp-2 italic"
-              style={{ color: "var(--color-text-muted)" }}
-            >
-              {article.translation}
-            </p>
-          )}
-
           <div className="flex items-center justify-between mt-4 text-[13px]" style={{ color: "var(--color-text-muted)" }}>
             <div className="flex items-center gap-2">
               <span>{new Date(article.publishedAt).toLocaleDateString("ru-RU")}</span>
@@ -149,13 +143,31 @@ export default function NewsCard({ article, isRead = false, onMarkRead, showFavo
                 {Math.max(1, Math.ceil((article.summary?.length || 0) / 1000))} мин
               </span>
             </div>
-            <span
-              className="flex items-center gap-1 text-[13px] font-medium transition-colors group-hover:underline"
-              style={{ color: "var(--color-accent)" }}
-            >
-              Подробнее
-              <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
-            </span>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  window.open(article.originalUrl, "_blank", "noopener,noreferrer");
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[13px] font-medium transition-colors hover:underline"
+                style={{
+                  color: "var(--color-accent)",
+                  backgroundColor: "var(--color-tag-bg)",
+                }}
+                title="Открыть оригинальную статью в новой вкладке"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Перейти к источнику
+              </button>
+              <span
+                className="flex items-center gap-1 text-[13px] font-medium transition-colors group-hover:underline"
+                style={{ color: "var(--color-accent)" }}
+              >
+                Подробнее
+                <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
+              </span>
+            </div>
           </div>
         </div>
       </div>

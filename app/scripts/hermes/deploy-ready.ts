@@ -1,11 +1,11 @@
 #!/usr/bin/env tsx
 /**
- * deploy-ready.ts — Publishes translated articles by setting status to 'published'.
+ * deploy-ready.ts — Publishes summarized articles by setting status to 'published'.
  *
  * Usage:
  *   npx tsx scripts/hermes/deploy-ready.ts [--batch-size <n>]
  *
- * Finds articles with status='translated' and sets them to 'published'.
+ * Finds articles with status='summarized' and sets them to 'published'.
  * Exits with code 0 on success, 1 on error.
  */
 
@@ -29,14 +29,14 @@ function parseArgs(): { batchSize: number } {
 async function main() {
   const { batchSize } = parseArgs();
 
-  console.log(`[deploy-ready] Deploying up to ${batchSize} translated articles...`);
+  console.log(`[deploy-ready] Deploying up to ${batchSize} summarized articles...`);
 
   const db = getDb();
 
   const ready = await db
     .select({ id: news.id, title: news.title })
     .from(news)
-    .where(eq(news.status, "translated"))
+    .where(eq(news.status, "summarized"))
     .limit(batchSize);
 
   if (ready.length === 0) {

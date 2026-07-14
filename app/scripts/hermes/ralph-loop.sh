@@ -2,8 +2,10 @@
 # ralph-loop.sh — Hermes Agent autonomous Ralph Loop runner
 #
 # Implements the loop described in app/skills/news-processor/SKILL.md:
-#   manifest-gen → (fetch → save-summary → translate-title → deploy-ready) per article
-#   then sleeps LINEAR_WORKER_INTERVAL_MS and repeats forever.
+#   collect-dual → evaluate-news → manifest-gen → (fetch → save-summary → deploy-ready)
+#   Strictly SEQUENTIAL: one article at a time, ONE Zen call per article
+#   (one-shot summarization returns Russian title + summary; no translation step).
+#   Then sleeps LINEAR_WORKER_INTERVAL_MS and repeats forever.
 #
 # Designed to run under PM2 (interpreter: bash) or as a plain daemon.
 
@@ -81,7 +83,7 @@ while true; do
     fi
     log "fetch OK: ${#TEXT} chars"
 
-    # Step 3b: Summarize via Zen API (saves summary+content, status='summarized')
+    # Step 3b: One-shot summarize via Zen API (RU title + summary, status='summarized')
     if ! npx tsx scripts/hermes/save-summary.ts --id "$ARTICLE_ID" --auto; then
       log "summarize FAILED for #${ARTICLE_ID} — skipping"
       ERR=$((ERR + 1))
@@ -89,15 +91,7 @@ while true; do
     fi
     log "summarize OK"
 
-    # Step 3c: Translate title via Zen API (status='translated')
-    if ! npx tsx scripts/hermes/translate-title.ts --id "$ARTICLE_ID" --auto; then
-      log "translate FAILED for #${ARTICLE_ID} — skipping"
-      ERR=$((ERR + 1))
-      continue
-    fi
-    log "translate OK"
-
-    # Step 3d: Publish (status='published')
+    # Step 3c: Publish (status='published')
     npx tsx scripts/hermes/deploy-ready.ts --batch-size 1 || log "deploy WARN for #${ARTICLE_ID}"
     log "Article #${ARTICLE_ID} published"
     OK=$((OK + 1))

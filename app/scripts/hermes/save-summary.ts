@@ -16,7 +16,7 @@
 import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
 import { eq } from "drizzle-orm";
-import { summarizeArticle, checkZenConnection, countTokens, truncateToTokens } from "../../api/ai/zenClient";
+import { summarizeOneShot, checkZenConnection } from "../../api/ai/zenClient";
 import * as cheerio from "cheerio";
 
 // ─── Noise selectors for HTML cleaning (shared with summarizeAgent) ──────────
@@ -187,6 +187,7 @@ async function main() {
   }
 
   let summary: string;
+  let titleRu: string | null = null;
   let detailedSummary: string;
   let originalContent: string | null = null;
   let modelUsed: string | null = args.model;
@@ -215,12 +216,13 @@ async function main() {
     originalContent = text;
     console.error(`[save-summary] Fetched ${text.length} chars`);
 
-    // Call Zen API
-    const result = await summarizeArticle(article.title, text, article.source);
+    // Single Zen API call: Russian title + Russian summary (JSON)
+    const result = await summarizeOneShot(article.title, text, article.source);
     summary = result.summary;
-    detailedSummary = result.detailedSummary;
+    titleRu = result.titleRu;
+    detailedSummary = "";
 
-    if (isGarbageText(summary) || isGarbageText(detailedSummary)) {
+    if (isGarbageText(summary) || isGarbageText(titleRu)) {
       console.error("[save-summary] Zen API returned unusable summary");
       process.exit(1);
     }
@@ -240,13 +242,14 @@ async function main() {
     detailedSummary = args.content;
   }
 
-  // Save to DB
+  // Save to DB (title + summary are already Russian — no translation step)
   const updateData: Record<string, unknown> = {
     summary,
-    content: detailedSummary,
     status: "summarized",
     updatedAt: new Date(),
   };
+  if (titleRu) updateData.title = titleRu;
+  if (!args.auto && detailedSummary) updateData.content = detailedSummary;
   if (modelUsed) updateData.modelUsed = modelUsed;
   if (originalContent) updateData.originalContent = originalContent;
 
@@ -255,8 +258,8 @@ async function main() {
   console.log(JSON.stringify({
     status: "ok",
     articleId: args.id,
+    titleRu,
     summaryLength: summary.length,
-    contentLength: detailedSummary.length,
     model: modelUsed,
   }));
 
