@@ -55,13 +55,17 @@ function loadSeedData(): SeedItem[] {
   throw new Error("Science seed file not found: tried science_seed_data.md, seed_data_science.md");
 }
 
+/**
+ * Historical publication dates: random 1-14 days ago per item. Seeding with
+ * dates clustered at "now" makes every dashboard card look freshly
+ * published (the "1 min ago" UX bug) — a real archive spans weeks.
+ */
 function distributeDates(count: number): Date[] {
   const now = Date.now();
-  const windowMs = 48 * 3600_000;
-  const start = now - windowMs;
-  if (count <= 1) return [new Date(now)];
-  const step = windowMs / (count - 1);
-  return Array.from({ length: count }, (_, i) => new Date(start + i * step));
+  return Array.from({ length: count }, () => {
+    const msAgo = (1 + Math.random() * 13) * 24 * 3600_000; // 1..14 days ago
+    return new Date(now - msAgo);
+  });
 }
 
 async function main() {

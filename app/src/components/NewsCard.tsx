@@ -140,7 +140,7 @@ export default function NewsCard({ article, isRead = false, onMarkRead, showFavo
               <span>·</span>
               <span className="flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5" />
-                {Math.max(1, Math.ceil((article.summary?.length || 0) / 1000))} мин
+                {Math.max(1, Math.ceil((article.summary?.length || 0) / 1000))} мин чтения
               </span>
             </div>
             <div className="flex items-center gap-3">
