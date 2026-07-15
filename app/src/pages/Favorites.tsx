@@ -61,11 +61,10 @@ export default function Favorites() {
             {favorites.map((fav) => (
               <NewsCard
                 key={fav.id}
-                article={{
-                  ...fav.news,
-                  createdAt: fav.createdAt,
-                  updatedAt: fav.createdAt,
-                }}
+                // Pass the article's REAL timestamps — never substitute the
+                // favorite-stamp (fav.createdAt), or cards display the
+                // "added to favorites" time instead of the publication date.
+                article={fav.news}
                 isRead={readSet.has(fav.newsId)}
                 onMarkRead={handleMarkRead}
               />
