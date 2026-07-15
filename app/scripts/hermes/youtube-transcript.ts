@@ -188,6 +188,20 @@ export function listChannelVideos(channelUrl: string, max = 5): Promise<ChannelV
   });
 }
 
+/** Lightweight metadata (no subtitle download) — used by the scorer. */
+export async function fetchYoutubeMetadata(
+  url: string,
+): Promise<{ title: string; description: string; channel: string } | null> {
+  if (!isYoutubeUrl(url)) return null;
+  const info = await runYtdlp(url);
+  if (!info?.id) return null;
+  return {
+    title: info.title ?? "",
+    description: info.description ?? "",
+    channel: info.channel ?? info.uploader ?? "",
+  };
+}
+
 /**
  * Fetch transcript for a YouTube video. Returns null when the video is
  * unavailable or has no usable caption track.

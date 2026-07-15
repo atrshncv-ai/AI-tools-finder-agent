@@ -36,6 +36,7 @@ import * as cheerio from "cheerio";
 import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
 import { eq, and, isNull, isNotNull, inArray, gte, desc } from "drizzle-orm";
+import { fetchYoutubeMetadata } from "./youtube-transcript";
 
 const FETCH_TIMEOUT_MS = 20_000;
 const UA = "science-agent/2.0 (+https://159.194.236.68:3000)";
@@ -63,6 +64,17 @@ const TIER2_SCIENCE = new Set([
 ]);
 
 const OPEN_LICENSES = new Set(["MIT", "Apache-2.0"]);
+
+/** AI product/project names that generic AI_TERMS misses in video titles. */
+const YOUTUBE_AI_TERMS =
+  /\b(gpt|chatgpt|claude|codex|gemini|openai|anthropic|deepseek|llama|mistral|qwen|copilot|sora|veo|nano[ -]banana|grok|diffusion|transformer|agent|agents|robot|llm|mcp|rag)\b/i;
+
+/** Channels whose entire content is AI — topic bonus needs no keyword proof. */
+const DEDICATED_AI_CHANNELS = new Set([
+  "youtube-two-minute-papers",
+  "youtube-yannic-kilcher",
+  "youtube-matthew-berman",
+]);
 
 // ─── Regex helpers for text signals ─────────────────────────────────────────
 
@@ -266,10 +278,26 @@ async function evaluate(article: {
       points: 45,
       evidence: `source=${article.source}`,
     });
-    const evidenceText = `${article.title}`;
-    if (hasAny(evidenceText, AI_TERMS) || hasAny(evidenceText, TECH_TREND_TERMS)) {
+    // Evidence: title + video description (via yt-dlp metadata, no download).
+    const meta = await fetchYoutubeMetadata(article.originalUrl);
+    if (meta) {
+      metrics.youtubeChannel = meta.channel;
+      metrics.youtubeDescription = meta.description.slice(0, 500);
+    }
+    const evidenceText = `${article.title} ${meta?.description ?? ""}`;
+    if (
+      DEDICATED_AI_CHANNELS.has(article.source) ||
+      hasAny(evidenceText, YOUTUBE_AI_TERMS) ||
+      hasAny(evidenceText, AI_TERMS)
+    ) {
       score += 15;
-      breakdown.push({ criterion: "youtube-ai-topic", points: 15, evidence: "AI/LLM/agent in title" });
+      breakdown.push({
+        criterion: "youtube-ai-topic",
+        points: 15,
+        evidence: DEDICATED_AI_CHANNELS.has(article.source)
+          ? "dedicated AI channel"
+          : "AI terms in title/description",
+      });
     }
     score += 10;
     breakdown.push({ criterion: "video-format", points: 10, evidence: "transcribed video essay/review" });
