@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { createRouter, publicQuery, adminQuery } from "./middleware";
+import { createRouter, authedQuery, adminQuery } from "./middleware";
 import {
   findAllNews,
   findNewsById,
@@ -12,7 +12,7 @@ import { news } from "@db/schema";
 import { eq } from "drizzle-orm";
 
 export const newsRouter = createRouter({
-  list: publicQuery
+  list: authedQuery
     .input(
       z
         .object({
@@ -36,19 +36,19 @@ export const newsRouter = createRouter({
       });
     }),
 
-  byId: publicQuery
+  byId: authedQuery
     .input(z.object({ id: z.number() }))
     .query(async ({ input }) => {
       return findNewsById(input.id);
     }),
 
-  categories: publicQuery
+  categories: authedQuery
     .input(z.object({ type: z.enum(["general", "science"]).optional() }).optional())
     .query(async ({ input }) => {
       return findCategories(input?.type);
     }),
 
-  translate: publicQuery
+  translate: authedQuery
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const db = getDb();

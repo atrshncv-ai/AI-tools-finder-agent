@@ -4,60 +4,17 @@ import bcrypt from "bcryptjs";
 import { Session } from "@contracts/constants";
 import { getSessionCookieOptions } from "./lib/cookies";
 import { createRouter, authedQuery, publicQuery } from "./middleware";
-import { signSessionToken } from "./kimi/session";
-import { findUserByUnionId, upsertUser, findUserByEmail, incrementTokenVersion } from "./queries/users";
+import { signSessionToken, JWT_EXPIRY_HOURS } from "./lib/session";
+import { findUserByEmail, incrementTokenVersion } from "./queries/users";
 
-const BCRYPT_ROUNDS = 12;
+const COOKIE_MAX_AGE_SECONDS = JWT_EXPIRY_HOURS * 3600;
 
+/**
+ * Private service auth: login/logout/session only. There is NO public
+ * registration — accounts are provisioned by the admin via
+ * scripts/create-user.ts and handed out manually.
+ */
 export const authRouter = createRouter({
-  register: publicQuery
-    .input(
-      z.object({
-        name: z.string().min(2, "Имя должно быть не менее 2 символов"),
-        email: z.string().email("Некорректный email"),
-        password: z.string().min(6, "Пароль должен быть не менее 6 символов"),
-      })
-    )
-    .mutation(async ({ input, ctx }) => {
-      const existing = await findUserByEmail(input.email);
-      if (existing) {
-        throw new Error("Пользователь с таким email уже существует");
-      }
-
-      const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
-      const unionId = `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-      await upsertUser({
-        unionId,
-        name: input.name,
-        email: input.email,
-        password: passwordHash,
-        role: "user",
-        lastSignInAt: new Date(),
-      });
-
-      const token = await signSessionToken({
-        unionId,
-        clientId: "app",
-        tokenVersion: 1,
-      });
-
-      const cookieOpts = getSessionCookieOptions(ctx.req.headers);
-      ctx.resHeaders.append(
-        "set-cookie",
-        cookie.serialize(Session.cookieName, token, {
-          httpOnly: cookieOpts.httpOnly,
-          path: cookieOpts.path,
-          sameSite: cookieOpts.sameSite as "lax" | "none",
-          secure: cookieOpts.secure,
-          maxAge: Session.maxAgeMs / 1000,
-        })
-      );
-
-      const user = await findUserByUnionId(unionId);
-      return { success: true, user };
-    }),
-
   login: publicQuery
     .input(
       z.object({
@@ -90,7 +47,7 @@ export const authRouter = createRouter({
           path: cookieOpts.path,
           sameSite: cookieOpts.sameSite as "lax" | "none",
           secure: cookieOpts.secure,
-          maxAge: Session.maxAgeMs / 1000,
+          maxAge: COOKIE_MAX_AGE_SECONDS,
         })
       );
 

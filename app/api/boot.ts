@@ -5,8 +5,6 @@ import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { appRouter } from "./router";
 import { createContext } from "./context";
 import { env } from "./lib/env";
-import { createOAuthCallbackHandler, createOAuthLoginHandler } from "./kimi/auth";
-import { Paths } from "@contracts/constants";
 import { rateLimit } from "./lib/rateLimit";
 import { logger } from "./lib/logger";
 import { getDb, closeDb } from "./queries/connection";
@@ -26,9 +24,6 @@ app.use("/api/trpc/*", rateLimit({
   windowMs: 60 * 1000,
   max: 100,
 }));
-
-app.get(Paths.oauthLogin, createOAuthLoginHandler());
-app.get(Paths.oauthCallback, createOAuthCallbackHandler());
 
 app.get("/health", async (c) => {
   const checks: Record<string, string> = {};

@@ -1,20 +1,37 @@
+/**
+ * session.ts — JWT session tokens for the private login/password service.
+ *
+ * HS256-signed tokens carried in an httpOnly cookie. The HMAC secret comes
+ * from JWT_SECRET (APP_SECRET kept as a legacy fallback so existing envs keep
+ * working). Token revocation is per-user via tokenVersion (logout increments
+ * it, invalidating all previously issued tokens).
+ */
+
 import * as jose from "jose";
-import { env } from "../lib/env";
 import { findUserByUnionId } from "../queries/users";
-import type { SessionPayload } from "./types";
 
 const JWT_ALG = "HS256";
-const JWT_EXPIRY_HOURS = parseInt(process.env.SESSION_EXPIRY_HOURS || "24", 10);
+export const JWT_EXPIRY_HOURS = parseInt(process.env.SESSION_EXPIRY_HOURS || "24", 10);
+
+export interface SessionPayload extends jose.JWTPayload {
+  unionId: string;
+  clientId: string;
+}
+
+function sessionSecret(): Uint8Array {
+  const secret = process.env.JWT_SECRET || process.env.APP_SECRET || "";
+  if (!secret) throw new Error("JWT_SECRET (or APP_SECRET) environment variable is required");
+  return new TextEncoder().encode(secret);
+}
 
 export async function signSessionToken(
   payload: SessionPayload & { tokenVersion?: number },
 ): Promise<string> {
-  const secret = new TextEncoder().encode(env.appSecret);
   return new jose.SignJWT(payload)
     .setProtectedHeader({ alg: JWT_ALG })
     .setIssuedAt()
     .setExpirationTime(`${JWT_EXPIRY_HOURS}h`)
-    .sign(secret);
+    .sign(sessionSecret());
 }
 
 export async function verifySessionToken(
@@ -25,8 +42,7 @@ export async function verifySessionToken(
     return null;
   }
   try {
-    const secret = new TextEncoder().encode(env.appSecret);
-    const { payload } = await jose.jwtVerify(token, secret, {
+    const { payload } = await jose.jwtVerify(token, sessionSecret(), {
       algorithms: [JWT_ALG],
     });
     const { unionId, clientId, tokenVersion } = payload;

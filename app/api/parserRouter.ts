@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { createRouter, publicQuery, adminQuery } from "./middleware";
+import { createRouter, authedQuery, adminQuery } from "./middleware";
 import { runSummarizeAgent, getMetrics, manualRun } from "./agent/index";
 import { findRecentLogs } from "./queries/parsingLogs";
 import { findAllSources, addSource, removeSource, toggleSource } from "./queries/sources";
@@ -19,11 +19,11 @@ export const parserRouter = createRouter({
     return runSummarizeAgent();
   }),
 
-  logs: publicQuery.query(async () => {
+  logs: authedQuery.query(async () => {
     return findRecentLogs(20);
   }),
 
-  sources: publicQuery.query(async () => {
+  sources: authedQuery.query(async () => {
     return findAllSources();
   }),
 
@@ -65,7 +65,7 @@ export const parserRouter = createRouter({
       return { success: true };
     }),
 
-  status: publicQuery.query(async () => {
+  status: authedQuery.query(async () => {
     const zenOk = await checkZenConnection();
     const metrics = getMetrics();
     return {
