@@ -16,14 +16,42 @@ describe("rateLimit", () => {
     expect(res.status).toBe(200);
   });
 
-  it("blocks requests over limit", async () => {
+  it("blocks requests over limit with a tRPC error envelope", async () => {
     const app = createTestApp({ windowMs: 60000, max: 2 });
     await app.request("/test");
     await app.request("/test");
     const res = await app.request("/test");
     expect(res.status).toBe(429);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe("Too many requests");
+    const body = await res.json() as {
+      error: { json: { code: number; data: { code: string; httpStatus: number } } };
+    };
+    expect(body.error.json.code).toBe(-32029);
+    expect(body.error.json.data.code).toBe("TOO_MANY_REQUESTS");
+    expect(body.error.json.data.httpStatus).toBe(429);
+  });
+
+  it("returns an ARRAY envelope for batched tRPC calls (?batch=1)", async () => {
+    const app = createTestApp({ windowMs: 60000, max: 1 });
+    await app.request("/test");
+    const res = await app.request("/test?batch=1");
+    expect(res.status).toBe(429);
+    const body = await res.json() as Array<{
+      error: { json: { data: { code: string } } };
+    }>;
+    expect(Array.isArray(body)).toBe(true);
+    expect(body[0].error.json.data.code).toBe("TOO_MANY_REQUESTS");
+  });
+
+  it("keys clients by X-Forwarded-For (first IP) when present", async () => {
+    const app = createTestApp({ windowMs: 60000, max: 1 });
+    const headers = { "x-forwarded-for": "203.0.113.7, 10.0.0.1" };
+    await app.request("/test", { headers });
+    const res = await app.request("/test", { headers });
+    expect(res.status).toBe(429); // same client IP -> same bucket
+    const other = await app.request("/test", {
+      headers: { "x-forwarded-for": "198.51.100.9" },
+    });
+    expect(other.status).toBe(200); // different IP -> separate bucket
   });
 
   it("uses custom keyFn", async () => {
