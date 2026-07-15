@@ -17,6 +17,7 @@ export async function findFavoritesByUser(userId: number) {
         originalContent: news.originalContent,
         translation: news.translation,
         originalUrl: news.originalUrl,
+        originalTitle: news.originalTitle,
         source: news.source,
         categoryId: news.categoryId,
         categorySlug: news.categorySlug,

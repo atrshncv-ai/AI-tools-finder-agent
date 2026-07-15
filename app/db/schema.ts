@@ -54,6 +54,10 @@ export const news = pgTable(
     originalContent: text("originalContent"),
     translation: text("translation"),
     originalUrl: text("originalUrl").notNull(),
+    // Untranslated (English) title as collected from the source. `title` is
+    // later overwritten with the Russian translation; dedup must compare
+    // against this original.
+    originalTitle: text("originalTitle"),
     source: text("source").notNull(),
     categoryId: integer("categoryId").references(() => categories.id),
     categorySlug: text("categorySlug"),

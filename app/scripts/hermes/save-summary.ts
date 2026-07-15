@@ -250,7 +250,11 @@ async function main() {
     status: "summarized",
     updatedAt: new Date(),
   };
-  if (titleRu) updateData.title = titleRu;
+  if (titleRu) {
+    updateData.title = titleRu;
+    // Preserve the untranslated title for dedup before overwriting `title`.
+    if (!article.originalTitle) updateData.originalTitle = article.title;
+  }
   if (!args.auto && detailedSummary) updateData.content = detailedSummary;
   if (modelUsed) updateData.modelUsed = modelUsed;
   if (originalContent) updateData.originalContent = originalContent;

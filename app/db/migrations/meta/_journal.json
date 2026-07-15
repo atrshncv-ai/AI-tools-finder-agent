@@ -50,6 +50,13 @@
       "when": 1784088120966,
       "tag": "0006_quiet_william_stryker",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784088757435,
+      "tag": "0007_jazzy_cobalt_man",
+      "breakpoints": true
     }
   ]
 }

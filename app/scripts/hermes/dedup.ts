@@ -84,7 +84,7 @@ export async function findSemanticDuplicate(
   const lookback = opts.lookback ?? 20;
   const db = getDb();
   const recent = await db
-    .select({ id: news.id, title: news.title })
+    .select({ id: news.id, title: news.title, originalTitle: news.originalTitle })
     .from(news)
     .orderBy(desc(news.createdAt))
     .limit(lookback);
@@ -94,9 +94,13 @@ export async function findSemanticDuplicate(
 
   let best: DuplicateMatch | null = null;
   for (const row of recent) {
-    const sim = similarity(norm, normalizeTitle(row.title));
+    // Compare against the untranslated original title; `title` may already be
+    // overwritten with the Russian translation, which would never match a new
+    // English candidate. Fall back to `title` for legacy rows.
+    const compareTitle = row.originalTitle ?? row.title;
+    const sim = similarity(norm, normalizeTitle(compareTitle));
     if (sim >= threshold && (!best || sim > best.similarity)) {
-      best = { id: row.id, title: row.title, similarity: sim };
+      best = { id: row.id, title: compareTitle, similarity: sim };
     }
   }
   return best;

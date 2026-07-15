@@ -423,6 +423,7 @@ async function main() {
         .insert(news)
         .values({
           title: c.title.slice(0, 500),
+          originalTitle: c.title.slice(0, 500),
           summary: "",
           originalUrl: c.url,
           source: c.source,
