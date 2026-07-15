@@ -59,13 +59,21 @@ function rotateKey(): boolean {
   return false;
 }
 
-/** Mark the current key as quota-exhausted and rotate away from it. */
-function exhaustCurrentKeyAndRotate(): boolean {
-  keyCooldownUntil.set(currentKeyIndex, Date.now() + KEY_COOLDOWN_MS);
+/** Mark a specific key as quota-exhausted and rotate away from it if it's still active. */
+function exhaustKeyAndRotate(index: number): boolean {
+  keyCooldownUntil.set(index, Date.now() + KEY_COOLDOWN_MS);
   console.log(
-    `[Zen] Key #${currentKeyIndex} (${maskKey(keyPool[currentKeyIndex])}) marked quota-exhausted for ${KEY_COOLDOWN_MS / 60000}min`,
+    `[Zen] Key #${index} (${maskKey(keyPool[index])}) marked quota-exhausted for ${KEY_COOLDOWN_MS / 60000}min`,
   );
+  // If another request already rotated us to a different key, don't rotate again.
+  if (index !== currentKeyIndex) {
+    return true;
+  }
   return rotateKey();
+}
+
+function getCurrentKeyIndex(): number {
+  return currentKeyIndex;
 }
 
 export function getKeyPoolState(): {
@@ -183,15 +191,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms),
-    ),
-  ]);
-}
-
 function extractFirstParagraph(text: string): string {
   const paragraphs = text.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
   return paragraphs[0] || text.trim();
@@ -261,6 +260,8 @@ async function rawChatCompletion(
     model?: string;
     extractParagraph?: boolean;
   } = {},
+  keyIndex?: number,
+  timeoutMs?: number,
 ): Promise<string> {
   const {
     temperature = 0.3,
@@ -282,7 +283,8 @@ async function rawChatCompletion(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  const activeKey = getActiveKey();
+  const myKeyIdx = keyIndex ?? getCurrentKeyIndex();
+  const activeKey = keyPool.length > 0 ? keyPool[myKeyIdx % keyPool.length] : null;
   if (activeKey) {
     headers["Authorization"] = `Bearer ${activeKey}`;
   }
@@ -290,6 +292,9 @@ async function rawChatCompletion(
   const response = await fetch(`${ZEN_BASE_URL}/chat/completions`, {
     method: "POST",
     headers,
+    // Native abort signal cancels the in-flight request on timeout (unlike a
+    // Promise.race wrapper, which leaves the socket hanging).
+    ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
     body: JSON.stringify({
       model,
       messages: chatMessages,
@@ -346,19 +351,19 @@ export async function chatCompletion(
 
   return aiLimiter(async () => {
     for (let attempt = 0; attempt <= retries; attempt++) {
+      // Capture the key index BEFORE the request: under concurrency another
+      // request may rotate the pool while this one is in flight. The catch
+      // block must mark exactly the key that failed, not the current one.
+      const myKeyIdx = getCurrentKeyIndex();
       try {
-        const result = await withTimeout(
-          rawChatCompletion(messages, rest),
-          timeoutMs,
-          "Zen API request",
-        );
+        const result = await rawChatCompletion(messages, rest, myKeyIdx, timeoutMs);
         circuitRecordSuccess();
         return result;
       } catch (error) {
         // Key rotation: quota/balance exhaustion → swap key, retry immediately
         // without consuming a backoff attempt.
         if (error instanceof ZenQuotaError) {
-          if (exhaustCurrentKeyAndRotate()) {
+          if (exhaustKeyAndRotate(myKeyIdx)) {
             console.log(`[Zen] Retrying request with rotated key...`);
             attempt--;
             continue;
