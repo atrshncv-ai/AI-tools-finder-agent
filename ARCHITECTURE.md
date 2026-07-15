@@ -128,7 +128,7 @@ yt-dlp --dump-json --js-runtimes deno
 | +10 | Формат видео |
 | **= 70** | > гейта 65 → гарантированный проход для курируемых AI-каналов |
 
-**Гейт:** `score > 65` → `status='approved'`. Остальные — `rejected`.
+**Гейт:** `score > 65` → статья остаётся `status='pending'` с проставленным `score`; остальные — `status='rejected'`. В LLM-конвейер попадают только `pending` + `score ≥ 66` (жёсткий фильтр в `manifest-gen.ts`; строки с `score=NULL` исключаются SQL-семантикой NULL).
 **Дневной лимит:** `--daily-cap 0` (по умолчанию) = **безлимитно**; положительное значение включает ограничение обратно. В ralph-loop: `HERMES_DAILY_CAP:-0`.
 
 ---
@@ -185,7 +185,7 @@ yt-dlp --dump-json --js-runtimes deno
 while true:
   collect-dual.ts --stream both          # сбор (текст + YouTube)
   evaluate-news.ts --batch --daily-cap 0 # скоринг, гейт >65, безлимит
-  manifest-gen.ts --limit 50             # манифест approved-статей
+  manifest-gen.ts --limit 50             # манифест: pending + score≥66
   for each article in manifest:          # СТРОГО последовательно
     fetch-article.ts   → save-summary.ts → deploy-ready.ts
     # ОДИН Zen-вызов на статью: one-shot RU title + summary, без шага перевода
@@ -245,7 +245,7 @@ PostgreSQL 16 в Docker-контейнере `science_agent_db` (БД `science_a
 
 **Таблицы:** `users` (email, password-hash, role, tokenVersion), `categories`, `news` (ядро: `originalUrl` UNIQUE + CHECK, `originalTitle` для дедупа после перевода заголовка, `score`, `status`, `metrics` jsonb, GIN FTS-индекс по RU-текстам), `favorites`, `readStatus`, `sources`, `parsingLogs`, `agentState`, `sourceHealth`, `pipelineState`.
 
-Ключевые статусы `news`: `pending` → `approved`/`rejected` (скоринг) → `summarized` → `published`. Видео без транскрипта — `rejected` (без ретраев).
+Ключевые статусы `news`: `pending` → (скоринг: прошёл гейт — остаётся `pending` + score; не прошёл — `rejected`) → `summarized` → `published`. Видео без транскрипта — `rejected` (без ретраев).
 
 ---
 
