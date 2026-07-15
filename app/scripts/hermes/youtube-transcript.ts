@@ -55,7 +55,7 @@ function runYtdlp(url: string): Promise<YtdlpInfo | null> {
     // execFile (no shell) — the URL is passed as a single argv element.
     execFile(
       "yt-dlp",
-      ["--dump-json", "--skip-download", "--no-playlist", "--no-warnings", url],
+      ["--dump-json", "--skip-download", "--no-playlist", "--no-warnings", "--js-runtimes", "deno", url],
       { timeout: YTDLP_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024 },
       (err, stdout) => {
         if (err || !stdout) {
@@ -160,7 +160,7 @@ export function listChannelVideos(channelUrl: string, max = 5): Promise<ChannelV
       "yt-dlp",
       [
         "--skip-download",
-        "--no-warnings",
+        "--no-warnings", "--js-runtimes", "deno",
         "--playlist-end",
         String(max),
         "--print",

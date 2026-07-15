@@ -159,7 +159,8 @@ const YOUTUBE_FEEDS = [
   // ── Client-approved AI-tooling channels (shorts/reviews) ──
   {
     url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCkaXqLNhfpgzqGh8cu6E_3w",
-    channelUrl: "https://www.youtube.com/@vladimiraidev/videos",
+    // Shorts-only channel: no /videos tab exists.
+    channelUrl: "https://www.youtube.com/@vladimiraidev/shorts",
     name: "youtube-vladimir-ai-dev",
     language: "ru",
   },
