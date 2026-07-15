@@ -45,11 +45,12 @@ const MAX_AGE_MS = MAX_AGE_HOURS_DEFAULT * 3600_000;
  * date no older than 72h. Missing or unparseable date => REJECTED (fail-closed).
  * Runs at collection time, BEFORE dedup/scoring — no exceptions for any source.
  */
-function isFresh(publishedAt: Date | null | undefined, maxAgeMs = MAX_AGE_MS): boolean {
+function isFresh(publishedAt: Date | null | undefined, maxAgeMs = MAX_AGE_MS, minAgeMs = 0): boolean {
   if (!publishedAt) return false;
   const ts = publishedAt.getTime?.();
   if (!ts || Number.isNaN(ts)) return false;
-  return Date.now() - ts <= maxAgeMs;
+  const age = Date.now() - ts;
+  return age <= maxAgeMs && age >= minAgeMs;
 }
 
 interface Candidate {
@@ -73,10 +74,12 @@ function args() {
   const a = process.argv.slice(2);
   const streamIdx = a.indexOf("--stream");
   const ageIdx = a.indexOf("--max-age-hours");
+  const minAgeIdx = a.indexOf("--min-age-hours");
   return {
     stream: (streamIdx >= 0 ? a[streamIdx + 1] : "both") as "tech" | "science" | "both",
     dryRun: a.includes("--dry-run"),
     maxAgeHours: ageIdx >= 0 ? parseInt(a[ageIdx + 1] || "", 10) || MAX_AGE_HOURS_DEFAULT : MAX_AGE_HOURS_DEFAULT,
+    minAgeHours: minAgeIdx >= 0 ? parseInt(a[minAgeIdx + 1] || "", 10) || 0 : 0,
   };
 }
 
@@ -458,8 +461,8 @@ async function collectScience(): Promise<Candidate[]> {
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const { stream, dryRun, maxAgeHours } = args();
-  console.error(`[collect-dual] Starting (stream=${stream}, dryRun=${dryRun}, maxAge=${maxAgeHours}h)`);
+  const { stream, dryRun, maxAgeHours, minAgeHours } = args();
+  console.error(`[collect-dual] Starting (stream=${stream}, dryRun=${dryRun}, window=${minAgeHours}h..${maxAgeHours}h)`);
 
   const candidates: Candidate[] = [];
   if (stream === "tech" || stream === "both") {
@@ -478,10 +481,12 @@ async function main() {
   // STRICT Time Guard: reject anything older than maxAgeHours — including
   // items with missing/unparseable dates (fail-closed). Applies uniformly to
   // RSS, GitHub, HN, Reddit and PubMed candidates BEFORE dedup/scoring.
-  const fresh = candidates.filter((c) => isFresh(c.publishedAt, maxAgeHours * 3600_000));
+  const fresh = candidates.filter((c) =>
+    isFresh(c.publishedAt, maxAgeHours * 3600_000, minAgeHours * 3600_000),
+  );
   const staleDropped = candidates.length - fresh.length;
   console.error(
-    `[collect-dual] ${fresh.length}/${candidates.length} fresh (<= ${maxAgeHours}h, ${staleDropped} stale/no-date dropped), running dedup guard...`,
+    `[collect-dual] ${fresh.length}/${candidates.length} in window (${minAgeHours}h..${maxAgeHours}h, ${staleDropped} stale/no-date dropped), running dedup guard...`,
   );
 
   const db = getDb();
@@ -561,6 +566,7 @@ async function main() {
   const stats = {
     status: "ok",
     stream,
+    window: { minAgeHours, maxAgeHours },
     raw: candidates.length,
     fresh: fresh.length,
     staleDropped,
