@@ -263,7 +263,9 @@ async function main() {
     detailedSummary = args.content;
   }
 
-  // Save to DB (title + summary are already Russian — no translation step)
+  // Save to DB (title + summary are already Russian — no translation step).
+  // URL INTEGRITY: originalUrl is NEVER modified here — for YouTube finds it
+  // always stays the video link; the LLM output can only touch title/summary.
   const updateData: Record<string, unknown> = {
     summary,
     status: "summarized",

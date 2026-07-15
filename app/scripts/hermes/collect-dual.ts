@@ -142,16 +142,56 @@ const YOUTUBE_FEEDS = [
     url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCbfYPyITQ-7l4upoX8nvctg",
     channelUrl: "https://www.youtube.com/@TwoMinutePapers/videos",
     name: "youtube-two-minute-papers",
+    language: "en",
   },
   {
     url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCZHmQk67mSJgfCCTn7xBfew",
     channelUrl: "https://www.youtube.com/@YannicKilcher/videos",
     name: "youtube-yannic-kilcher",
+    language: "en",
   },
   {
     url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCawZsQWqfGSbCI5yjkdVkTA",
     channelUrl: "https://www.youtube.com/@matthew_berman/videos",
     name: "youtube-matthew-berman",
+    language: "en",
+  },
+  // ── Client-approved AI-tooling channels (shorts/reviews) ──
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCkaXqLNhfpgzqGh8cu6E_3w",
+    channelUrl: "https://www.youtube.com/@vladimiraidev/videos",
+    name: "youtube-vladimir-ai-dev",
+    language: "ru",
+  },
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCXyfe8u58vBf2aSWLQjJtVA",
+    channelUrl: "https://www.youtube.com/@rinatsuleyman/videos",
+    name: "youtube-rinat-suleymanov",
+    language: "ru",
+  },
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UC37JpWP5PxLSma2lh79HU9A",
+    channelUrl: "https://www.youtube.com/@duncanrogoff/videos",
+    name: "youtube-duncan-rogoff",
+    language: "en",
+  },
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCRwL-Z46UPuwmpFX_vM7d_w",
+    channelUrl: "https://www.youtube.com/@mcdenil_/videos",
+    name: "youtube-mcdenil",
+    language: "ru",
+  },
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCbebZGDxm5IYqNTlqHF1ODQ",
+    channelUrl: "https://www.youtube.com/@artemii-miller-ai/videos",
+    name: "youtube-artemii-miller",
+    language: "ru",
+  },
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UC_a85mUHqsy5j0CYCgLnkEQ",
+    channelUrl: "https://www.youtube.com/@DIYSmartCode/videos",
+    name: "youtube-diy-smart-code",
+    language: "ru",
   },
 ];
 
@@ -165,7 +205,7 @@ async function collectYouTube(): Promise<Candidate[]> {
           name: feed.name,
           isScience: false,
           scienceField: null,
-          language: "en",
+          language: feed.language,
         });
         if (c) {
           c.metrics = { origin: "youtube-rss" };
@@ -185,7 +225,7 @@ async function collectYouTube(): Promise<Candidate[]> {
           source: feed.name,
           // Time Guard is fail-closed: unknown dates are dropped downstream.
           publishedAt: v.publishedAt ?? new Date(0),
-          language: "en",
+          language: feed.language,
           isScience: false,
           scienceField: null,
           metrics: { origin: "youtube-rss", videoId: v.videoId },

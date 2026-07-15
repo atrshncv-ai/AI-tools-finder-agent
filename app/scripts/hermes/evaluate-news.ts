@@ -65,15 +65,21 @@ const TIER2_SCIENCE = new Set([
 
 const OPEN_LICENSES = new Set(["MIT", "Apache-2.0"]);
 
-/** AI product/project names that generic AI_TERMS misses in video titles. */
+/** AI product/project names (EN+RU) that generic AI_TERMS misses in video titles. */
 const YOUTUBE_AI_TERMS =
-  /\b(gpt|chatgpt|claude|codex|gemini|openai|anthropic|deepseek|llama|mistral|qwen|copilot|sora|veo|nano[ -]banana|grok|diffusion|transformer|agent|agents|robot|llm|mcp|rag)\b/i;
+  /\b(gpt|chatgpt|claude|codex|gemini|openai|anthropic|deepseek|llama|mistral|qwen|copilot|sora|veo|nano[ -]banana|grok|diffusion|transformer|agent|agents|robot|llm|mcp|rag)\b|\b(ии|нейросет\w*|нейрон\w*|искусственн\w*)\b/iu;
 
 /** Channels whose entire content is AI — topic bonus needs no keyword proof. */
 const DEDICATED_AI_CHANNELS = new Set([
   "youtube-two-minute-papers",
   "youtube-yannic-kilcher",
   "youtube-matthew-berman",
+  "youtube-vladimir-ai-dev",
+  "youtube-rinat-suleymanov",
+  "youtube-duncan-rogoff",
+  "youtube-mcdenil",
+  "youtube-artemii-miller",
+  "youtube-diy-smart-code",
 ]);
 
 // ─── Regex helpers for text signals ─────────────────────────────────────────

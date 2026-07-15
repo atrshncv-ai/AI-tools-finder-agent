@@ -74,8 +74,11 @@ function runYtdlp(url: string): Promise<YtdlpInfo | null> {
   });
 }
 
-/** Pick the best English track: exact 'en', then en-* variants. */
-function pickEnglishTrack(
+/**
+ * Pick the best subtitle track: English first, then any language (Russian
+ * channels are summarized by the LLM directly — no translation needed).
+ */
+function pickTrack(
   tracks: Record<string, YtdlpSubtitleTrack[]> | undefined,
 ): { lang: string; track: YtdlpSubtitleTrack } | null {
   if (!tracks) return null;
@@ -84,6 +87,7 @@ function pickEnglishTrack(
     "en",
     langs.find((l) => /^en[-_]/i.test(l) && !/auto/i.test(l)),
     langs.find((l) => /^en/i.test(l)),
+    ...langs, // any language as last resort
   ].filter((x): x is string => Boolean(x));
   for (const lang of preferred) {
     const variants = tracks[lang];
@@ -213,16 +217,16 @@ export async function fetchYoutubeTranscript(url: string): Promise<YoutubeTransc
   if (!info?.id) return null;
 
   // Native subtitles first, auto-generated captions as fallback.
-  const native = pickEnglishTrack(info.subtitles);
+  const native = pickTrack(info.subtitles);
   const picked = native
     ? { ...native, kind: "native" as const }
     : (() => {
-        const auto = pickEnglishTrack(info.automatic_captions);
+        const auto = pickTrack(info.automatic_captions);
         return auto ? { ...auto, kind: "auto" as const } : null;
       })();
 
   if (!picked) {
-    console.error(`[youtube] no English subtitles/captions for ${url}`);
+    console.error(`[youtube] no subtitles/captions in any language for ${url}`);
     return null;
   }
 
