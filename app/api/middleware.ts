@@ -40,4 +40,7 @@ function requireRole(role: string) {
 
 export const authedQuery = t.procedure.use(requireAuth);
 export const protectedQuery = t.procedure.use(requireAuth);
+// Semantic alias: same JWT cookie guard, but marks endpoints that CHANGE
+// state and must be wired with `.mutation()` (POST) instead of `.query()`.
+export const authedMutation = t.procedure.use(requireAuth);
 export const adminQuery = authedQuery.use(requireRole("admin"));

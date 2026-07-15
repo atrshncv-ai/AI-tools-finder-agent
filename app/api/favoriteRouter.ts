@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { createRouter, authedQuery } from "./middleware";
+import { createRouter, authedQuery, authedMutation } from "./middleware";
 import {
   findFavoritesByUser,
   addFavorite,
@@ -20,13 +20,13 @@ export const favoriteRouter = createRouter({
       return { isFavorite: !!fav };
     }),
 
-  add: authedQuery
+  add: authedMutation
     .input(z.object({ newsId: z.number() }))
     .mutation(async ({ ctx, input }) => {
       return addFavorite(ctx.user.id, input.newsId);
     }),
 
-  remove: authedQuery
+  remove: authedMutation
     .input(z.object({ newsId: z.number() }))
     .mutation(async ({ ctx, input }) => {
       await removeFavorite(ctx.user.id, input.newsId);

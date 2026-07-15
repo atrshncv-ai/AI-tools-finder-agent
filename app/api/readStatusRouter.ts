@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { createRouter, authedQuery } from "./middleware";
+import { createRouter, authedQuery, authedMutation } from "./middleware";
 import {
   markAsRead,
   markAsUnread,
@@ -26,17 +26,17 @@ export const readStatusRouter = createRouter({
     return { count };
   }),
 
-  markRead: authedQuery
+  markRead: authedMutation
     .input(z.object({ newsId: z.number() }))
     .mutation(async ({ ctx, input }) => {
       return markAsRead(ctx.user.id, input.newsId);
     }),
 
-  markAllRead: authedQuery.mutation(async ({ ctx }) => {
+  markAllRead: authedMutation.mutation(async ({ ctx }) => {
     return markAllAsRead(ctx.user.id);
   }),
 
-  markUnread: authedQuery
+  markUnread: authedMutation
     .input(z.object({ newsId: z.number() }))
     .mutation(async ({ ctx, input }) => {
       await markAsUnread(ctx.user.id, input.newsId);

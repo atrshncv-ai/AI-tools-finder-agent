@@ -15,7 +15,7 @@ import {
   Moon,
   Maximize2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useTheme } from "@/hooks/useTheme";
 
@@ -66,14 +66,17 @@ export default function NewsDetail() {
     },
   });
 
-  // Auto-mark as read when viewing
+  // Auto-mark as read when viewing — fire ONCE per article. The useMutation
+  // object is referentially unstable, so without this ref-guard the effect
+  // loops: mutate -> invalidate -> re-render -> mutate again -> rate-limited.
+  const markedRef = useRef<number | null>(null);
   useEffect(() => {
-    if (isAuthenticated && !isNaN(newsId)) {
-      const status = readStatuses?.find((s) => s.newsId === newsId);
-      if (!status?.read) {
-        markRead.mutate({ newsId });
-      }
-    }
+    if (!isAuthenticated || isNaN(newsId)) return;
+    if (markedRef.current === newsId) return;
+    const status = readStatuses?.find((s) => s.newsId === newsId);
+    if (status?.read) return;
+    markedRef.current = newsId;
+    markRead.mutate({ newsId });
   }, [newsId, isAuthenticated, readStatuses, markRead]);
 
   const isFavorite = favCheck?.isFavorite ?? false;
