@@ -25,6 +25,30 @@ app.use("/api/trpc/*", rateLimit({
   max: 100,
 }));
 
+// /health is public — cap it tighter than the API so floods can't exhaust it.
+app.use("/health", rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+}));
+
+// Decouple the EXTERNAL Zen probe from /health traffic: without this cache,
+// every health hit (uptime bots, or an attacker flooding the public endpoint)
+// fires an outbound GET {ZEN}/models and can keep the pipeline's circuit
+// breaker flapping. Probe at most once per TTL; serve the cached verdict
+// between probes.
+const ZEN_PROBE_TTL_MS = 30_000;
+let zenProbeCache: { ok: boolean; ts: number } | null = null;
+
+async function probeZenCached(): Promise<boolean> {
+  const now = Date.now();
+  if (zenProbeCache && now - zenProbeCache.ts < ZEN_PROBE_TTL_MS) {
+    return zenProbeCache.ok;
+  }
+  const ok = await checkZenConnection();
+  zenProbeCache = { ok, ts: now };
+  return ok;
+}
+
 app.get("/health", async (c) => {
   const checks: Record<string, string> = {};
   let status: "ok" | "degraded" | "error" = "ok";
@@ -38,7 +62,7 @@ app.get("/health", async (c) => {
     status = "error";
   }
 
-  const zenOk = await checkZenConnection();
+  const zenOk = await probeZenCached();
   checks.zen = zenOk ? "ok" : "unavailable";
   if (!zenOk && status === "ok") status = "degraded";
 
