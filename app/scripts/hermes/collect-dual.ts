@@ -27,6 +27,7 @@ import { getDb } from "../../api/queries/connection";
 import { news, categories } from "@db/schema";
 import { eq } from "drizzle-orm";
 import { isDuplicate } from "./dedup";
+import { listChannelVideos } from "./youtube-transcript";
 import { classifyScience } from "../ensure-science-categories";
 
 const FETCH_TIMEOUT_MS = 20_000;
@@ -139,14 +140,17 @@ const TECH_BLOG_FEEDS = [
 const YOUTUBE_FEEDS = [
   {
     url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCbfYPyITQ-7l4upoX8nvctg",
+    channelUrl: "https://www.youtube.com/@TwoMinutePapers/videos",
     name: "youtube-two-minute-papers",
   },
   {
     url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCZHmQk67mSJgfCCTn7xBfew",
+    channelUrl: "https://www.youtube.com/@YannicKilcher/videos",
     name: "youtube-yannic-kilcher",
   },
   {
     url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCawZsQWqfGSbCI5yjkdVkTA",
+    channelUrl: "https://www.youtube.com/@matthew_berman/videos",
     name: "youtube-matthew-berman",
   },
 ];
@@ -168,9 +172,26 @@ async function collectYouTube(): Promise<Candidate[]> {
           out.push(c);
         }
       }
-      console.error(`[collect] ${feed.name}: ${parsed.items.length} videos`);
+      console.error(`[collect] ${feed.name}: ${parsed.items.length} videos (rss)`);
     } catch (err) {
-      console.error(`[collect] ${feed.name}: FAILED (${(err as Error).message})`);
+      // YouTube's feeds endpoint 404s for some channels/IPs — fall back to a
+      // yt-dlp channel listing (full metadata incl. upload dates).
+      console.error(`[collect] ${feed.name}: RSS failed (${(err as Error).message}), trying yt-dlp fallback...`);
+      const videos = await listChannelVideos(feed.channelUrl, 5);
+      for (const v of videos) {
+        out.push({
+          title: v.title,
+          url: v.url,
+          source: feed.name,
+          // Time Guard is fail-closed: unknown dates are dropped downstream.
+          publishedAt: v.publishedAt ?? new Date(0),
+          language: "en",
+          isScience: false,
+          scienceField: null,
+          metrics: { origin: "youtube-rss", videoId: v.videoId },
+        });
+      }
+      console.error(`[collect] ${feed.name}: ${videos.length} videos (yt-dlp)`);
     }
   }
   return out;

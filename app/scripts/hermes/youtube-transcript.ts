@@ -28,9 +28,9 @@ export interface YoutubeTranscript {
   kind: "native" | "auto";
 }
 
-/** youtube.com/watch?v=, youtube.com/shorts/, youtu.be/ links. */
+/** youtube.com/watch?v=, youtube.com/shorts/<id>, youtu.be/<id> links. */
 export function isYoutubeUrl(url: string): boolean {
-  return /(?:youtube\.com\/(?:watch|shorts)\/|youtu\.be\/)/i.test(url);
+  return /(?:youtube\.com\/(?:watch|shorts)(?:[/?#]|$)|youtu\.be\/)/i.test(url);
 }
 
 interface YtdlpSubtitleTrack {
@@ -134,6 +134,58 @@ async function fetchSubtitleText(track: YtdlpSubtitleTrack): Promise<string> {
   } catch {
     return "";
   }
+}
+
+export interface ChannelVideo {
+  videoId: string;
+  title: string;
+  url: string;
+  /** Parsed from upload_date (YYYYMMDD); null when unavailable. */
+  publishedAt: Date | null;
+}
+
+/**
+ * List the newest videos of a channel via yt-dlp (fallback for channels whose
+ * RSS feed 404s — YouTube's feeds endpoint is flaky for some channels/IPs).
+ * Full per-video metadata extraction is used because flat playlists carry no
+ * upload dates, and the pipeline's Time Guard is fail-closed on missing dates.
+ */
+export function listChannelVideos(channelUrl: string, max = 5): Promise<ChannelVideo[]> {
+  return new Promise((resolve) => {
+    execFile(
+      "yt-dlp",
+      [
+        "--skip-download",
+        "--no-warnings",
+        "--playlist-end",
+        String(max),
+        "--print",
+        "%(id)s\t%(title)s\t%(upload_date)s\t%(webpage_url)s",
+        channelUrl,
+      ],
+      { timeout: 180_000, maxBuffer: 16 * 1024 * 1024 },
+      (err, stdout) => {
+        if (err || !stdout.trim()) {
+          console.error(`[youtube] channel listing failed for ${channelUrl}: ${err ? String(err.message).slice(0, 120) : "empty"}`);
+          resolve([]);
+          return;
+        }
+        const out: ChannelVideo[] = [];
+        for (const line of stdout.split(/\r?\n/)) {
+          const [id, title, uploadDate, url] = line.split("\t");
+          if (!id || !title || !url) continue;
+          const m = /^(\d{4})(\d{2})(\d{2})$/.exec(uploadDate ?? "");
+          out.push({
+            videoId: id,
+            title: title.trim(),
+            url: url.trim(),
+            publishedAt: m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])) : null,
+          });
+        }
+        resolve(out);
+      },
+    );
+  });
 }
 
 /**
