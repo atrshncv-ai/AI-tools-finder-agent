@@ -11,10 +11,24 @@
  */
 
 import { execFile } from "node:child_process";
+import { readFile, unlink, readdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const YTDLP_TIMEOUT_MS = 90_000;
 const SUB_FETCH_TIMEOUT_MS = 20_000;
 const MIN_TRANSCRIPT_CHARS = 200;
+
+// ─── Whisper audio fallback (shorts without captions) ───────────────────────
+// Provider-agnostic OpenAI-compatible audio API: Groq (default, free tier) or
+// OpenAI. Configured purely via env; disabled when no key is present.
+const WHISPER_API_KEY =
+  process.env.WHISPER_API_KEY || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY || "";
+const WHISPER_API_BASE = (process.env.WHISPER_API_BASE || "https://api.groq.com/openai/v1").replace(/\/+$/, "");
+const WHISPER_MODEL = process.env.WHISPER_MODEL || "whisper-large-v3-turbo";
+const AUDIO_DL_TIMEOUT_MS = 240_000;
+const WHISPER_TIMEOUT_MS = 120_000;
+const MAX_AUDIO_BYTES = 24 * 1024 * 1024; // keep under the 25MB API limit
 
 export interface YoutubeTranscript {
   videoId: string;
@@ -25,7 +39,7 @@ export interface YoutubeTranscript {
   /** Clean plain-text transcript. */
   text: string;
   lang: string;
-  kind: "native" | "auto";
+  kind: "native" | "auto" | "whisper";
 }
 
 /** youtube.com/watch?v=, youtube.com/shorts/<id>, youtu.be/<id> links. */
@@ -46,6 +60,7 @@ interface YtdlpInfo {
   channel?: string;
   uploader?: string;
   duration?: number;
+  language?: string;
   subtitles?: Record<string, YtdlpSubtitleTrack[]>;
   automatic_captions?: Record<string, YtdlpSubtitleTrack[]>;
 }
@@ -206,9 +221,90 @@ export async function fetchYoutubeMetadata(
   };
 }
 
+/** Download audio track via yt-dlp+ffmpeg (16kHz mono 32kbps, capped at 30min). */
+function downloadAudio(url: string, videoId: string): Promise<string | null> {
+  const outTemplate = join(tmpdir(), `yt-audio-${videoId}.%(ext)s`);
+  return new Promise((resolve) => {
+    execFile(
+      "yt-dlp",
+      [
+        "-x",
+        "--audio-format", "mp3",
+        "--postprocessor-args", "ffmpeg:-ar 16000 -ac 1 -b:a 32k -t 1800",
+        "--no-playlist",
+        "--no-warnings",
+        "--js-runtimes", "deno",
+        "-o", outTemplate,
+        url,
+      ],
+      { timeout: AUDIO_DL_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
+      (err) => {
+        if (err) {
+          console.error(`[youtube] audio download failed: ${String(err.message).slice(0, 160)}`);
+          resolve(null);
+          return;
+        }
+        resolve(join(tmpdir(), `yt-audio-${videoId}.mp3`));
+      },
+    );
+  });
+}
+
+async function cleanupAudio(videoId: string): Promise<void> {
+  try {
+    const files = await readdir(tmpdir());
+    for (const f of files) {
+      if (f.startsWith(`yt-audio-${videoId}`)) {
+        await unlink(join(tmpdir(), f)).catch(() => {});
+      }
+    }
+  } catch {
+    // best-effort cleanup
+  }
+}
+
+/** Whisper API (OpenAI-compatible: Groq by default) transcription of a video's audio. */
+async function transcribeWithWhisper(url: string, videoId: string): Promise<string | null> {
+  if (!WHISPER_API_KEY) {
+    console.error("[youtube] whisper fallback disabled (no WHISPER_API_KEY/GROQ_API_KEY/OPENAI_API_KEY)");
+    return null;
+  }
+  const audioPath = await downloadAudio(url, videoId);
+  if (!audioPath) return null;
+  try {
+    const bytes = await readFile(audioPath);
+    if (bytes.length > MAX_AUDIO_BYTES) {
+      console.error(`[youtube] audio too large for whisper (${bytes.length} bytes)`);
+      return null;
+    }
+    const form = new FormData();
+    form.append("model", WHISPER_MODEL);
+    form.append("response_format", "text");
+    form.append("file", new Blob([new Uint8Array(bytes)], { type: "audio/mpeg" }), `${videoId}.mp3`);
+
+    const res = await fetch(`${WHISPER_API_BASE}/audio/transcriptions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${WHISPER_API_KEY}` },
+      body: form,
+      signal: AbortSignal.timeout(WHISPER_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      console.error(`[youtube] whisper API error: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`);
+      return null;
+    }
+    const text = (await res.text()).trim();
+    return text.length >= MIN_TRANSCRIPT_CHARS ? text : null;
+  } catch (err) {
+    console.error(`[youtube] whisper transcription failed: ${String(err).slice(0, 160)}`);
+    return null;
+  } finally {
+    await cleanupAudio(videoId);
+  }
+}
+
 /**
  * Fetch transcript for a YouTube video. Returns null when the video is
- * unavailable or has no usable caption track.
+ * unavailable and neither captions nor Whisper audio transcription work.
  */
 export async function fetchYoutubeTranscript(url: string): Promise<YoutubeTranscript | null> {
   if (!isYoutubeUrl(url)) return null;
@@ -225,25 +321,30 @@ export async function fetchYoutubeTranscript(url: string): Promise<YoutubeTransc
         return auto ? { ...auto, kind: "auto" as const } : null;
       })();
 
-  if (!picked) {
-    console.error(`[youtube] no subtitles/captions in any language for ${url}`);
-    return null;
-  }
-
-  const text = (await fetchSubtitleText(picked.track)).replace(/\s+/g, " ").trim();
-  if (text.length < MIN_TRANSCRIPT_CHARS) {
-    console.error(`[youtube] transcript too short (${text.length} chars) for ${url}`);
-    return null;
-  }
-
-  return {
-    videoId: info.id,
+  // Whisper fallback: no caption track OR track too short (common for shorts).
+  const buildResult = (text: string, lang: string, kind: YoutubeTranscript["kind"]): YoutubeTranscript => ({
+    videoId: info.id!,
     title: info.title ?? "",
     description: (info.description ?? "").slice(0, 2000),
     channel: info.channel ?? info.uploader ?? "",
     durationSeconds: typeof info.duration === "number" ? info.duration : null,
     text,
-    lang: picked.lang,
-    kind: picked.kind,
-  };
+    lang,
+    kind,
+  });
+
+  if (!picked) {
+    console.error(`[youtube] no subtitles/captions for ${url} — trying whisper fallback`);
+    const wtext = await transcribeWithWhisper(url, info.id);
+    return wtext ? buildResult(wtext, info.language ?? "unknown", "whisper") : null;
+  }
+
+  const text = (await fetchSubtitleText(picked.track)).replace(/\s+/g, " ").trim();
+  if (text.length < MIN_TRANSCRIPT_CHARS) {
+    console.error(`[youtube] transcript too short (${text.length} chars) for ${url} — trying whisper fallback`);
+    const wtext = await transcribeWithWhisper(url, info.id);
+    return wtext ? buildResult(wtext, info.language ?? "unknown", "whisper") : null;
+  }
+
+  return buildResult(text, picked.lang, picked.kind);
 }
