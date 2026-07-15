@@ -148,6 +148,8 @@ export default function NewsCard({ article, isRead = false, onMarkRead, showFavo
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
+                  // Only open http(s) URLs — never javascript:/data: etc.
+                  if (!/^https?:\/\//i.test(article.originalUrl)) return;
                   window.open(article.originalUrl, "_blank", "noopener,noreferrer");
                 }}
                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[13px] font-medium transition-colors hover:underline"
