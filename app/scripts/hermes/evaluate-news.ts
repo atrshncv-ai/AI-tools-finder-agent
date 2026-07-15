@@ -24,7 +24,8 @@
  *   +15  Topic bonus: AI x chemistry/materials/biology/medicine/physics
  *
  * Gate: only articles with score > 65 reach the dashboard pipeline.
- * Daily cap: at most --daily-cap (default 5) approved articles per UTC day.
+ * Daily cap: DISABLED by default (--daily-cap 0 = unlimited); a positive
+ * value re-enables the legacy quota of N approved articles per UTC day.
  *
  * Usage:
  *   npx tsx scripts/hermes/evaluate-news.ts --batch [--daily-cap 5]
@@ -127,7 +128,9 @@ function parseArgs(): { id: number | null; batch: boolean; dailyCap: number } {
   return {
     id: idIdx >= 0 ? parseInt(a[idIdx + 1] || "", 10) : null,
     batch: a.includes("--batch") || idIdx < 0,
-    dailyCap: capIdx >= 0 ? parseInt(a[capIdx + 1] || "5", 10) : 5,
+    // 0 (default) = UNLIMITED: business decision — every article above the
+    // score gate is published, no daily quota.
+    dailyCap: capIdx >= 0 ? parseInt(a[capIdx + 1] || "0", 10) : 0,
   };
 }
 
@@ -539,22 +542,28 @@ async function main() {
     }
   }
 
-  // Daily cap: how many slots remain today (UTC)?
-  const dayStart = new Date();
-  dayStart.setUTCHours(0, 0, 0, 0);
-  const approvedToday = await db
-    .select({ id: news.id })
-    .from(news)
-    .where(
-      and(
-        isNotNull(news.score),
-        gte(news.score, SCORE_GATE + 1),
-        inArray(news.status, ["pending", "summarized", "translated", "published"]),
-        gte(news.createdAt, dayStart),
-      ),
-    );
-  let slots = id ? dailyCap : Math.max(0, dailyCap - approvedToday.length);
-  console.error(`[evaluate-news] Daily slots remaining: ${slots}/${dailyCap}`);
+  // Daily cap: 0 means UNLIMITED (business decision — publish everything
+  // above the gate). A positive cap still limits approvals per UTC day.
+  let slots: number;
+  if (dailyCap <= 0) {
+    slots = Number.POSITIVE_INFINITY;
+  } else {
+    const dayStart = new Date();
+    dayStart.setUTCHours(0, 0, 0, 0);
+    const approvedToday = await db
+      .select({ id: news.id })
+      .from(news)
+      .where(
+        and(
+          isNotNull(news.score),
+          gte(news.score, SCORE_GATE + 1),
+          inArray(news.status, ["pending", "summarized", "translated", "published"]),
+          gte(news.createdAt, dayStart),
+        ),
+      );
+    slots = id ? dailyCap : Math.max(0, dailyCap - approvedToday.length);
+  }
+  console.error(`[evaluate-news] Daily slots remaining: ${dailyCap <= 0 ? "unlimited" : `${slots}/${dailyCap}`}`);
 
   // Rank and decide
   results.sort((a, b) => b.score - a.score);

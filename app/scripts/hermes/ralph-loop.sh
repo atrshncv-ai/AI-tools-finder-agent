@@ -39,8 +39,8 @@ while true; do
     log "WARN: collect-dual failed — continuing with existing pending articles"
   fi
 
-  # Step 0b: Hard data-driven scoring (gate > 75, daily cap)
-  if ! npx tsx scripts/hermes/evaluate-news.ts --batch --daily-cap "${HERMES_DAILY_CAP:-5}"; then
+  # Step 0b: Hard data-driven scoring (gate > 65, no daily cap by default)
+  if ! npx tsx scripts/hermes/evaluate-news.ts --batch --daily-cap "${HERMES_DAILY_CAP:-0}"; then
     log "WARN: evaluate-news failed — continuing"
   fi
 
