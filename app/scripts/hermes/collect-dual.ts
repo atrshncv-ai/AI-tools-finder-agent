@@ -28,6 +28,7 @@ import { news, categories } from "@db/schema";
 import { eq } from "drizzle-orm";
 import { isDuplicate } from "./dedup";
 import { listChannelVideos } from "./youtube-transcript";
+import { ssrfCheck } from "../../api/lib/url-safety";
 import { classifyScience } from "../ensure-science-categories";
 
 const FETCH_TIMEOUT_MS = 20_000;
@@ -84,6 +85,12 @@ function args() {
 }
 
 async function fetchText(url: string): Promise<string | null> {
+  // SSRF guard: never follow feed-supplied links into private/internal ranges.
+  const blocked = ssrfCheck(url);
+  if (blocked) {
+    console.error(`[collect-dual] SSRF guard: skipping ${url} (${blocked})`);
+    return null;
+  }
   try {
     const res = await fetch(url, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),

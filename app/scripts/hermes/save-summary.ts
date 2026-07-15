@@ -18,6 +18,7 @@ import { news } from "@db/schema";
 import { eq } from "drizzle-orm";
 import { summarizeOneShot, checkZenConnection } from "../../api/ai/zenClient";
 import { isYoutubeUrl, fetchYoutubeTranscript } from "./youtube-transcript";
+import { ssrfCheck } from "../../api/lib/url-safety";
 import * as cheerio from "cheerio";
 
 // ─── Noise selectors for HTML cleaning (shared with summarizeAgent) ──────────
@@ -86,6 +87,12 @@ function isGarbageText(text: string): boolean {
 // ─── HTML fetch + clean ──────────────────────────────────────────────────────
 
 async function fetchAndCleanArticle(url: string): Promise<string | null> {
+  // SSRF guard: originalUrl comes from the DB — block private ranges.
+  const blocked = ssrfCheck(url);
+  if (blocked) {
+    console.error(`[save-summary] SSRF guard: ${url} (${blocked})`);
+    return null;
+  }
   const res = await fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0 (compatible; ScienceAgent/1.0)" },
     signal: AbortSignal.timeout(20000),

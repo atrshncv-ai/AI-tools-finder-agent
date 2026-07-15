@@ -12,6 +12,7 @@
 
 import * as cheerio from "cheerio";
 import { isYoutubeUrl, fetchYoutubeTranscript } from "./youtube-transcript";
+import { ssrfCheck } from "../../api/lib/url-safety";
 
 const NOISE_SELECTORS = [
   "script", "style", "nav", "header", "footer", "aside", "iframe",
@@ -80,6 +81,13 @@ async function main() {
   }
 
   console.error(`[fetch-article] Fetching: ${url}`);
+
+  // SSRF guard: article URLs come from the DB/feeds — block private ranges.
+  const blocked = ssrfCheck(url);
+  if (blocked) {
+    console.error(`[fetch-article] SSRF guard: ${url} (${blocked})`);
+    return null;
+  }
 
   // YouTube branch: transcript via yt-dlp instead of HTML scraping.
   if (isYoutubeUrl(url)) {
