@@ -149,7 +149,7 @@ const ALL_SOURCES = [
   { name: "The Robot Report", url: "https://www.therobotreport.com/", type: "html", config: { selector: "h2 a, h3 a" }, enabled: true },
   { name: "Robotics Business Review", url: "https://roboticsbusinessreview.com/", type: "html", config: { selector: "h2 a, h3 a" }, enabled: true },
   { name: "Science Robotics", url: "https://www.science.org/journal/scirobotics", type: "html", config: { selector: "h3 a, article a" }, enabled: true },
-  { name: "Nature Electronics", url: "https://www.nature.com/n electronics/", type: "html", config: { selector: "h3 a, article a" }, enabled: true },
+  { name: "Nature Electronics", url: "https://www.nature.com/nelectronics/", type: "html", config: { selector: "h3 a, article a" }, enabled: true },
   { name: "Nature Reviews Electrical Engineering", url: "https://www.nature.com/s41928/", type: "html", config: { selector: "h3 a, article a" }, enabled: true },
   { name: "ScienceDaily Engineering", url: "https://www.sciencedaily.com/news/computers_math/artificial_intelligence/", type: "html", config: { selector: "h3 a, .story a" }, enabled: true },
   { name: "Phys.org Engineering", url: "https://phys.org/tag/engineering/", type: "html", config: { selector: "h3 a, .news-link a" }, enabled: true },

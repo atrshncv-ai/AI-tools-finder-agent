@@ -5,7 +5,6 @@ import {
   findNewsById,
   findCategories,
   seedCategories,
-  seedNews,
 } from "./queries/news";
 import { translateArticle } from "./ai/zenClient";
 import { getDb } from "./queries/connection";
@@ -86,7 +85,6 @@ export const newsRouter = createRouter({
 
   seed: adminQuery.mutation(async () => {
     await seedCategories();
-    await seedNews();
     return { success: true };
   }),
 });

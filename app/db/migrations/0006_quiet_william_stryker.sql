@@ -1,0 +1,1 @@
+ALTER TABLE "news" ADD CONSTRAINT "news_original_url_http" CHECK ("news"."originalUrl" ~ '^https?://');

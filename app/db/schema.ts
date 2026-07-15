@@ -9,6 +9,7 @@ import {
   index,
   uniqueIndex,
   real,
+  check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -86,6 +87,7 @@ export const news = pgTable(
       "gin",
       sql`to_tsvector('russian', ${table.title} || ' ' || coalesce(${table.summary}, '') || ' ' || coalesce(${table.content}, '') || ' ' || coalesce(${table.translation}, ''))`,
     ),
+    check("news_original_url_http", sql`${table.originalUrl} ~ '^https?://'`),
   ],
 );
 
