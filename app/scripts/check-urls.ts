@@ -22,6 +22,46 @@ const UA =
 const FETCH_TIMEOUT_MS = 10_000;
 const DELAY_MS = 400;
 
+/** DOI pattern as it appears inside URLs (doi.org links, /doi/ paths). */
+const DOI_RE = /10\.\d{4,9}\/[-._;()/:A-Z0-9]+/i;
+
+/**
+ * Academic publishers (nature.com, science.org, ...) hide behind Cloudflare
+ * anti-bot walls that 403 every datacenter probe — making direct healthchecks
+ * useless. doi.org, however, answers plainly from anywhere: 3xx = DOI exists,
+ * 404 = hallucinated/fake identifier. So for academic URLs we resolve the DOI
+ * instead of probing the publisher page.
+ *
+ * Nature article URLs carry the DOI suffix in the slug:
+ *   nature.com/articles/s41586-024-07819-6  ->  doi.org/10.1038/s41586-024-07819-6
+ */
+function extractDoi(url: string): string | null {
+  const direct = url.match(DOI_RE);
+  if (direct) return direct[0].replace(/[.)]+$/, "");
+  if (/\bnature\.com\//i.test(url)) {
+    const slug = url.match(/\/articles\/([A-Za-z0-9-]+)/)?.[1];
+    if (slug && /^s\d{5}-/.test(slug)) return `10.1038/${slug}`;
+  }
+  return null;
+}
+
+/** Probe via the DOI resolver (no redirect following — publisher walls beyond). */
+async function probeDoi(doi: string): Promise<ProbeResult> {
+  try {
+    const res = await fetch(`https://doi.org/${doi}`, {
+      method: "HEAD",
+      headers: { "User-Agent": UA },
+      redirect: "manual",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (res.status === 404) return { kind: "dead", reason: `DOI 10.… not found (doi.org 404)` };
+    if (res.status >= 200 && res.status < 400) return { kind: "alive", status: res.status };
+    return { kind: "unknown", reason: `doi.org HTTP ${res.status}` };
+  } catch (err) {
+    return { kind: "unknown", reason: `doi.org fetch error: ${String(err).slice(0, 80)}` };
+  }
+}
+
 type ProbeResult =
   | { kind: "alive"; status: number }
   | { kind: "dead"; reason: string }
@@ -41,6 +81,10 @@ function classifyHttp(status: number): ProbeResult {
 }
 
 async function probe(url: string): Promise<ProbeResult> {
+  // Academic URLs: resolve the DOI instead of fighting the anti-bot wall.
+  const doi = extractDoi(url);
+  if (doi) return probeDoi(doi);
+
   let res: Response;
   try {
     res = await fetch(url, {
