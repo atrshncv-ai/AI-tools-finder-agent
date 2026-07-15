@@ -20,7 +20,7 @@ import "dotenv/config";
 import { execFile } from "node:child_process";
 import { getDb } from "../api/queries/connection";
 import { news } from "@db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, and, or, isNull, gte, lte, sql } from "drizzle-orm";
 
 const MIN_AGE_HOURS = 24;
 const MAX_AGE_HOURS = 48;
@@ -99,11 +99,39 @@ async function main() {
       `inserted=${collectStats.inserted}, duplicates=${collectStats.duplicates}, errors=${collectStats.errors}`,
   );
 
-  // ── Step 2: evaluate each inserted candidate (daily cap intentionally bypassed) ──
-  console.error(`\n[step 2/4] evaluate-news for ${insertedIds.length} candidates (daily cap OFF)...`);
+  // ── Step 1b: recover in-window rows the daily cap or scheduler missed ──
+  // A backfill day is usually already collected by the loop (dedup blocks
+  // re-insertion), so the interesting test population lives in the DB:
+  //   - rejected ONLY because of the daily cap (they legitimately passed the gate)
+  //   - still pending without a score (never evaluated)
+  const db = getDb();
+  const windowStart = new Date(Date.now() - MAX_AGE_HOURS * 3600_000);
+  const windowEnd = new Date(Date.now() - MIN_AGE_HOURS * 3600_000);
+  const recoverable = await db
+    .select({ id: news.id })
+    .from(news)
+    .where(
+      and(
+        gte(news.publishedAt, windowStart),
+        lte(news.publishedAt, windowEnd),
+        or(
+          and(
+            eq(news.status, "rejected"),
+            sql`${news.metrics}->>'decision' = 'rejected-daily-cap'`,
+          ),
+          and(eq(news.status, "pending"), isNull(news.score)),
+        ),
+      ),
+    );
+  const recoverIds = recoverable.map((r) => r.id).filter((id) => !insertedIds.includes(id));
+  console.error(`[step 1b/4] recoverable in-window DB rows (daily-cap / unevaluated): ${recoverIds.length}`);
+
+  // ── Step 2: evaluate each candidate (daily cap intentionally bypassed) ──
+  const candidateIds = [...insertedIds, ...recoverIds];
+  console.error(`\n[step 2/4] evaluate-news for ${candidateIds.length} candidates (daily cap OFF)...`);
   const approvedIds: number[] = [];
   let rejectedByFilter = 0;
-  for (const id of insertedIds) {
+  for (const id of candidateIds) {
     const ev = await runStep("scripts/hermes/evaluate-news.ts", ["--id", String(id), "--daily-cap", "1"]);
     const evStats = parseJsonLine<{ approved: number; rejected: number }>(ev.stdout);
     if (evStats && evStats.approved > 0) {
@@ -117,7 +145,6 @@ async function main() {
 
   // ── Step 3: summarize + publish with test tagging ──
   console.error(`\n[step 3/4] save-summary + publish for ${approvedIds.length} approved...`);
-  const db = getDb();
   const publishedIds: number[] = [];
   let summaryFailed = 0;
   for (const id of approvedIds) {
@@ -164,6 +191,7 @@ async function main() {
     inWindowCandidates: collectStats.fresh,
     duplicatesSkipped: collectStats.duplicates,
     inserted: collectStats.inserted,
+    recoveredFromDb: recoverIds.length,
     rejectedByFilter,
     approved: approvedIds.length,
     summaryFailed,
@@ -175,8 +203,9 @@ async function main() {
   console.log(JSON.stringify(report, null, 2));
 
   console.error("\n════════ BACKFILL REPORT (yesterday window) ════════");
-  console.error(`📥 Raw candidates:        ${report.inWindowCandidates} (of ${report.raw} total scraped)`);
+  console.error(`📥 Raw candidates:        ${report.inWindowCandidates} (of ${report.rawCandidates} total scraped)`);
   console.error(`🔁 Duplicates skipped:    ${report.duplicatesSkipped}`);
+  console.error(`♻️  Recovered from DB:     ${report.recoveredFromDb} (daily-cap / unevaluated)`);
   console.error(`🗑 Rejected by filter:    ${report.rejectedByFilter} (score <= 65)`);
   console.error(`⚠️  Summary failed:        ${report.summaryFailed}`);
   console.error(`✅ Published:             ${report.published}  (text: ${textCount}, video: ${videoCount})`);
