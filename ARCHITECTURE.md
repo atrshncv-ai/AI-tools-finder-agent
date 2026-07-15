@@ -58,7 +58,7 @@
         ┌──────────────┬─────────────────────┬────────────────┐
         ▼              ▼                     ▼                ▼
    PostgreSQL     Web-дашборд        Telegram-дайджест    check-urls
-   (Drizzle)      (React+tRPC,       (cron 08:00 MSK)     (GC + DOI-проверка)
+   (Drizzle)      (React+tRPC,       (cron 09:00 MSK)     (GC + DOI-проверка)
                   JWT-защита)
 ```
 
@@ -199,7 +199,7 @@ while true:
 ### Утренний Telegram-дайджест
 
 - `scripts/hermes/daily-digest.ts`: выборка опубликованного за 24 часа (по `updatedAt`), секции **🎬 YouTube / 🛠 IT-инструменты / 🔬 Наука**, экранирование Markdown, лимит 4000 символов, stub-режим без ключей.
-- **Cron (сервер):** `0 5 * * *` (08:00 МСК) → `npx tsx scripts/hermes/daily-digest.ts`, лог `/var/log/news-agent/digest.log`.
+- **Cron (сервер):** `0 6 * * *` (06:00 UTC = 09:00 МСК) → `npx tsx scripts/hermes/daily-digest.ts`, лог `/var/log/news-agent/digest.log`.
 - Отправка через Telegram Bot API (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` в `.env`). Проверено в бою: `{"status":"sent","items":46}`.
 
 ### Backfill-харнесс
@@ -259,7 +259,7 @@ PostgreSQL 16 в Docker-контейнере `science_agent_db` (БД `science_a
 |---|---|
 | Web (Hono+tRPC, статика Vite) | PM2 `news-agent-web` — `npm run build` → `NODE_ENV=production node dist/boot.js` |
 | Конвейер | PM2 `hermes-ralph-loop` — `bash scripts/hermes/ralph-loop.sh` |
-| Дайджест | cron `0 5 * * *` |
+| Дайджест | cron `0 6 * * *` (09:00 МСК) |
 | БД | Docker `science_agent_db` (PostgreSQL 16) |
 
 **Deploy-flow:** локальные правки → `npm run check` (tsc) + `npx vitest run` → conventional commit + push → tar+scp на сервер → `npm run build` → `pm2 restart --update-env`.
