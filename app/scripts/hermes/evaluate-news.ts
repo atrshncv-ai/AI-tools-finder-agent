@@ -254,6 +254,29 @@ async function evaluate(article: {
   let redditUpsN = typeof prev.redditUps === "number" ? prev.redditUps : null;
   let hasOpenArtifact = false;
 
+  // ── YouTube scoring: curated channels are hand-picked (like tier-1 blogs),
+  // so authority comes from the channel itself. Videos still need an
+  // AI-relevant title to pass the gate; no GitHub/HN/Reddit lookups (a watch
+  // page yields no useful page signals and only wastes requests).
+  const isYoutube = article.source.startsWith("youtube-") || prev.origin === "youtube-rss";
+  if (isYoutube) {
+    let score = 45;
+    breakdown.push({
+      criterion: "youtube-curated-channel",
+      points: 45,
+      evidence: `source=${article.source}`,
+    });
+    const evidenceText = `${article.title}`;
+    if (hasAny(evidenceText, AI_TERMS) || hasAny(evidenceText, TECH_TREND_TERMS)) {
+      score += 15;
+      breakdown.push({ criterion: "youtube-ai-topic", points: 15, evidence: "AI/LLM/agent in title" });
+    }
+    score += 10;
+    breakdown.push({ criterion: "video-format", points: 10, evidence: "transcribed video essay/review" });
+    metrics.youtubeScoring = true;
+    return { id: article.id, title: article.title, score, breakdown, metrics };
+  }
+
   const isGithubUrl = /github\.com\/[\w.-]+\/[\w.-]+/.test(article.originalUrl);
   let links: string[] = [];
   let dois: string[] = [];

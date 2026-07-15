@@ -131,6 +131,51 @@ const TECH_BLOG_FEEDS = [
   { url: "https://blog.google/technology/ai/rss/", name: "google-ai-blog" },
 ];
 
+/**
+ * Curated English-language AI YouTube channels. YouTube exposes a standard
+ * Atom feed per channel — no API key required. Videos are transcribed later
+ * (youtube-transcript.ts via yt-dlp), never downloaded.
+ */
+const YOUTUBE_FEEDS = [
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCbfYPyITQ-7l4upoX8nvctg",
+    name: "youtube-two-minute-papers",
+  },
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCZHmQk67mSJgfCCTn7xBfew",
+    name: "youtube-yannic-kilcher",
+  },
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCawZsQWqfGSbCI5yjkdVkTA",
+    name: "youtube-matthew-berman",
+  },
+];
+
+async function collectYouTube(): Promise<Candidate[]> {
+  const out: Candidate[] = [];
+  for (const feed of YOUTUBE_FEEDS) {
+    try {
+      const parsed = await rss.parseURL(feed.url);
+      for (const item of parsed.items.slice(0, 5)) {
+        const c = fromRssItem(item, {
+          name: feed.name,
+          isScience: false,
+          scienceField: null,
+          language: "en",
+        });
+        if (c) {
+          c.metrics = { origin: "youtube-rss" };
+          out.push(c);
+        }
+      }
+      console.error(`[collect] ${feed.name}: ${parsed.items.length} videos`);
+    } catch (err) {
+      console.error(`[collect] ${feed.name}: FAILED (${(err as Error).message})`);
+    }
+  }
+  return out;
+}
+
 async function collectTechBlogs(): Promise<Candidate[]> {
   const out: Candidate[] = [];
   for (const feed of TECH_BLOG_FEEDS) {
@@ -361,6 +406,7 @@ async function main() {
       ...(await collectHackerNews()),
       ...(await collectGithubTrending()),
       ...(await collectReddit()),
+      ...(await collectYouTube()),
     );
   }
   if (stream === "science" || stream === "both") {

@@ -11,6 +11,7 @@
  */
 
 import * as cheerio from "cheerio";
+import { isYoutubeUrl, fetchYoutubeTranscript } from "./youtube-transcript";
 
 const NOISE_SELECTORS = [
   "script", "style", "nav", "header", "footer", "aside", "iframe",
@@ -79,6 +80,21 @@ async function main() {
   }
 
   console.error(`[fetch-article] Fetching: ${url}`);
+
+  // YouTube branch: transcript via yt-dlp instead of HTML scraping.
+  if (isYoutubeUrl(url)) {
+    const t = await fetchYoutubeTranscript(url);
+    if (!t) {
+      console.error("[fetch-article] YouTube transcript unavailable");
+      process.exit(1);
+    }
+    const text = normalizeSpace(
+      `${t.title}. ${t.description}\n\nTranscript (${t.kind}, ${t.lang}):\n${t.text}`,
+    );
+    process.stdout.write(text);
+    console.error(`[fetch-article] Done: ${text.length} chars (youtube transcript)`);
+    process.exit(0);
+  }
 
   try {
     const res = await fetch(url, {

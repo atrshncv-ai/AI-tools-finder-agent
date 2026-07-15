@@ -17,6 +17,7 @@ import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
 import { eq } from "drizzle-orm";
 import { summarizeOneShot, checkZenConnection } from "../../api/ai/zenClient";
+import { isYoutubeUrl, fetchYoutubeTranscript } from "./youtube-transcript";
 import * as cheerio from "cheerio";
 
 // ─── Noise selectors for HTML cleaning (shared with summarizeAgent) ──────────
@@ -205,8 +206,26 @@ async function main() {
       process.exit(1);
     }
 
-    // Fetch and clean article content
-    const text = await fetchAndCleanArticle(article.originalUrl);
+    // Fetch content: YouTube videos go through yt-dlp transcript extraction,
+    // everything else through HTML fetch+clean.
+    let text: string | null;
+    if (isYoutubeUrl(article.originalUrl)) {
+      const t = await fetchYoutubeTranscript(article.originalUrl);
+      if (!t) {
+        // Video unavailable or no captions — reject instead of retrying forever.
+        console.error("[save-summary] YouTube transcript unavailable — marking rejected");
+        await db
+          .update(news)
+          .set({ status: "rejected", updatedAt: new Date() })
+          .where(eq(news.id, args.id!));
+        console.log(JSON.stringify({ status: "rejected", articleId: args.id, reason: "youtube-transcript-unavailable" }));
+        process.exit(0);
+      }
+      console.error(`[save-summary] YouTube transcript: ${t.text.length} chars (${t.kind}, ${t.lang}, channel=${t.channel})`);
+      text = normalizeSpace(`${t.title}. ${t.description}\n\nTranscript:\n${t.text}`);
+    } else {
+      text = await fetchAndCleanArticle(article.originalUrl);
+    }
     if (!text) {
       console.error("[save-summary] Failed to fetch or extract article content");
       process.exit(1);
