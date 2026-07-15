@@ -86,6 +86,12 @@ async function main() {
       signal: AbortSignal.timeout(20000),
     });
 
+    // Skip error pages (403 Cloudflare stubs, 404, 5xx) — never feed them to the LLM.
+    if (!res.ok) {
+      console.error(`[fetch-article] HTTP ${res.status} for ${url}`);
+      return null;
+    }
+
     const buffer = await res.arrayBuffer();
     const contentType = res.headers.get("content-type") || "";
     const charsetMatch = contentType.match(/charset=([^\s;]+)/i);

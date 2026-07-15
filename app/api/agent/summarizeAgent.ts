@@ -128,6 +128,8 @@ async function fetchAndCleanArticle(url: string): Promise<string | null> {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; ScienceAgent/1.0)" },
       signal: AbortSignal.timeout(20000),
     });
+    // Skip error pages (403 Cloudflare stubs, 404, 5xx) — never feed them to the LLM.
+    if (!res.ok) return null;
     const buffer = await res.arrayBuffer();
     const contentType = res.headers.get("content-type") || "";
     const charsetMatch = contentType.match(/charset=([^\s;]+)/i);

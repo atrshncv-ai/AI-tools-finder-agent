@@ -7,6 +7,7 @@ async function kimiRequest<T>(
   init?: RequestInit,
 ): Promise<T | null> {
   const resp = await fetch(`${env.kimiOpenUrl}${path}`, {
+    signal: AbortSignal.timeout(10_000),
     ...init,
     headers: {
       Accept: "application/json",
