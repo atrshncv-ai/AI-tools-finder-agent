@@ -13,6 +13,7 @@ const COOKIE_MAX_AGE_SECONDS = JWT_EXPIRY_HOURS * 3600;
 function sanitizeUser<T extends { password?: string | null }>(user: T): Omit<T, "password"> {
   const { password: _pw, ...safe } = user;
   return safe;
+}
 
 /**
  * Private service auth: login/logout/session only. There is NO public
