@@ -170,7 +170,9 @@ yt-dlp --dump-json --js-runtimes deno
 
 ### 7.4. Прочие меры
 
-- Rate limit: 100 req/min на `/api/trpc/*` (`api/lib/rateLimit.ts`).
+- **SSRF-гард** (`api/lib/url-safety.ts`): каждый внешний URL перед `fetch()` проверяется на приватные/loopback/link-local диапазоны (10/8, 127/8, 172.16/12, 192.168/16, 169.254/16 — включая cloud metadata, 100.64/10, IPv6 ULA; WHATWG-нормализация десятичных/hex-IPv4). Применяется в `collect-dual.ts`, `fetch-article.ts`, `save-summary.ts`.
+- Rate limit: 100 req/min на `/api/trpc/*` и 30 req/min на публичный `/health` (per-IP, `api/lib/rateLimit.ts`); 429 возвращается в формате tRPC-конверта.
+- `/health`: внешняя проба Zen закэширована на 30 с — флуд эндпоинта не бьёт по Zen API.
 - Все внешние fetch — с таймаутами (`AbortSignal.timeout`), `!res.ok` guard'ы.
 - Zen key-pool: race-safe ротация 3 ключей, нативные таймауты.
 - Фейковые seed-данные удалены из репозитория и БД.
