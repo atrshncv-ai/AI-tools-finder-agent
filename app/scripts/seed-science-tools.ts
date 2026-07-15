@@ -13,7 +13,6 @@ import { fileURLToPath } from "url";
 import { getDb } from "../api/queries/connection";
 import { news, categories } from "@db/schema";
 import { eq, inArray } from "drizzle-orm";
-import { onConflictDoNothing } from "drizzle-orm/pg-core";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,6 +22,16 @@ interface SeedItem {
   summary: string;
   original_url: string;
   category_slug: string;
+}
+
+/** Only absolute http(s) URLs may enter the DB (format + SSRF guard). */
+function isValidHttpUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 const SCIENCE_CATEGORIES = [
@@ -56,10 +65,22 @@ function distributeDates(count: number): Date[] {
 }
 
 async function main() {
-  const items = loadSeedData();
-  if (!Array.isArray(items) || items.length === 0) {
+  const loaded = loadSeedData();
+  if (!Array.isArray(loaded) || loaded.length === 0) {
     throw new Error("Science seed data is empty or not a JSON array");
   }
+
+  // Validate before insert: drop entries with missing fields or non-http(s) URLs.
+  const items = loaded.filter((it) => {
+    const ok =
+      Boolean(it?.title && it?.summary && it?.category_slug) &&
+      isValidHttpUrl(it?.original_url ?? "");
+    if (!ok) {
+      console.warn(`[seed-science-tools] skipping invalid entry: ${it?.title ?? "<no title>"} -> ${it?.original_url}`);
+    }
+    return ok;
+  });
+  if (items.length === 0) throw new Error("Science seed data: no valid entries after URL validation");
 
   const db = getDb();
 
