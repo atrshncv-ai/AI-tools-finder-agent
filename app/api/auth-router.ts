@@ -9,6 +9,11 @@ import { findUserByEmail, incrementTokenVersion } from "./queries/users";
 
 const COOKIE_MAX_AGE_SECONDS = JWT_EXPIRY_HOURS * 3600;
 
+/** Never leak the bcrypt hash (or other internals) to the client. */
+function sanitizeUser<T extends { password?: string | null }>(user: T): Omit<T, "password"> {
+  const { password: _pw, ...safe } = user;
+  return safe;
+
 /**
  * Private service auth: login/logout/session only. There is NO public
  * registration — accounts are provisioned by the admin via
@@ -51,10 +56,10 @@ export const authRouter = createRouter({
         })
       );
 
-      return { success: true, user };
+      return { success: true, user: sanitizeUser(user) };
     }),
 
-  me: authedQuery.query((opts) => opts.ctx.user),
+  me: authedQuery.query((opts) => sanitizeUser(opts.ctx.user)),
 
   logout: authedQuery.mutation(async ({ ctx }) => {
     await incrementTokenVersion(ctx.user.unionId);
