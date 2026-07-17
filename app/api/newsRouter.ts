@@ -17,7 +17,7 @@ export const newsRouter = createRouter({
       z
         .object({
           isScience: z.boolean().optional(),
-          categorySlug: z.string().optional(),
+          categorySlug: z.array(z.string()).optional(),
           classificationType: z.enum(["new_tool", "update", "closure", "achievement"]).optional(),
           search: z.string().optional(),
           limit: z.number().min(1).max(100).optional(),

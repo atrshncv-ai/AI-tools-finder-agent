@@ -19,7 +19,7 @@ const CLASSIFICATION_TYPES = [
 const PAGE_SIZE = 20;
 
 export default function Science() {
-  const [activeField, setActiveField] = useState("all");
+  const [activeFields, setActiveFields] = useState<string[]>([]);
   const [activeType, setActiveType] = useState("all");
   const [offset, setOffset] = useState(0);
   const { isAuthenticated } = useAuth();
@@ -35,7 +35,7 @@ export default function Science() {
   const { data: newsData, isLoading, isFetching } = trpc.news.list.useQuery(
     {
       isScience: true,
-      categorySlug: activeField === "all" ? undefined : activeField,
+      categorySlug: activeFields.length > 0 ? activeFields : undefined,
       classificationType: activeType === "all" ? undefined : activeType as "new_tool" | "update" | "closure" | "achievement",
       limit: PAGE_SIZE,
       offset,
@@ -74,8 +74,8 @@ export default function Science() {
 
   const sentinelRef = useInfiniteScroll(loadMore, hasMore, isFetching && offset > 0);
 
-  const handleFieldChange = (slug: string) => {
-    setActiveField(slug);
+  const handleFieldChange = (slugs: string[]) => {
+    setActiveFields(slugs);
     setOffset(0);
   };
 
@@ -128,7 +128,7 @@ export default function Science() {
         <div className="mb-5">
           <CategoryFilter
             categories={scienceFields.filter((f) => f.slug !== "all")}
-            active={activeField}
+            active={activeFields}
             onChange={handleFieldChange}
           />
         </div>

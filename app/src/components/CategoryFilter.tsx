@@ -1,17 +1,20 @@
 interface CategoryFilterProps {
   categories: { slug: string; name: string }[];
-  active: string;
-  onChange: (slug: string) => void;
+  active: string[];
+  onChange: (slugs: string[]) => void;
 }
 
 export default function CategoryFilter({ categories, active, onChange }: CategoryFilterProps) {
-  const allSlug = "all";
-  const allActive = active === allSlug;
+  const allActive = active.length === 0;
+
+  const toggle = (slug: string) => {
+    onChange(active.includes(slug) ? active.filter((s) => s !== slug) : [...active, slug]);
+  };
 
   return (
     <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
       <button
-        onClick={() => onChange(allSlug)}
+        onClick={() => onChange([])}
         className="shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-150"
         style={{
           backgroundColor: allActive ? "var(--color-accent)" : "var(--color-card)",
@@ -22,11 +25,11 @@ export default function CategoryFilter({ categories, active, onChange }: Categor
         Все
       </button>
       {categories.map((cat) => {
-        const isActive = active === cat.slug;
+        const isActive = active.includes(cat.slug);
         return (
           <button
             key={cat.slug}
-            onClick={() => onChange(cat.slug)}
+            onClick={() => toggle(cat.slug)}
             className="shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-150"
             style={{
               backgroundColor: isActive ? "var(--color-accent)" : "var(--color-card)",

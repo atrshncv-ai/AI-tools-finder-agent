@@ -1,6 +1,6 @@
 import { getDb } from "./connection";
 import { news, categories } from "@db/schema";
-import { eq, desc, and, count, sql, getTableColumns } from "drizzle-orm";
+import { eq, inArray, desc, and, count, sql, getTableColumns } from "drizzle-orm";
 
 // ─── Seed categories ───
 export async function seedCategories() {
@@ -30,7 +30,7 @@ export async function seedCategories() {
 // ─── Queries ───
 export async function findAllNews(opts: {
   isScience?: boolean;
-  categorySlug?: string;
+  categorySlug?: string[];
   classificationType?: string;
   search?: string;
   limit?: number;
@@ -47,8 +47,8 @@ export async function findAllNews(opts: {
     conditions.push(eq(news.isScience, isScience));
   }
 
-  if (categorySlug) {
-    conditions.push(eq(news.categorySlug, categorySlug));
+  if (categorySlug && categorySlug.length > 0) {
+    conditions.push(inArray(news.categorySlug, categorySlug));
   }
 
   if (classificationType) {

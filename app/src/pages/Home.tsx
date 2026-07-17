@@ -12,7 +12,7 @@ import { Newspaper, Loader2 } from "lucide-react";
 const PAGE_SIZE = 20;
 
 export default function Home() {
-  const [activeCategory, setActiveCategory] = useState("all");
+  const [activeCategories, setActiveCategories] = useState<string[]>([]);
   const [offset, setOffset] = useState(0);
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
@@ -21,7 +21,7 @@ export default function Home() {
   const { data: newsData, isLoading, isFetching } = trpc.news.list.useQuery(
     {
       isScience: false,
-      categorySlug: activeCategory === "all" ? undefined : activeCategory,
+      categorySlug: activeCategories.length > 0 ? activeCategories : undefined,
       limit: PAGE_SIZE,
       offset,
     }
@@ -63,8 +63,8 @@ export default function Home() {
 
   const unreadCount = items.filter((n) => !readSet.has(n.id)).length;
 
-  const handleCategoryChange = (slug: string) => {
-    setActiveCategory(slug);
+  const handleCategoryChange = (slugs: string[]) => {
+    setActiveCategories(slugs);
     setOffset(0);
   };
 
@@ -114,7 +114,7 @@ export default function Home() {
           <div className="mb-5">
             <CategoryFilter
               categories={categoriesData.map((c) => ({ slug: c.slug, name: c.name }))}
-              active={activeCategory}
+              active={activeCategories}
               onChange={handleCategoryChange}
             />
           </div>
