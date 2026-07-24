@@ -29,9 +29,12 @@ const DASHBOARD_URL = (process.env.DIGEST_DASHBOARD_URL || "http://159.194.236.6
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 // Recipient list: TELEGRAM_CHAT_IDS (comma-separated) takes precedence; the
 // legacy single-recipient TELEGRAM_CHAT_ID still works as a fallback.
+// Surrounding quotes are stripped per id: cron sources .env via bash
+// (`set -a; . ./.env`), which — unlike dotenv — keeps literal quotes, and a
+// quoted id makes Telegram reject the chat ("chat not found").
 const CHAT_IDS = (process.env.TELEGRAM_CHAT_IDS || process.env.TELEGRAM_CHAT_ID || "")
   .split(",")
-  .map((s) => s.trim())
+  .map((s) => s.trim().replace(/^["']+|["']+$/g, ""))
   .filter(Boolean);
 
 /** Telegram legacy-Markdown escaping for dynamic text. */
@@ -102,24 +105,31 @@ function buildDigest(items: DigestItem[]): string {
 }
 
 async function sendTelegram(text: string, chatId: string): Promise<boolean> {
-  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      parse_mode: "Markdown",
-      disable_web_page_preview: true,
-    }),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!res.ok) {
-    console.error(
-      `[daily-digest] Telegram API error for chat ${chatId}: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`,
-    );
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        parse_mode: "Markdown",
+        disable_web_page_preview: true,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      console.error(
+        `[daily-digest] Telegram API error for chat ${chatId}: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`,
+      );
+      return false;
+    }
+    return true;
+  } catch (err) {
+    // Network-level failure (DNS, reset, timeout) — must not abort the
+    // fan-out to the remaining recipients.
+    console.error(`[daily-digest] Telegram send to chat ${chatId} failed: ${(err as Error).message}`);
     return false;
   }
-  return true;
 }
 
 async function main() {
