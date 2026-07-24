@@ -200,7 +200,7 @@ while true:
 
 - `scripts/hermes/daily-digest.ts`: выборка опубликованного за 24 часа (по `updatedAt`), секции **🎬 YouTube / 🛠 IT-инструменты / 🔬 Наука**, экранирование Markdown, лимит 4000 символов, stub-режим без ключей.
 - **Cron (сервер):** `0 6 * * *` (06:00 UTC = 09:00 МСК) → `npx tsx scripts/hermes/daily-digest.ts`, лог `/var/log/news-agent/digest.log`.
-- Отправка через Telegram Bot API (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` в `.env`). Проверено в бою: `{"status":"sent","items":46}`.
+- Отправка через Telegram Bot API (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_IDS` в `.env`) — fan-out на нескольких получателей (владелец + клиент), список chat_id через запятую; legacy `TELEGRAM_CHAT_ID` поддерживается как fallback. Сбой одного получателя не блокирует остальных (статусы `sent`/`partial`/`failed`). Проверено в бою: `{"status":"sent","items":46}`.
 
 ### Backfill-харнесс
 

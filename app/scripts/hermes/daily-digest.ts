@@ -7,8 +7,10 @@
  * Each item links to its original source; the footer links to the dashboard.
  *
  * Env:
- *   TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID — when absent the digest is only
+ *   TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_IDS — when absent the digest is only
  *     printed to stdout (stub mode, no sending).
+ *   TELEGRAM_CHAT_IDS — comma-separated list of recipient chat IDs (owner +
+ *     client). Legacy single TELEGRAM_CHAT_ID is honored as a fallback.
  *   DIGEST_DASHBOARD_URL — dashboard base URL (default http://159.194.236.68:3000)
  *
  * Usage:
@@ -25,7 +27,12 @@ const MAX_ITEMS_PER_SECTION = 15;
 const TELEGRAM_MAX_LEN = 4000;
 const DASHBOARD_URL = (process.env.DIGEST_DASHBOARD_URL || "http://159.194.236.68:3000").replace(/\/+$/, "");
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
+// Recipient list: TELEGRAM_CHAT_IDS (comma-separated) takes precedence; the
+// legacy single-recipient TELEGRAM_CHAT_ID still works as a fallback.
+const CHAT_IDS = (process.env.TELEGRAM_CHAT_IDS || process.env.TELEGRAM_CHAT_ID || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 /** Telegram legacy-Markdown escaping for dynamic text. */
 function esc(text: string): string {
@@ -94,12 +101,12 @@ function buildDigest(items: DigestItem[]): string {
   return text;
 }
 
-async function sendTelegram(text: string): Promise<boolean> {
+async function sendTelegram(text: string, chatId: string): Promise<boolean> {
   const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      chat_id: CHAT_ID,
+      chat_id: chatId,
       text,
       parse_mode: "Markdown",
       disable_web_page_preview: true,
@@ -107,7 +114,9 @@ async function sendTelegram(text: string): Promise<boolean> {
     signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) {
-    console.error(`[daily-digest] Telegram API error: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`);
+    console.error(
+      `[daily-digest] Telegram API error for chat ${chatId}: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`,
+    );
     return false;
   }
   return true;
@@ -139,15 +148,25 @@ async function main() {
 
   const digest = buildDigest(items);
 
-  if (!BOT_TOKEN || !CHAT_ID) {
-    console.error("[daily-digest] STUB MODE (no TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID) — printing digest:");
+  if (!BOT_TOKEN || CHAT_IDS.length === 0) {
+    console.error("[daily-digest] STUB MODE (no TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_IDS) — printing digest:");
     console.log(digest);
     process.exit(0);
   }
 
-  const ok = await sendTelegram(digest);
-  console.log(JSON.stringify({ status: ok ? "sent" : "failed", items: items.length }));
-  process.exit(ok ? 0 : 1);
+  // Fan-out to every recipient; one failing chat must not block the others.
+  let okCount = 0;
+  for (const chatId of CHAT_IDS) {
+    const ok = await sendTelegram(digest, chatId);
+    console.error(`[daily-digest] → chat ${chatId}: ${ok ? "sent" : "FAILED"}`);
+    if (ok) okCount++;
+  }
+
+  const status = okCount === CHAT_IDS.length ? "sent" : okCount > 0 ? "partial" : "failed";
+  console.log(
+    JSON.stringify({ status, items: items.length, recipients: { ok: okCount, total: CHAT_IDS.length } }),
+  );
+  process.exit(okCount > 0 ? 0 : 1);
 }
 
 main().catch((err) => {
