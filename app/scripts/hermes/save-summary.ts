@@ -19,55 +19,10 @@ import { eq } from "drizzle-orm";
 import { summarizeOneShot, checkZenConnection } from "../../api/ai/zenClient";
 import { isYoutubeUrl, fetchYoutubeTranscript } from "./youtube-transcript";
 import { ssrfCheck } from "../../api/lib/url-safety";
-import * as cheerio from "cheerio";
-
-// ─── Noise selectors for HTML cleaning (shared with summarizeAgent) ──────────
-
-const NOISE_SELECTORS = [
-  "script", "style", "nav", "header", "footer", "aside", "iframe",
-  "noscript", "svg", "canvas", "form", "button", "input", "textarea",
-  "select", "label", "[hidden]",
-  "#labstabs", ".labstabs", "#arxivlabs", ".arxivlabs",
-  ".ltx_page_footer", ".ltx_page_header", ".ltx_notes",
-  ".footer", "#footer", ".page-footer", ".site-footer",
-  ".sidebar", "#sidebar", ".nav", ".navbar", ".navigation",
-  ".menu", ".mobile-menu", ".comments", "#comments",
-  ".advert", ".ads", ".ad", ".cookie-banner", ".cookies",
-  ".social", ".share", "#disqus_thread", ".noprint", ".hidden",
-  "#mw-navigation", ".printfooter",
-];
-
-const CONTENT_SELECTORS = [
-  "article", "main", '[role="main"]',
-  "#content-inner", ".content-inner", "#content", "#main",
-  ".content", ".post", ".entry", ".abstract",
-  ".ltx_document",
-];
+import { extractArticleText } from "./article-content";
 
 function normalizeSpace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
-}
-
-function removeRepeatedBlocks(text: string): string {
-  const blocks = text.split(/\n+/).map((b) => b.trim()).filter((b) => b.length > 0);
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const block of blocks) {
-    if (seen.has(block)) continue;
-    seen.add(block);
-    result.push(block);
-  }
-  return result.join(" ");
-}
-
-function cleanExtractedText(raw: string): string {
-  let text = raw
-    .replace(/arXivLabs: experimental projects with community collaborators/gi, " ")
-    .replace(/\bDownload PDF\b/gi, " ")
-    .replace(/\bHTML \(experimental\)\b/gi, " ");
-  text = normalizeSpace(text);
-  text = removeRepeatedBlocks(text);
-  return normalizeSpace(text);
 }
 
 function isGarbageText(text: string): boolean {
@@ -105,28 +60,7 @@ async function fetchAndCleanArticle(url: string): Promise<string | null> {
   const charset = charsetMatch?.[1]?.toLowerCase() || "utf-8";
   const decoder = new TextDecoder(charset === "windows-1251" ? "windows-1251" : "utf-8");
   const html = decoder.decode(buffer);
-  const $ = cheerio.load(html);
-
-  $(NOISE_SELECTORS.join(", ")).remove();
-
-  $("body *").each((_, el) => {
-    const $el = $(el);
-    const txt = $el.text().trim();
-    if (txt.length > 0 && txt.length < 300 && /arxivlabs/i.test(txt)) {
-      $el.remove();
-    }
-  });
-
-  let container = $("body");
-  for (const selector of CONTENT_SELECTORS) {
-    const el = $(selector).first();
-    if (el.length && el.text().trim().length > 200) {
-      container = el;
-      break;
-    }
-  }
-
-  const text = cleanExtractedText(container.text());
+  const text = extractArticleText(html, url);
   return text.length > 100 ? text : null;
 }
 

@@ -75,17 +75,28 @@ while true; do
     log "--- Article #${ARTICLE_ID} ($((i + 1))/${COUNT}) ---"
 
     # Step 3a: Fetch & clean HTML (validation probe)
-    TEXT=$(npx tsx scripts/hermes/fetch-article.ts --url "$ARTICLE_URL" 2>/dev/null)
+    FETCH_ERR=$(mktemp)
+    TEXT=$(npx tsx scripts/hermes/fetch-article.ts --url "$ARTICLE_URL" 2>"$FETCH_ERR")
     if [ $? -ne 0 ] || [ "${#TEXT}" -lt 100 ]; then
-      log "fetch FAILED for #${ARTICLE_ID} (len=${#TEXT}) — skipping"
+      cat "$FETCH_ERR" >&2
+      FAILURE_ARGS=(--id "$ARTICLE_ID" --stage fetch --reason content-unavailable)
+      if [[ "$ARTICLE_URL" =~ (youtube\.com|youtu\.be) ]]; then
+        FAILURE_ARGS=(--id "$ARTICLE_ID" --stage fetch --reason youtube-transcript-unavailable --youtube)
+      fi
+      npx tsx scripts/hermes/record-processing-failure.ts "${FAILURE_ARGS[@]}" || true
+      rm -f "$FETCH_ERR"
+      log "fetch FAILED for #${ARTICLE_ID} (len=${#TEXT}) — failure recorded"
       ERR=$((ERR + 1))
       continue
     fi
+    rm -f "$FETCH_ERR"
     log "fetch OK: ${#TEXT} chars"
 
     # Step 3b: One-shot summarize via Zen API (RU title + summary, status='summarized')
     if ! npx tsx scripts/hermes/save-summary.ts --id "$ARTICLE_ID" --auto; then
-      log "summarize FAILED for #${ARTICLE_ID} — skipping"
+      npx tsx scripts/hermes/record-processing-failure.ts \
+        --id "$ARTICLE_ID" --stage zen --reason unavailable || true
+      log "summarize FAILED for #${ARTICLE_ID} — retry retained"
       ERR=$((ERR + 1))
       continue
     fi

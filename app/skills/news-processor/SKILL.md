@@ -138,6 +138,7 @@ cd app && bash scripts/hermes/ralph-loop.sh
 (pending, score=NULL)  →  evaluate: score>65 & slot → pending (approved)
                       ↘  score≤65 или нет слота     → rejected
 approved pending → summarized (RU title+summary, 1 Zen call) → published
+                 ↘ fetch/transcript failure → retry (до 3 раз) → rejected
 ```
 
 | Статус | Описание |
@@ -159,8 +160,10 @@ approved pending → summarized (RU title+summary, 1 Zen call) → published
 | evaluate-news | Метрика недоступна | Метрика = null, 0 баллов за критерий |
 | evaluate-news | Score ≤ 65 / нет слота | status='rejected' |
 | manifest-gen | Пустой манифест | Завершить цикл (success) |
-| fetch-article | HTTP error / < 100 chars | Пропустить статью |
-| save-summary | Zen unavailable / no JSON | Прервать обработку статьи |
+| fetch-article | YouTube без транскрипта | Сразу `rejected`, без вызова Zen |
+| fetch-article | HTTP/extract error / < 100 chars | Счётчик в `metrics.processingFailures`; после 3 попыток → `rejected` |
+| fetch-article | Nature с закрытым body | Селекторы article-body; fallback на meta description |
+| save-summary | Zen unavailable / no JSON | Оставить `pending`, повторить позже; не смешивать с ошибками контента |
 | deploy-ready | DB error | Залогировать, продолжить |
 
 ## Конфигурация (env)
