@@ -15,7 +15,7 @@
 
 ```bash
 # Обязательные
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/science_agent
+DATABASE_URL=postgresql://postgres:<password>@postgres:5432/science_agent
 POSTGRES_PASSWORD=<сложный_пароль>
 APP_ID=<kimi_app_id>
 APP_SECRET=<kimi_app_secret>

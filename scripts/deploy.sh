@@ -22,7 +22,7 @@ fi
 
 # Source .env for DOMAIN variable
 source .env 2>/dev/null || true
-DOMAIN=${DOMAIN:-science-agent.ru}
+DOMAIN=${DOMAIN:?"DOMAIN environment variable is required"}
 
 # Process nginx template
 echo "Processing nginx config for domain: $DOMAIN"

@@ -32,7 +32,7 @@ describe("public repository hygiene", () => {
     for (const path of trackedFiles()) {
       const content = readFileSync(resolve(repositoryRoot, path), "utf8");
       if (forbidden.some((value) => content.includes(value))) offenders.push(path);
-      if (/POSTGRES_PASSWORD:-postgres/.test(content)) offenders.push(path);
+      if (new RegExp("POSTGRES_PASSWORD" + ":-postgres").test(content)) offenders.push(path);
     }
 
     expect([...new Set(offenders)]).toEqual([]);

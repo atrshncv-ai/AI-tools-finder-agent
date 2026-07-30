@@ -253,7 +253,7 @@ PostgreSQL 16 в Docker-контейнере `science_agent_db` (БД `science_a
 
 ## 11. Развёртывание и эксплуатация
 
-**Сервер:** Ubuntu 24.04, `/var/www/news-agent/app`, env — `app/.env`.
+**Сервер:** Ubuntu 24.04; путь приложения задаётся через `APP_ROOT`, env хранится вне Git.
 
 | Компонент | Команда/конфиг |
 |---|---|

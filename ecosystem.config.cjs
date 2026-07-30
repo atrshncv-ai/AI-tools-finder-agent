@@ -4,7 +4,7 @@ module.exports = {
   apps: [
     {
       name: 'news-agent-web',
-      cwd: '/var/www/news-agent/app',
+      cwd: process.env.APP_ROOT || `${__dirname}/app`,
       script: 'dist/boot.js',
       env: {
         NODE_ENV: 'production',
@@ -18,7 +18,7 @@ module.exports = {
     },
     {
       name: 'hermes-ralph-loop',
-      cwd: '/var/www/news-agent/app',
+      cwd: process.env.APP_ROOT || `${__dirname}/app`,
       script: 'scripts/hermes/ralph-loop.sh',
       interpreter: '/bin/bash',
       instances: 1,

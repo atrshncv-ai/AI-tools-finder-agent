@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-DOMAIN=${1:-science-agent.ru}
-EMAIL=${2:-admin@science-agent.ru}
+DOMAIN=${1:?"Usage: $0 <domain> <email>"}
+EMAIL=${2:?"Usage: $0 <domain> <email>"}
 
 echo "Setting up SSL for domain: $DOMAIN"
 

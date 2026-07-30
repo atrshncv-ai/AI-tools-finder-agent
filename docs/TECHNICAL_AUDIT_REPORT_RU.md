@@ -38,7 +38,7 @@
 | C13 | **Medium** | `app/src/pages/Home.tsx:21`, `Science.tsx:35`, `NewsDetail.tsx:30`, `SearchResults.tsx:13` | useQuery без обработки `isError` — сетевая ошибка маскируется под empty-state («Новости появятся утром» / «Новость не найдена»). Пользователь дезинформирован |
 | C14 | **Medium** | `app/src/hooks/useInfiniteScroll.ts` + `Home.tsx:56-60` | При сетевой ошибке бесконечный scroll продолжает инкрементировать offset без backoff → десятки подряд неудачных запросов, пока `hasMore` не станет false |
 | C15 | **Low** | `app/scripts/hermes/evaluate-news.ts:43` vs `AGENTS.md`/`SKILL.md`/`ralph-loop.sh:42` | Gate в коде **65**, в документации/оркестраторе заявлен **75**. Реальный порог шире заявленного в 2 раза |
-| C16 | **Low** | `app/scripts/hermes/evaluate-news.ts:41` | Хардкод IP `159.194.236.68:3000` в `User-Agent` → утечка внутренней инфраструктуры во внешние запросы (GitHub, HN, Reddit логи) |
+| C16 | **Low** | `app/scripts/hermes/evaluate-news.ts:41` | Исторически `User-Agent` раскрывал production host; исправлено переносом значения в env |
 | C17 | **Low** | `zenClient.ts:226,306,382` | `error.message` включает первые 300 символов тела Zen-ответа → при возврате ключа/PII в 4xx утекает в stdout |
 | C18 | **Low** | `drizzle.config.ts:8`, `app/db/migrations/` | Нет down-миграций; `drizzle.config.ts` использует `DATABASE_URL!` без dotenv — упадёт при отсутствии env |
 | C19 | **Low** | `app/db/relations.ts:44-53` | Не описаны relations для `sourceHealth`, `agentState`, `pipelineState` (таблицы есть в schema) |
@@ -309,7 +309,7 @@ const SCORE_GATE = 65; // strictly greater passes
 
 ```ts
 // evaluate-news.ts:41
-const UA = "science-agent/2.0 (+https://159.194.236.68:3000)";
+const UA = process.env.AGENT_UA || "science-agent/2.0";
 ```
 Внутренний IP/порт утекает в логи GitHub/HN/Reddit API. Вынести в env `PUBLIC_AGENT_URL` или убрать адрес.
 

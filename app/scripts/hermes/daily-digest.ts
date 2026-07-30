@@ -11,7 +11,7 @@
  *     printed to stdout (stub mode, no sending).
  *   TELEGRAM_CHAT_IDS — comma-separated list of recipient chat IDs (owner +
  *     client). Legacy single TELEGRAM_CHAT_ID is honored as a fallback.
- *   DIGEST_DASHBOARD_URL — dashboard base URL (default http://159.194.236.68:3000)
+ *   DIGEST_DASHBOARD_URL — dashboard base URL (default http://localhost:3000)
  *
  * Usage:
  *   npx tsx scripts/hermes/daily-digest.ts
@@ -25,7 +25,7 @@ import { and, desc, eq, gte } from "drizzle-orm";
 const WINDOW_HOURS = 24;
 const MAX_ITEMS_PER_SECTION = 15;
 const TELEGRAM_MAX_LEN = 4000;
-const DASHBOARD_URL = (process.env.DIGEST_DASHBOARD_URL || "http://159.194.236.68:3000").replace(/\/+$/, "");
+const DASHBOARD_URL = (process.env.DIGEST_DASHBOARD_URL || "http://localhost:3000").replace(/\/+$/, "");
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 // Recipient list: TELEGRAM_CHAT_IDS (comma-separated) takes precedence; the
 // legacy single-recipient TELEGRAM_CHAT_ID still works as a fallback.

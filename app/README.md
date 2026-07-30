@@ -178,7 +178,7 @@ cp .env.example .env
 
 ```env
 # База данных
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/science_agent
+DATABASE_URL=postgresql://postgres:<password>@localhost:5432/science_agent
 
 # Kimi OAuth
 APP_ID=your_app_id

@@ -40,7 +40,7 @@ import { eq, and, isNull, isNotNull, inArray, gte, desc } from "drizzle-orm";
 import { fetchYoutubeMetadata } from "./youtube-transcript";
 
 const FETCH_TIMEOUT_MS = 20_000;
-const UA = "science-agent/2.0 (+https://159.194.236.68:3000)";
+const UA = process.env.AGENT_UA || "science-agent/2.0";
 
 const SCORE_GATE = 65; // strictly greater passes
 const RELEASE_MAX_AGE_MS = 72 * 3600_000;

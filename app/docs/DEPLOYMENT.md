@@ -281,7 +281,7 @@ curl http://localhost:1234/v1/models
 | `LM_STUDIO_URL` | URL LM Studio сервера | Да |
 | `LM_STUDIO_MODEL` | Модель для суммаризации | Нет (default: google/gemma-4-e4b) |
 | `CORS_ORIGIN` | Разрешённый origin для CORS | Нет (default: *) |
-| `DOMAIN` | Домен для SSL сертификата | Нет (default: science-agent.ru) |
+| `DOMAIN` | Домен для SSL сертификата | Да |
 | `LINEAR_WORKER_INTERVAL_MS` | Интервал линейного worker'а между статьями, мс | Нет (default: 600000) |
 | `LM_STUDIO_MAX_INPUT_TOKENS` | Макс. входных токенов для LM Studio | Нет (default: 4000) |
 | `LM_STUDIO_SUMMARY_MAX_TOKENS` | Макс. токенов краткого саммари | Нет (default: 512) |

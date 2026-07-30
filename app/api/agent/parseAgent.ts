@@ -21,7 +21,7 @@ const AI_KEYWORDS = [
   "meta ai", "mistral", "нейросетевой", "обучение с подкреплением",
 ];
 
-const USER_AGENT = "Mozilla/5.0 (compatible; ScienceAgent/1.0; +https://science-agent.ru/bot)";
+const USER_AGENT = process.env.AGENT_UA || "ScienceAgent/1.0";
 const REQUEST_DELAY_MS = 1500;
 
 export function containsAiKeywords(text: string): boolean {

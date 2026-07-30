@@ -52,7 +52,7 @@
 | **H4** | **HIGH** | `app/api/boot.ts:28-46` | `/health` — публичный эндпоинт **без rate-limit** (лимит挂在 только `/api/trpc/*` — `boot.ts:23`). Каждый вызов дёргает `checkZenConnection()` → внешний GET `{ZEN_BASE_URL}/models`. Неаутентифицированный attacker может Amplify DoS и постоянно держать circuit-breaker Zen в состоянии half-open open. |
 | **M5** | **MEDIUM** | `app/src/pages/Home.tsx:21`, `Science.tsx`, `NewsDetail.tsx:30`, `SearchResults.tsx:13` | `useQuery` деструктурирует только `data/isLoading/isFetching` — `isError` не обрабатывается. Сетевая/5xx ошибка рендерится как **empty-state** («Новости появятся здесь утром» / «Новость не найдена»), не как ошибка. Глобальный `QueryCache.onError` в `trpc.tsx:20` только `console.error`. Клиента вводит в заблуждение. |
 | **M6** | **MEDIUM** | `app/scripts/hermes/ralph-loop.sh` | Нет `timeout(1)`-обёртки вокруг шагов. `evaluate-news.ts` батчем до 200 статей × ≤5 внешних fetch × 20s ≈ **до 5.5 ч** блокировки цикла. При зависании одного шага весь автономный Ralph Loop стопорится. |
-| **M7** | **MEDIUM** | `evaluate-news.ts:43` | Хардкод внутреннего IP в `User-Agent`: `science-agent/2.0 (+https://159.194.236.68:3000)`. Утекает в логи GitHub/HN/Reddit API. Вынести в env или убрать адрес. |
+| **M7** | **MEDIUM** | `evaluate-news.ts:43` | Исторически `User-Agent` раскрывал production host. Исправлено: значение берётся из env, fallback не содержит адрес. |
 | **M8** | **MEDIUM** | `app` (9 files) | `eslint .` — **9 ошибок** (некоторые блокируют pre-commit gate): `auth-router.ts:14` `_pw` unused (intentional destructure → оформить `eslint-disable`), `summarizeAgent.ts:152` / `NewsCard.tsx:82,90` `any`, `seed-initial-tools.ts:15` и `seed-science-tools.ts:16` unused `onConflictDoNothing` import, `evaluate-news.ts:46` unused `RELEASE_MAX_AGE_MS`, `ensure-science-categories.ts:14` unused `sql`, `daily-digest.ts:32` useless-escape `\[`. |
 | **L9** | **LOW** | `ARCHITECTURE.md` §6 и §7.4 | Документные расхождения (неблокирующие, но вводящие в заблуждение при сдаче): §6 line 131 заявляет «`score > 65` → `status='approved'`», однако код держит `status='pending'` для одобренных (`evaluate-news.ts:590`) — поток работает именно потому, что manifest выбирает `pending`, но в документе статус «approved» не отражает реальной state-машины. §7.4 «фейковые seed-данные удалены» — **ложно** (F1). |
 | **L10** | **LOW** | `app/db/migrations/` | Только up-миграции, no down. Откат — только ручной SQL. |
@@ -350,7 +350,7 @@ const whereConditions = [
 - Commit: `feat(hermes): per-step deadline + dead-letter on persistent failure`.
 
 **1.3 (M7) Убрать хардкод IP из User-Agent.**
-- `evaluate-news.ts:43` — `const UA = process.env.AGENT_UA || "science-agent/2.0"`. Убрать `159.194.236.68:3000` (analog: `daily-digest.ts:26` — значение по умолчанию легитимно, configurable через env).
+- `evaluate-news.ts:43` — `const UA = process.env.AGENT_UA || "science-agent/2.0"`. Production host хранить только в env.
 - Commit: `fix(evaluate-news): drop hardcoded internal IP from User-Agent`.
 
 **1.4 (M8) Починить ESLint (9 ошибок).**
