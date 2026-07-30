@@ -93,13 +93,23 @@ while true; do
     log "fetch OK: ${#TEXT} chars"
 
     # Step 3b: One-shot summarize via Zen API (RU title + summary, status='summarized')
-    if ! npx tsx scripts/hermes/save-summary.ts --id "$ARTICLE_ID" --auto; then
-      npx tsx scripts/hermes/record-processing-failure.ts \
-        --id "$ARTICLE_ID" --stage zen --reason unavailable || true
-      log "summarize FAILED for #${ARTICLE_ID} — retry retained"
+    SUMMARY_ERR=$(mktemp)
+    if ! npx tsx scripts/hermes/save-summary.ts --id "$ARTICLE_ID" --auto 2>"$SUMMARY_ERR"; then
+      cat "$SUMMARY_ERR" >&2
+      if grep -qE "Failed to fetch or extract|looks like garbage" "$SUMMARY_ERR"; then
+        npx tsx scripts/hermes/record-processing-failure.ts \
+          --id "$ARTICLE_ID" --stage extract --reason unusable-content || true
+        log "summarize FAILED for #${ARTICLE_ID} — extraction failure recorded"
+      else
+        npx tsx scripts/hermes/record-processing-failure.ts \
+          --id "$ARTICLE_ID" --stage zen --reason unavailable || true
+        log "summarize FAILED for #${ARTICLE_ID} — Zen retry retained"
+      fi
+      rm -f "$SUMMARY_ERR"
       ERR=$((ERR + 1))
       continue
     fi
+    rm -f "$SUMMARY_ERR"
     log "summarize OK"
 
     # Step 3c: Publish (status='published')
