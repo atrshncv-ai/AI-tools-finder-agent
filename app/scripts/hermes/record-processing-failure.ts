@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 import { eq } from "drizzle-orm";
 import { news } from "@db/schema";
-import { getDb } from "../../api/queries/connection";
+import { closeDb, getDb } from "../../api/queries/connection";
 import {
   nextFailureState,
   type FailureStage,
@@ -69,6 +69,7 @@ async function main() {
       attempts: state.attempts,
     }),
   );
+  await closeDb();
 }
 
 main().catch((error) => {
