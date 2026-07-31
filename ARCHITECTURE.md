@@ -41,7 +41,7 @@
 ┌─────────────────────────── СБОР (collect-dual) ───────────────────────────┐
 │  Текст: RSS-блоги (OpenAI, HF, Google) · GitHub trending · HackerNews ·   │
 │  Reddit · arXiv · Nature/Science/Cell/MIT TR · Naked Science              │
-│  Видео: 9 курируемых YouTube-каналов (RSS → yt-dlp fallback)              │
+│  Видео: 13 курируемых YouTube-каналов (RSS + /videos + /shorts)           │
 └──────────────────────────────────┬────────────────────────────────────────┘
                                    ▼
 ┌────────────────── ОЦЕНКА (evaluate-news) ───────────────────┐
@@ -85,7 +85,10 @@
 Двухуровневый сбор:
 
 1. **RSS** `youtube.com/feeds/videos.xml?channel_id=…` — быстрый путь.
-2. **yt-dlp fallback** (`youtube-transcript.ts: listChannelVideos()`): при 404/пустом RSS — `yt-dlp --print id|title|upload_date` по вкладке `/videos`, для shorts-only каналов — автоматический переход на вкладку `/shorts`. yt-dlp возвращает **реальные даты загрузки**, что критично для скоринга свежести.
+2. **Явный обход вкладок** (`youtube-transcript.ts: listChannelVideos()`):
+   смешанный RSS дополняется `yt-dlp --print id|title|upload_date` по
+   настроенным `/videos` и `/shorts`. Так длинные ролики не теряются при серии
+   Shorts. yt-dlp возвращает реальные даты загрузки для Time Guard.
 
 Каждое видео вставляется как статья: `originalUrl = https://www.youtube.com/watch?v=…` (всегда!), `source = youtube-<handle>`, язык — из конфигурации канала.
 
@@ -111,6 +114,9 @@ yt-dlp --dump-json --js-runtimes deno
 - **Graceful degradation:** без API-ключа fallback отключён, видео без субтитров получает `status='rejected'` (без бесконечных ретраев).
 - **Безопасность:** `execFile` без shell (нет command injection), таймаут 90 с, транскрипт помечается как untrusted-данные перед передачей в LLM.
 - **Требование среды:** yt-dlp требует `--js-runtimes deno` (установлен на сервере).
+- **Transcript-first gate:** видео без реально полученного transcript не
+  одобряется. Обычные ролики 4–45 минут получают приоритетный бонус, но Shorts
+  не имеют дневной квоты. Preflight transcript переиспользуется при summary.
 
 ---
 

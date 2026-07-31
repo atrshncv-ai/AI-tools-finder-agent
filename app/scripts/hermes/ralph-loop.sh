@@ -65,6 +65,7 @@ while true; do
   for i in $(seq 0 $((COUNT - 1))); do
     ARTICLE_ID=$(python3 -c "import json; m=json.load(open('$MANIFEST')); print(m['articles'][$i]['id'])" 2>/dev/null)
     ARTICLE_URL=$(python3 -c "import json; m=json.load(open('$MANIFEST')); print(m['articles'][$i]['originalUrl'])" 2>/dev/null)
+    ARTICLE_CONTENT_LEN=$(python3 -c "import json; m=json.load(open('$MANIFEST')); print(len(m['articles'][$i].get('originalContent') or ''))" 2>/dev/null || echo "0")
 
     if [ -z "$ARTICLE_ID" ] || [ -z "$ARTICLE_URL" ]; then
       log "WARN: empty article data at index $i — skipping"
@@ -74,23 +75,28 @@ while true; do
 
     log "--- Article #${ARTICLE_ID} ($((i + 1))/${COUNT}) ---"
 
-    # Step 3a: Fetch & clean HTML (validation probe)
-    FETCH_ERR=$(mktemp)
-    TEXT=$(npx tsx scripts/hermes/fetch-article.ts --url "$ARTICLE_URL" 2>"$FETCH_ERR")
-    if [ $? -ne 0 ] || [ "${#TEXT}" -lt 100 ]; then
-      cat "$FETCH_ERR" >&2
-      FAILURE_ARGS=(--id "$ARTICLE_ID" --stage fetch --reason content-unavailable)
-      if [[ "$ARTICLE_URL" =~ (youtube\.com|youtu\.be) ]]; then
-        FAILURE_ARGS=(--id "$ARTICLE_ID" --stage fetch --reason youtube-transcript-unavailable --youtube)
+    # Step 3a: Fetch & clean HTML. YouTube transcript preflight stores reusable
+    # originalContent, avoiding a second caption/Whisper request.
+    if [ "$ARTICLE_CONTENT_LEN" -ge 100 ]; then
+      log "preflight content OK: ${ARTICLE_CONTENT_LEN} chars"
+    else
+      FETCH_ERR=$(mktemp)
+      TEXT=$(npx tsx scripts/hermes/fetch-article.ts --url "$ARTICLE_URL" 2>"$FETCH_ERR")
+      if [ $? -ne 0 ] || [ "${#TEXT}" -lt 100 ]; then
+        cat "$FETCH_ERR" >&2
+        FAILURE_ARGS=(--id "$ARTICLE_ID" --stage fetch --reason content-unavailable)
+        if [[ "$ARTICLE_URL" =~ (youtube\.com|youtu\.be) ]]; then
+          FAILURE_ARGS=(--id "$ARTICLE_ID" --stage fetch --reason youtube-transcript-unavailable --youtube)
+        fi
+        npx tsx scripts/hermes/record-processing-failure.ts "${FAILURE_ARGS[@]}" || true
+        rm -f "$FETCH_ERR"
+        log "fetch FAILED for #${ARTICLE_ID} (len=${#TEXT}) — failure recorded"
+        ERR=$((ERR + 1))
+        continue
       fi
-      npx tsx scripts/hermes/record-processing-failure.ts "${FAILURE_ARGS[@]}" || true
       rm -f "$FETCH_ERR"
-      log "fetch FAILED for #${ARTICLE_ID} (len=${#TEXT}) — failure recorded"
-      ERR=$((ERR + 1))
-      continue
+      log "fetch OK: ${#TEXT} chars"
     fi
-    rm -f "$FETCH_ERR"
-    log "fetch OK: ${#TEXT} chars"
 
     # Step 3b: One-shot summarize via Zen API (RU title + summary, status='summarized')
     SUMMARY_ERR=$(mktemp)

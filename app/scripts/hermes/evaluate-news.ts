@@ -37,7 +37,9 @@ import * as cheerio from "cheerio";
 import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
 import { eq, and, isNull, isNotNull, inArray, gte, desc } from "drizzle-orm";
-import { fetchYoutubeMetadata } from "./youtube-transcript";
+import { fetchYoutubeTranscript } from "./youtube-transcript";
+import { DEDICATED_AI_YOUTUBE_SOURCES } from "./youtube-sources";
+import { scoreYoutubeCandidate } from "./youtube-policy";
 
 const FETCH_TIMEOUT_MS = 20_000;
 const UA = process.env.AGENT_UA || "science-agent/2.0";
@@ -71,18 +73,6 @@ const YOUTUBE_AI_TERMS =
   /\b(gpt|chatgpt|claude|codex|gemini|openai|anthropic|deepseek|llama|mistral|qwen|copilot|sora|veo|nano[ -]banana|grok|diffusion|transformer|agent|agents|robot|llm|mcp|rag)\b|\b(ии|нейросет\w*|нейрон\w*|искусственн\w*)\b/iu;
 
 /** Channels whose entire content is AI — topic bonus needs no keyword proof. */
-const DEDICATED_AI_CHANNELS = new Set([
-  "youtube-two-minute-papers",
-  "youtube-yannic-kilcher",
-  "youtube-matthew-berman",
-  "youtube-vladimir-ai-dev",
-  "youtube-rinat-suleymanov",
-  "youtube-duncan-rogoff",
-  "youtube-mcdenil",
-  "youtube-artemii-miller",
-  "youtube-diy-smart-code",
-]);
-
 // ─── Regex helpers for text signals ─────────────────────────────────────────
 
 const AI_TERMS =
@@ -117,6 +107,7 @@ interface EvalResult {
   score: number;
   breakdown: ScoreBreakdown[];
   metrics: Record<string, unknown>;
+  originalContent?: string;
 }
 
 // ─── HTTP utilities ─────────────────────────────────────────────────────────
@@ -275,43 +266,82 @@ async function evaluate(article: {
   let redditUpsN = typeof prev.redditUps === "number" ? prev.redditUps : null;
   let hasOpenArtifact = false;
 
-  // ── YouTube scoring: curated channels are hand-picked (like tier-1 blogs),
-  // so authority comes from the channel itself. Videos still need an
-  // AI-relevant title to pass the gate; no GitHub/HN/Reddit lookups (a watch
-  // page yields no useful page signals and only wastes requests).
+  // ── YouTube scoring: verify a usable transcript BEFORE approval. This call
+  // uses native/automatic captions first and Whisper only as a configured
+  // fallback. Long-form 4–45 minute videos receive a ranking bonus; useful
+  // transcribed Shorts have no artificial daily quota.
   const isYoutube = article.source.startsWith("youtube-") || prev.origin === "youtube-rss";
   if (isYoutube) {
-    let score = 45;
+    const transcript = await fetchYoutubeTranscript(article.originalUrl);
+    if (!transcript) {
+      metrics.youtubePreflight = {
+        eligible: false,
+        reason: "transcript-unavailable",
+        checkedAt: new Date().toISOString(),
+      };
+      return { id: article.id, title: article.title, score: 0, breakdown, metrics };
+    }
+
+    const dedicatedChannel = DEDICATED_AI_YOUTUBE_SOURCES.has(article.source);
+    const evidenceText = `${article.title} ${transcript.description}`;
+    const aiRelevant =
+      dedicatedChannel ||
+      hasAny(evidenceText, YOUTUBE_AI_TERMS) ||
+      hasAny(evidenceText, AI_TERMS);
+    const decision = scoreYoutubeCandidate({
+      hasTranscript: true,
+      durationSeconds: transcript.durationSeconds,
+      dedicatedChannel,
+      aiRelevant,
+    });
+
     breakdown.push({
       criterion: "youtube-curated-channel",
       points: 45,
       evidence: `source=${article.source}`,
     });
-    // Evidence: title + video description (via yt-dlp metadata, no download).
-    const meta = await fetchYoutubeMetadata(article.originalUrl);
-    if (meta) {
-      metrics.youtubeChannel = meta.channel;
-      metrics.youtubeDescription = meta.description.slice(0, 500);
-    }
-    const evidenceText = `${article.title} ${meta?.description ?? ""}`;
-    if (
-      DEDICATED_AI_CHANNELS.has(article.source) ||
-      hasAny(evidenceText, YOUTUBE_AI_TERMS) ||
-      hasAny(evidenceText, AI_TERMS)
-    ) {
-      score += 15;
+    if (aiRelevant) {
       breakdown.push({
         criterion: "youtube-ai-topic",
         points: 15,
-        evidence: DEDICATED_AI_CHANNELS.has(article.source)
+        evidence: dedicatedChannel
           ? "dedicated AI channel"
           : "AI terms in title/description",
       });
     }
-    score += 10;
-    breakdown.push({ criterion: "video-format", points: 10, evidence: "transcribed video essay/review" });
-    metrics.youtubeScoring = true;
-    return { id: article.id, title: article.title, score, breakdown, metrics };
+    breakdown.push({
+      criterion: "youtube-transcript-verified",
+      points: 10,
+      evidence: `${transcript.kind}, ${transcript.text.length} chars`,
+    });
+    if (decision.longFormPriority) {
+      breakdown.push({
+        criterion: "youtube-long-form-priority",
+        points: 10,
+        evidence: `duration=${transcript.durationSeconds}s (4–45 min)`,
+      });
+    }
+    metrics.youtubeChannel = transcript.channel;
+    metrics.youtubeDescription = transcript.description.slice(0, 500);
+    metrics.youtubeDurationSeconds = transcript.durationSeconds;
+    metrics.youtubeTranscriptKind = transcript.kind;
+    metrics.youtubeTranscriptLanguage = transcript.lang;
+    metrics.youtubeTranscriptChars = transcript.text.length;
+    metrics.youtubePreflight = {
+      eligible: decision.eligible,
+      checkedAt: new Date().toISOString(),
+    };
+    const originalContent =
+      `${transcript.title}. ${transcript.description}\n\n` +
+      `Transcript (${transcript.kind}, ${transcript.lang}):\n${transcript.text}`;
+    return {
+      id: article.id,
+      title: article.title,
+      score: decision.score,
+      breakdown,
+      metrics,
+      originalContent,
+    };
   }
 
   const isGithubUrl = /github\.com\/[\w.-]+\/[\w.-]+/.test(article.originalUrl);
@@ -587,7 +617,15 @@ async function main() {
     if (approvedDecision) {
       slots--;
       approved++;
-      await db.update(news).set({ score: r.score, metrics, updatedAt: new Date() }).where(eq(news.id, r.id));
+      await db
+        .update(news)
+        .set({
+          score: r.score,
+          metrics,
+          ...(r.originalContent ? { originalContent: r.originalContent } : {}),
+          updatedAt: new Date(),
+        })
+        .where(eq(news.id, r.id));
     } else {
       rejected++;
       await db

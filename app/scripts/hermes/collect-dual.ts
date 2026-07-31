@@ -28,6 +28,7 @@ import { news, categories } from "@db/schema";
 import { eq } from "drizzle-orm";
 import { isDuplicate } from "./dedup";
 import { listChannelVideos } from "./youtube-transcript";
+import { YOUTUBE_SOURCES } from "./youtube-sources";
 import { ssrfCheck } from "../../api/lib/url-safety";
 import { classifyScience } from "../ensure-science-categories";
 
@@ -147,105 +148,51 @@ const TECH_BLOG_FEEDS = [
  * Atom feed per channel — no API key required. Videos are transcribed later
  * (youtube-transcript.ts via yt-dlp), never downloaded.
  */
-const YOUTUBE_FEEDS = [
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCbfYPyITQ-7l4upoX8nvctg",
-    channelUrl: "https://www.youtube.com/@TwoMinutePapers/videos",
-    name: "youtube-two-minute-papers",
-    language: "en",
-  },
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCZHmQk67mSJgfCCTn7xBfew",
-    channelUrl: "https://www.youtube.com/@YannicKilcher/videos",
-    name: "youtube-yannic-kilcher",
-    language: "en",
-  },
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCawZsQWqfGSbCI5yjkdVkTA",
-    channelUrl: "https://www.youtube.com/@matthew_berman/videos",
-    name: "youtube-matthew-berman",
-    language: "en",
-  },
-  // ── Client-approved AI-tooling channels (shorts/reviews) ──
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCkaXqLNhfpgzqGh8cu6E_3w",
-    // Shorts-only channel: no /videos tab exists.
-    channelUrl: "https://www.youtube.com/@vladimiraidev/shorts",
-    name: "youtube-vladimir-ai-dev",
-    language: "ru",
-  },
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCXyfe8u58vBf2aSWLQjJtVA",
-    channelUrl: "https://www.youtube.com/@rinatsuleyman/videos",
-    name: "youtube-rinat-suleymanov",
-    language: "ru",
-  },
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UC37JpWP5PxLSma2lh79HU9A",
-    channelUrl: "https://www.youtube.com/@duncanrogoff/videos",
-    name: "youtube-duncan-rogoff",
-    language: "en",
-  },
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCRwL-Z46UPuwmpFX_vM7d_w",
-    channelUrl: "https://www.youtube.com/@mcdenil_/videos",
-    name: "youtube-mcdenil",
-    language: "ru",
-  },
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCbebZGDxm5IYqNTlqHF1ODQ",
-    channelUrl: "https://www.youtube.com/@artemii-miller-ai/videos",
-    name: "youtube-artemii-miller",
-    language: "ru",
-  },
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UC_a85mUHqsy5j0CYCgLnkEQ",
-    channelUrl: "https://www.youtube.com/@DIYSmartCode/videos",
-    name: "youtube-diy-smart-code",
-    language: "ru",
-  },
-];
-
 async function collectYouTube(): Promise<Candidate[]> {
-  const out: Candidate[] = [];
-  for (const feed of YOUTUBE_FEEDS) {
+  const byUrl = new Map<string, Candidate>();
+  const tabItems = Math.max(1, parseInt(process.env.YOUTUBE_TAB_ITEMS || "3", 10));
+  for (const source of YOUTUBE_SOURCES) {
+    const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${source.channelId}`;
     try {
-      const parsed = await rss.parseURL(feed.url);
-      for (const item of parsed.items.slice(0, 5)) {
+      const parsed = await rss.parseURL(feedUrl);
+      for (const item of parsed.items.slice(0, 10)) {
         const c = fromRssItem(item, {
-          name: feed.name,
+          name: source.name,
           isScience: false,
           scienceField: null,
-          language: feed.language,
+          language: source.language,
         });
         if (c) {
-          c.metrics = { origin: "youtube-rss" };
-          out.push(c);
+          c.metrics = { origin: "youtube-rss", collectionTab: "feed" };
+          byUrl.set(c.url, c);
         }
       }
-      console.error(`[collect] ${feed.name}: ${parsed.items.length} videos (rss)`);
+      console.error(`[collect] ${source.name}: ${parsed.items.length} videos (rss)`);
     } catch (err) {
-      // YouTube's feeds endpoint 404s for some channels/IPs — fall back to a
-      // yt-dlp channel listing (full metadata incl. upload dates).
-      console.error(`[collect] ${feed.name}: RSS failed (${(err as Error).message}), trying yt-dlp fallback...`);
-      const videos = await listChannelVideos(feed.channelUrl, 5);
+      console.error(`[collect] ${source.name}: RSS failed (${(err as Error).message})`);
+    }
+
+    // Explicit tab collection ensures ordinary long-form videos are not
+    // displaced by a burst of Shorts in the mixed RSS feed.
+    for (const tab of source.tabs) {
+      const channelUrl = `https://www.youtube.com/${source.handle}/${tab}`;
+      const videos = await listChannelVideos(channelUrl, tabItems);
       for (const v of videos) {
-        out.push({
+        byUrl.set(v.url, {
           title: v.title,
           url: v.url,
-          source: feed.name,
-          // Time Guard is fail-closed: unknown dates are dropped downstream.
+          source: source.name,
           publishedAt: v.publishedAt ?? new Date(0),
-          language: feed.language,
+          language: source.language,
           isScience: false,
           scienceField: null,
-          metrics: { origin: "youtube-rss", videoId: v.videoId },
+          metrics: { origin: "youtube-tab", videoId: v.videoId, collectionTab: tab },
         });
       }
-      console.error(`[collect] ${feed.name}: ${videos.length} videos (yt-dlp)`);
+      console.error(`[collect] ${source.name}: ${videos.length} ${tab} (yt-dlp)`);
     }
   }
-  return out;
+  return [...byUrl.values()];
 }
 
 async function collectTechBlogs(): Promise<Candidate[]> {

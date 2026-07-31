@@ -38,6 +38,8 @@ cd app && npx tsx scripts/hermes/collect-dual.ts --stream both   # tech|science|
   - **Hacker News** — Algolia API (`hn.algolia.com`), посты >100 points за 48ч
   - **GitHub Trending** — REST search API: новые AI/LLM-репозитории >300 звёзд за 3 дня
   - **Reddit** — публичный JSON r/MachineLearning, r/artificial, r/LocalLLaMA (>100 ups)
+- **YouTube:** смешанный RSS + явный обход настроенных вкладок `/videos` и
+  `/shorts`. Обычные ролики не вытесняются всплеском Shorts.
 
 **Science-поток (лёгкий RSS/HTTP-парсинг):**
 - Tier-1 журналы: Nature, Science, Lancet, Cell
@@ -102,6 +104,13 @@ HTTP/JSON-API (GitHub REST, HN Algolia, Reddit JSON, Altmetric API, DOI из
 **Daily cap:** не более 5 одобренных статей в сутки (UTC) — элитная курация.
 Решение и доказательная база (`scoreBreakdown`, метрики) сохраняются в
 `news.score` / `news.metrics`; отбракованные → `status='rejected'`.
+
+Для YouTube действует transcript-first gate: до одобрения проверяется реально
+доступный native/auto transcript, затем Whisper fallback при наличии ключа.
+Без транскрипта видео получает score 0 и сразу отклоняется. Ролики длиной
+4–45 минут получают +10 к рангу. У Shorts нет искусственного дневного лимита:
+каждый полезный Short с транскриптом может пройти gate. Результат preflight
+сохраняется в `originalContent`, поэтому Whisper не вызывается повторно.
 
 ## Шаги 1–3: Обработка одобренных статей (строго последовательно)
 

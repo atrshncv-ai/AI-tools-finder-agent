@@ -150,7 +150,10 @@ async function main() {
     // Fetch content: YouTube videos go through yt-dlp transcript extraction,
     // everything else through HTML fetch+clean.
     let text: string | null;
-    if (isYoutubeUrl(article.originalUrl)) {
+    if (article.originalContent && article.originalContent.length >= 100) {
+      text = article.originalContent;
+      console.error(`[save-summary] Reusing ${text.length} chars from transcript preflight`);
+    } else if (isYoutubeUrl(article.originalUrl)) {
       const t = await fetchYoutubeTranscript(article.originalUrl);
       if (!t) {
         // Video unavailable or no captions — reject instead of retrying forever.
