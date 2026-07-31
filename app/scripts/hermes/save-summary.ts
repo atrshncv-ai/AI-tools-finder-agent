@@ -20,23 +20,10 @@ import { summarizeOneShot, checkZenConnection } from "../../api/ai/zenClient";
 import { isYoutubeUrl, fetchYoutubeTranscript } from "./youtube-transcript";
 import { ssrfCheck } from "../../api/lib/url-safety";
 import { extractArticleText } from "./article-content";
+import { isGarbageText, isUnusableExtractedContent } from "./content-quality";
 
 function normalizeSpace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
-}
-
-function isGarbageText(text: string): boolean {
-  if (!text || text.trim().length < 40) return true;
-  const sentences = text.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
-  const counts = new Map<string, number>();
-  for (const sentence of sentences) {
-    const key = sentence.toLowerCase();
-    counts.set(key, (counts.get(key) || 0) + 1);
-  }
-  for (const [, count] of counts) {
-    if (count > 3) return true;
-  }
-  return false;
 }
 
 // ─── HTML fetch + clean ──────────────────────────────────────────────────────
@@ -174,7 +161,8 @@ async function main() {
       console.error("[save-summary] Failed to fetch or extract article content");
       process.exit(1);
     }
-    if (isGarbageText(text)) {
+    const contentKind = isYoutubeUrl(article.originalUrl) ? "youtube-transcript" : "web-article";
+    if (isUnusableExtractedContent(text, contentKind)) {
       console.error("[save-summary] Extracted text looks like garbage, skipping");
       process.exit(1);
     }
