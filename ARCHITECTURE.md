@@ -27,7 +27,7 @@
 | **Frontend** | React 19, Vite, TypeScript, Tailwind CSS 4, Radix UI, TanStack Query, tRPC client, wouter |
 | **Backend** | Node.js 20, Hono (HTTP-сервер), tRPC 11 (типизированный API), jose (JWT), bcryptjs |
 | **База данных** | PostgreSQL 16 (Docker `science_agent_db`), Drizzle ORM, миграции `db/migrations` (актуально: 0007) |
-| **LLM** | Opencode Zen API (`opencode.ai/zen/v1`, OpenAI-compatible), модель `nemotron-3-ultra-free`, пул из 3 ключей с race-safe ротацией (`api/ai/zenClient.ts`) |
+| **LLM** | Opencode Zen API (`opencode.ai/zen/v1`, OpenAI-compatible), модель `deepseek-v4-flash-free`, пул из 3 ключей с race-safe ротацией (`api/ai/zenClient.ts`) |
 | **Медиа-конвейер** | yt-dlp 2026.07.04 (+ Deno JS-runtime), ffmpeg 6.1.1, Whisper API (Groq `whisper-large-v3-turbo` / OpenAI-compatible) |
 | **Уведомления** | Telegram Bot API (`@instrument_assistant_bot`) |
 | **Инфраструктура** | Ubuntu 24.04, PM2 (`news-agent-web`, `hermes-ralph-loop`), cron, nginx, Docker |

@@ -183,7 +183,7 @@ approved pending → summarized (RU title+summary, 1 Zen call) → published
 DATABASE_URL=postgresql://postgres:***@localhost:5432/science_agent
 ZEN_BASE_URL=https://opencode.ai/zen/v1
 ZEN_API_KEY=sk-***
-ZEN_MODEL=nemotron-3-ultra-free
+ZEN_MODEL=deepseek-v4-flash-free
 LINEAR_WORKER_INTERVAL_MS=600000   # интервал цикла Ralph Loop
 HERMES_DAILY_CAP=5                 # лимит одобренных статей в сутки
 ```
