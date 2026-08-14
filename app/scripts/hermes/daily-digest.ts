@@ -23,7 +23,7 @@ import { news } from "@db/schema";
 import { and, desc, eq, gte, isNull, not, inArray, sql } from "drizzle-orm";
 
 const WINDOW_HOURS = 24;
-const MAX_ITEMS_PER_SECTION = 15;
+const MAX_ITEMS_PER_SECTION = 7;
 const TELEGRAM_MAX_LEN = 4000;
 const DASHBOARD_URL = (process.env.DIGEST_DASHBOARD_URL || "http://localhost:3000").replace(/\/+$/, "");
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
@@ -61,6 +61,7 @@ interface DigestItem {
   isScience: boolean | null;
   section: string;
   sphereTags: string[];
+  summary?: string | null;
 }
 
 function formatSection(emoji: string, name: string, items: DigestItem[], withChannel: boolean): string[] {
@@ -68,10 +69,13 @@ function formatSection(emoji: string, name: string, items: DigestItem[], withCha
   const lines = [`${emoji} *${name}* — ${items.length}`];
   for (const item of items.slice(0, MAX_ITEMS_PER_SECTION)) {
     const via = withChannel && item.source ? ` — _${esc(channelName(item.source))}_` : "";
-    lines.push(`▫️ [${esc(item.title)}](${item.originalUrl})${via}`);
+    const description = item.summary ? ` — ${esc(item.summary.replace(/\s+/g, " ").trim().slice(0, 180))}` : "";
+    lines.push(`▫️ [${esc(item.title)}](${item.originalUrl})${description}${via}`);
   }
   if (items.length > MAX_ITEMS_PER_SECTION) {
-    lines.push(`…и ещё ${items.length - MAX_ITEMS_PER_SECTION}`);
+    const themes = [...new Set(items.slice(MAX_ITEMS_PER_SECTION).flatMap((item) => item.sphereTags ?? []))].slice(0, 4);
+    const themeText = themes.length > 0 ? ` про ${themes.join(", ")}` : " материалов по теме";
+    lines.push(`Ещё ${items.length - MAX_ITEMS_PER_SECTION} новостей${themeText} — в дашборде.`);
   }
   lines.push("");
   return lines;
@@ -121,7 +125,7 @@ export function buildDigest(items: DigestItem[]): string {
     `За последние ${WINDOW_HOURS} часа опубликовано: *${items.length}*`,
     "",
     ...formatSection("🛠", "ИИ-новости", tech, false),
-    ...formatSection("🔬", "Наука", science, false),
+    ...formatSection("🔬", "ИИ для науки", science, false),
     ...formatSection("🧪", "Инструменты для изобретений", inventions, false),
     `📊 [Открыть дашборд](${DASHBOARD_URL})`,
   ];
@@ -171,6 +175,7 @@ async function main() {
       isScience: news.isScience,
       section: news.section,
       sphereTags: news.sphereTags,
+      summary: news.summary,
     })
     .from(news)
     .where(and(eq(news.status, "published"), gte(news.updatedAt, since)))
@@ -184,6 +189,7 @@ async function main() {
       id: news.id, title: news.title, originalUrl: news.originalUrl,
       source: news.source, isScience: news.isScience, section: news.section,
       sphereTags: news.sphereTags,
+      summary: news.summary,
     })
     .from(news)
     .where(and(eq(news.status, "rejected"), gte(news.score, 50), isNull(news.digestArchiveSentAt), sql`${news.source} NOT LIKE 'youtube-%'`, not(inArray(news.source, ["reddit-artificial", "reddit-localllama", "reddit-machinelearning"]))))
