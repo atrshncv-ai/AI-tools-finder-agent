@@ -69,6 +69,7 @@ export const news = pgTable(
     classificationType: text("classificationType"),
     section: text("section").default("ai-news").notNull(),
     sphereTags: jsonb("sphereTags").$type<string[]>().default([]).notNull(),
+    digestArchiveSentAt: timestamp("digestArchiveSentAt"),
     language: text("language"),
     score: integer("score"),
     metrics: jsonb("metrics"),

@@ -20,7 +20,7 @@
 import "dotenv/config";
 import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
-import { and, desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, not, inArray, lt } from "drizzle-orm";
 
 const WINDOW_HOURS = 24;
 const MAX_ITEMS_PER_SECTION = 15;
@@ -162,7 +162,7 @@ async function main() {
   const since = new Date(Date.now() - WINDOW_HOURS * 3600_000);
 
   // updatedAt approximates "when WE published it" (publishedAt is the source date).
-  const items = await db
+  const recentItems = await db
     .select({
       id: news.id,
       title: news.title,
@@ -175,6 +175,21 @@ async function main() {
     .from(news)
     .where(and(eq(news.status, "published"), gte(news.updatedAt, since)))
     .orderBy(desc(news.updatedAt));
+
+  // Backfill at most ten strong historical candidates per digest. They are
+  // marked after a successful send, so the archive is consumed over days and
+  // never duplicates the current 24-hour feed.
+  const archiveItems = await db
+    .select({
+      id: news.id, title: news.title, originalUrl: news.originalUrl,
+      source: news.source, isScience: news.isScience, section: news.section,
+      sphereTags: news.sphereTags,
+    })
+    .from(news)
+    .where(and(eq(news.status, "rejected"), gte(news.score, 50), isNull(news.digestArchiveSentAt), not(news.source.like("youtube-%")), not(inArray(news.source, ["reddit-artificial", "reddit-localllama", "reddit-machinelearning"])))))
+    .orderBy(desc(news.score), desc(news.updatedAt))
+    .limit(10);
+  const items = [...recentItems, ...archiveItems];
 
   console.error(`[daily-digest] ${items.length} published in last ${WINDOW_HOURS}h`);
 
@@ -198,6 +213,9 @@ async function main() {
   if (PAYMENT_MANAGER_CHAT_ID && isPaymentReminderDay(new Date())) {
     const reminderOk = !BOT_TOKEN || (await sendTelegram(paymentReminderText(), PAYMENT_MANAGER_CHAT_ID));
     console.error(`[daily-digest] payment reminder → manager: ${reminderOk ? "sent" : "FAILED"}`);
+  }
+  if (archiveItems.length > 0 && (CHAT_IDS.length > 0 || !BOT_TOKEN)) {
+    await db.update(news).set({ digestArchiveSentAt: new Date() }).where(inArray(news.id, archiveItems.map((item) => item.id)));
   }
   process.exit(0);
 }
