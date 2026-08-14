@@ -8,6 +8,7 @@ import { NewsListSkeleton } from "@/components/NewsCardSkeleton";
 import CategoryFilter from "@/components/CategoryFilter";
 import { FlaskConical, Loader2, Wrench, RefreshCw, XCircle, Trophy } from "lucide-react";
 import { getSectionQuery } from "@/lib/sectionFilters";
+import FreshnessFilter, { type FreshnessKey } from "@/components/FreshnessFilter";
 
 const CLASSIFICATION_TYPES = [
   { value: "all", name: "Все типы", icon: null },
@@ -22,6 +23,7 @@ const PAGE_SIZE = 20;
 export default function Science() {
   const [activeFields, setActiveFields] = useState<string[]>([]);
   const [activeType, setActiveType] = useState("all");
+  const [freshness, setFreshness] = useState<FreshnessKey>("all");
   const [offset, setOffset] = useState(0);
   const { isAuthenticated } = useAuth();
   const utils = trpc.useUtils();
@@ -38,6 +40,7 @@ export default function Science() {
       ...getSectionQuery("science"),
       categorySlug: activeFields.length > 0 ? activeFields : undefined,
       classificationType: activeType === "all" ? undefined : activeType as "new_tool" | "update" | "closure" | "achievement",
+      freshness: freshness === "all" ? undefined : freshness,
       limit: PAGE_SIZE,
       offset,
     }
@@ -85,6 +88,11 @@ export default function Science() {
     setOffset(0);
   };
 
+  const handleFreshnessChange = (key: FreshnessKey) => {
+    setFreshness(key);
+    setOffset(0);
+  };
+
   return (
     <div className="min-h-screen" style={{ backgroundColor: "var(--color-bg)" }}>
       <Header />
@@ -126,12 +134,17 @@ export default function Science() {
         </div>
 
         {/* Field filter */}
-        <div className="mb-5">
+        <div className="mb-4">
           <CategoryFilter
             categories={scienceFields.filter((f) => f.slug !== "all")}
             active={activeFields}
             onChange={handleFieldChange}
           />
+        </div>
+
+        {/* Freshness filter */}
+        <div className="mb-5">
+          <FreshnessFilter active={freshness} onChange={handleFreshnessChange} />
         </div>
 
         {/* News list */}

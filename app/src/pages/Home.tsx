@@ -9,11 +9,13 @@ import { NewsListSkeleton } from "@/components/NewsCardSkeleton";
 import CategoryFilter from "@/components/CategoryFilter";
 import { Newspaper, Loader2 } from "lucide-react";
 import { getSectionQuery } from "@/lib/sectionFilters";
+import FreshnessFilter, { type FreshnessKey } from "@/components/FreshnessFilter";
 
 const PAGE_SIZE = 20;
 
 export default function Home() {
   const [activeCategories, setActiveCategories] = useState<string[]>([]);
+  const [freshness, setFreshness] = useState<FreshnessKey>("all");
   const [offset, setOffset] = useState(0);
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
@@ -23,6 +25,7 @@ export default function Home() {
     {
       ...getSectionQuery("ai-news"),
       categorySlug: activeCategories.length > 0 ? activeCategories : undefined,
+      freshness: freshness === "all" ? undefined : freshness,
       limit: PAGE_SIZE,
       offset,
     }
@@ -69,6 +72,11 @@ export default function Home() {
     setOffset(0);
   };
 
+  const handleFreshnessChange = (key: FreshnessKey) => {
+    setFreshness(key);
+    setOffset(0);
+  };
+
   return (
     <div className="min-h-screen" style={{ backgroundColor: "var(--color-bg)" }}>
       <Header />
@@ -112,7 +120,7 @@ export default function Home() {
 
         {/* Category filter */}
         {categoriesData && categoriesData.length > 0 && (
-          <div className="mb-5">
+          <div className="mb-4">
             <CategoryFilter
               categories={categoriesData.map((c) => ({ slug: c.slug, name: c.name }))}
               active={activeCategories}
@@ -120,6 +128,11 @@ export default function Home() {
             />
           </div>
         )}
+
+        {/* Freshness filter */}
+        <div className="mb-5">
+          <FreshnessFilter active={freshness} onChange={handleFreshnessChange} />
+        </div>
 
         {/* News list */}
         {isLoading ? (

@@ -5,6 +5,7 @@ import {
   findNewsById,
   findCategories,
   findInventionTools,
+  findInventionToolSpheres,
   findInventionToolById,
   seedCategories,
 } from "./queries/news";
@@ -23,6 +24,7 @@ export const newsRouter = createRouter({
           section: z.enum(["ai-news", "science", "invention-tools"]).optional(),
           classificationType: z.enum(["new_tool", "update", "closure", "achievement"]).optional(),
           search: z.string().optional(),
+          freshness: z.enum(["all", "day", "3days", "week", "month"]).optional(),
           limit: z.number().min(1).max(100).optional(),
           offset: z.number().min(0).optional(),
         })
@@ -35,6 +37,7 @@ export const newsRouter = createRouter({
         section: input?.section,
         classificationType: input?.classificationType,
         search: input?.search,
+        freshness: input?.freshness,
         limit: input?.limit,
         offset: input?.offset,
       });
@@ -93,8 +96,10 @@ export const newsRouter = createRouter({
   }),
 
   inventionTools: authedQuery
-    .input(z.object({ sphere: z.string().optional(), limit: z.number().min(1).max(200).optional() }).optional())
-    .query(({ input }) => findInventionTools(input)),
+    .input(z.object({ spheres: z.array(z.string()).optional(), limit: z.number().min(1).max(300).optional() }).optional())
+    .query(({ input }) => findInventionTools({ spheres: input?.spheres, limit: input?.limit })),
+
+  inventionToolSpheres: authedQuery.query(() => findInventionToolSpheres()),
 
   inventionToolById: authedQuery
     .input(z.object({ id: z.number() }))

@@ -1,6 +1,14 @@
 import { getDb } from "./connection";
 import { news, categories, inventionTools } from "@db/schema";
-import { eq, inArray, desc, and, count, sql, getTableColumns } from "drizzle-orm";
+import { eq, inArray, desc, and, count, sql, getTableColumns, gte } from "drizzle-orm";
+
+// Freshness windows in hours — matches src/components/FreshnessFilter.tsx.
+const FRESHNESS_HOURS: Record<string, number> = {
+  day: 24,
+  "3days": 72,
+  week: 7 * 24,
+  month: 30 * 24,
+};
 
 // ─── Seed categories ───
 export async function seedCategories() {
@@ -34,11 +42,12 @@ export async function findAllNews(opts: {
   section?: string;
   classificationType?: string;
   search?: string;
+  freshness?: string;
   limit?: number;
   offset?: number;
 }) {
   const db = getDb();
-  const { isScience, categorySlug, section, classificationType, search, limit = 50, offset = 0 } = opts;
+  const { isScience, categorySlug, section, classificationType, search, freshness, limit = 50, offset = 0 } = opts;
 
   const conditions = [];
 
@@ -55,6 +64,16 @@ export async function findAllNews(opts: {
 
   if (classificationType) {
     conditions.push(eq(news.classificationType, classificationType));
+  }
+
+  // Freshness = when the article appeared on the platform (updatedAt is set
+  // by the pipeline when we publish it, unlike publishedAt which is the
+  // source-side publication date).
+  if (freshness && freshness !== "all") {
+    const hours = FRESHNESS_HOURS[freshness];
+    if (hours) {
+      conditions.push(gte(news.updatedAt, new Date(Date.now() - hours * 3600_000)));
+    }
   }
 
   if (search) {
@@ -88,11 +107,22 @@ export async function findAllNews(opts: {
   return { items, total: totalResult.count };
 }
 
-export async function findInventionTools(opts: { sphere?: string; limit?: number } = {}) {
+export async function findInventionTools(opts: { sphere?: string; spheres?: string[]; limit?: number } = {}) {
   const db = getDb();
-  const rows = await db.select().from(inventionTools).orderBy(inventionTools.name).limit(opts.limit ?? 100);
-  if (!opts.sphere) return rows;
-  return rows.filter((tool) => tool.spheres.includes(opts.sphere!));
+  const rows = await db.select().from(inventionTools).orderBy(inventionTools.name).limit(opts.limit ?? 200);
+  if (opts.spheres && opts.spheres.length > 0) {
+    return rows.filter((tool) => tool.spheres.some((s) => opts.spheres!.includes(s)));
+  }
+  if (opts.sphere) return rows.filter((tool) => tool.spheres.includes(opts.sphere!));
+  return rows;
+}
+
+export async function findInventionToolSpheres(): Promise<string[]> {
+  const db = getDb();
+  const rows = await db.select({ spheres: inventionTools.spheres }).from(inventionTools);
+  const set = new Set<string>();
+  for (const row of rows) for (const s of row.spheres) set.add(s);
+  return [...set].sort();
 }
 
 export async function findInventionToolById(id: number) {

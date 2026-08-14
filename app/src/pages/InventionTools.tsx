@@ -1,11 +1,31 @@
+import { useState } from "react";
 import { Link } from "react-router";
 import Header from "@/components/Header";
 import { trpc } from "@/providers/trpc";
 import { Wrench, ArrowRight, Globe } from "lucide-react";
+import CategoryFilter from "@/components/CategoryFilter";
+import FreshnessFilter, { type FreshnessKey } from "@/components/FreshnessFilter";
 
 export default function InventionTools() {
-  const { data: tools, isLoading } = trpc.news.inventionTools.useQuery({});
-  const total = tools?.length ?? 0;
+  const [activeSpheres, setActiveSpheres] = useState<string[]>([]);
+  const [freshness, setFreshness] = useState<FreshnessKey>("all");
+
+  const { data: spheresData } = trpc.news.inventionToolSpheres.useQuery();
+  const { data: tools, isLoading } = trpc.news.inventionTools.useQuery({
+    spheres: activeSpheres.length > 0 ? activeSpheres : undefined,
+    limit: 300,
+  });
+
+  const sphereOptions = (spheresData ?? []).map((s) => ({ slug: s, name: s }));
+  const visible = freshness === "all"
+    ? (tools ?? [])
+    : (tools ?? []).filter((tool) => {
+        const ageMs = Date.now() - new Date(tool.updatedAt).getTime();
+        const hours = freshness === "day" ? 24 : freshness === "3days" ? 72 : freshness === "week" ? 168 : 720;
+        return ageMs <= hours * 3600_000;
+      });
+  const total = visible.length;
+
   return (
     <div className="min-h-screen" style={{ backgroundColor: "var(--color-bg)" }}>
       <Header />
@@ -26,13 +46,29 @@ export default function InventionTools() {
           )}
         </div>
 
+        {/* Sphere filter (like categories in other sections) */}
+        {sphereOptions.length > 0 && (
+          <div className="mb-4">
+            <CategoryFilter
+              categories={sphereOptions}
+              active={activeSpheres}
+              onChange={setActiveSpheres}
+            />
+          </div>
+        )}
+
+        {/* Freshness filter */}
+        <div className="mb-5">
+          <FreshnessFilter active={freshness} onChange={setFreshness} />
+        </div>
+
         {isLoading ? (
           <div className="py-16 text-center text-sm" style={{ color: "var(--color-text-muted)" }}>
             Загрузка…
           </div>
-        ) : (tools ?? []).length > 0 ? (
+        ) : visible.length > 0 ? (
           <div className="flex flex-col gap-3">
-            {(tools ?? []).map((tool) => (
+            {visible.map((tool) => (
               <Link
                 key={tool.id}
                 to={`/tools/${tool.id}`}
