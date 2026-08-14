@@ -186,7 +186,7 @@ async function main() {
       sphereTags: news.sphereTags,
     })
     .from(news)
-    .where(and(eq(news.status, "rejected"), gte(news.score, 50), isNull(news.digestArchiveSentAt), not(news.source.like("youtube-%")), not(inArray(news.source, ["reddit-artificial", "reddit-localllama", "reddit-machinelearning"])))))
+    .where(and(eq(news.status, "rejected"), gte(news.score, 50), isNull(news.digestArchiveSentAt), not(news.source.like("youtube-%")), not(inArray(news.source, ["reddit-artificial", "reddit-localllama", "reddit-machinelearning"]))))
     .orderBy(desc(news.score), desc(news.updatedAt))
     .limit(10);
   const items = [...recentItems, ...archiveItems];
