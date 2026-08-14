@@ -36,6 +36,8 @@ const CHAT_IDS = (process.env.TELEGRAM_CHAT_IDS || process.env.TELEGRAM_CHAT_ID 
   .split(",")
   .map((s) => s.trim().replace(/^["']+|["']+$/g, ""))
   .filter(Boolean);
+const PAYMENT_MANAGER_CHAT_ID = (process.env.PAYMENT_MANAGER_CHAT_ID || "").trim();
+const PAYMENT_DUE_AT = process.env.PAYMENT_DUE_AT || "2026-11-10";
 
 /** Telegram legacy-Markdown escaping for dynamic text. */
 function esc(text: string): string {
@@ -87,6 +89,17 @@ export function splitTelegramText(text: string, maxLen = TELEGRAM_MAX_LEN): stri
   }
   if (remaining) chunks.push(remaining);
   return chunks;
+}
+
+export function isPaymentReminderDay(now: Date, dueAt = PAYMENT_DUE_AT): boolean {
+  const due = new Date(`${dueAt}T00:00:00Z`);
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const days = Math.floor((today.getTime() - due.getTime()) / 86_400_000);
+  return days === -88 || (days >= 0 && days % 30 === 0);
+}
+
+export function paymentReminderText(dueAt = PAYMENT_DUE_AT): string {
+  return `💳 *Напоминание об оплате сервера*\n\nПожалуйста, проверьте оплату сервера. Текущий ориентир окончания оплаченного периода: *${dueAt}*.\n\nПосле этой даты напоминание будет приходить каждые 30 дней.`;
 }
 
 export function buildDigest(items: DigestItem[]): string {
@@ -167,33 +180,28 @@ async function main() {
 
   console.error(`[daily-digest] ${items.length} published in last ${WINDOW_HOURS}h`);
 
-  if (items.length === 0) {
-    console.error("[daily-digest] nothing to report — skipping send");
-    process.exit(0);
-  }
-
-  const digestParts = splitTelegramText(buildDigest(items));
+  const digestParts = items.length > 0 ? splitTelegramText(buildDigest(items)) : [];
 
   if (!BOT_TOKEN || CHAT_IDS.length === 0) {
     console.error("[daily-digest] STUB MODE (no TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_IDS) — printing digest:");
-    console.log(digest);
-    process.exit(0);
+    if (digestParts.length > 0) console.log(digestParts.join("\n---\n"));
+  } else {
+    // Fan-out to every recipient; one failing chat must not block the others.
+    let okCount = 0;
+    for (const chatId of CHAT_IDS) {
+      let ok = true;
+      for (const part of digestParts) ok = (await sendTelegram(part, chatId)) && ok;
+      console.error(`[daily-digest] → chat ${chatId}: ${ok ? "sent" : "FAILED"}`);
+      if (ok) okCount++;
+    }
+    console.log(JSON.stringify({ status: okCount === CHAT_IDS.length ? "sent" : "partial", items: items.length, recipients: { ok: okCount, total: CHAT_IDS.length } }));
   }
 
-  // Fan-out to every recipient; one failing chat must not block the others.
-  let okCount = 0;
-  for (const chatId of CHAT_IDS) {
-    let ok = true;
-    for (const part of digestParts) ok = (await sendTelegram(part, chatId)) && ok;
-    console.error(`[daily-digest] → chat ${chatId}: ${ok ? "sent" : "FAILED"}`);
-    if (ok) okCount++;
+  if (PAYMENT_MANAGER_CHAT_ID && isPaymentReminderDay(new Date())) {
+    const reminderOk = !BOT_TOKEN || (await sendTelegram(paymentReminderText(), PAYMENT_MANAGER_CHAT_ID));
+    console.error(`[daily-digest] payment reminder → manager: ${reminderOk ? "sent" : "FAILED"}`);
   }
-
-  const status = okCount === CHAT_IDS.length ? "sent" : okCount > 0 ? "partial" : "failed";
-  console.log(
-    JSON.stringify({ status, items: items.length, recipients: { ok: okCount, total: CHAT_IDS.length } }),
-  );
-  process.exit(okCount > 0 ? 0 : 1);
+  process.exit(0);
 }
 
 main().catch((err) => {

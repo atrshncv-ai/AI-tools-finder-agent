@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitTelegramText } from "./daily-digest";
+import { isPaymentReminderDay, paymentReminderText, splitTelegramText } from "./daily-digest";
 
 describe("splitTelegramText", () => {
   it("splits long digests at line boundaries without truncating", () => {
@@ -7,5 +7,14 @@ describe("splitTelegramText", () => {
     const parts = splitTelegramText(text, 30);
     expect(parts.every((part) => part.length <= 30)).toBe(true);
     expect(parts.join("\n")).toBe(text);
+  });
+});
+
+describe("payment reminders", () => {
+  it("fires 88 days before due date and every 30 days afterwards", () => {
+    expect(isPaymentReminderDay(new Date("2026-08-14T12:00:00Z"), "2026-11-10")).toBe(true);
+    expect(isPaymentReminderDay(new Date("2026-12-10T12:00:00Z"), "2026-11-10")).toBe(true);
+    expect(isPaymentReminderDay(new Date("2026-12-11T12:00:00Z"), "2026-11-10")).toBe(false);
+    expect(paymentReminderText("2026-11-10")).toContain("2026-11-10");
   });
 });
