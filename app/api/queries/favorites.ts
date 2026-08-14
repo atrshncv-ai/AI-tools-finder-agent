@@ -27,6 +27,8 @@ export async function findFavoritesByUser(userId: number) {
         isScience: news.isScience,
         scienceField: news.scienceField,
         classificationType: news.classificationType,
+        section: news.section,
+        sphereTags: news.sphereTags,
         language: news.language,
         score: news.score,
         metrics: news.metrics,

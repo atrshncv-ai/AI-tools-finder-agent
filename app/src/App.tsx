@@ -10,6 +10,7 @@ import Login from "./pages/Login"
 import NotFound from "./pages/NotFound"
 import Admin from "./pages/Admin"
 import Profile from "./pages/Profile"
+import InventionTools from "./pages/InventionTools"
 
 /** Private service: every content route requires a valid session. */
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -31,6 +32,7 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/" element={<RequireAuth><Home /></RequireAuth>} />
       <Route path="/science" element={<RequireAuth><Science /></RequireAuth>} />
+      <Route path="/inventions" element={<RequireAuth><InventionTools /></RequireAuth>} />
       <Route path="/news/:id" element={<RequireAuth><NewsDetail /></RequireAuth>} />
       <Route path="/favorites" element={<RequireAuth><Favorites /></RequireAuth>} />
       <Route path="/search" element={<RequireAuth><SearchResults /></RequireAuth>} />

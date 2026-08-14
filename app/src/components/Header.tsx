@@ -35,6 +35,7 @@ export default function Header() {
 
   const isHome = location.pathname === "/";
   const isScience = location.pathname === "/science";
+  const isInventions = location.pathname === "/inventions";
   const isFavorites = location.pathname === "/favorites";
 
   const handleSearch = (e: React.FormEvent) => {
@@ -82,6 +83,9 @@ export default function Header() {
           )}
           <Link to="/science" className={navLinkClass()} style={{ color: isScience ? "var(--color-accent)" : "var(--color-text-muted)", backgroundColor: isScience ? "var(--color-tag-bg)" : "transparent" }}>
             ИИ для науки
+          </Link>
+          <Link to="/inventions" className={navLinkClass()} style={{ color: isInventions ? "var(--color-accent)" : "var(--color-text-muted)", backgroundColor: isInventions ? "var(--color-tag-bg)" : "transparent" }}>
+            Инструменты для изобретений
           </Link>
           {isAuthenticated && (
             <Link to="/favorites" className={navLinkClass()} style={{ color: isFavorites ? "var(--color-accent)" : "var(--color-text-muted)", backgroundColor: isFavorites ? "var(--color-tag-bg)" : "transparent" }}>

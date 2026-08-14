@@ -67,6 +67,8 @@ export const news = pgTable(
     isScience: boolean("isScience").default(false).notNull(),
     scienceField: text("scienceField"),
     classificationType: text("classificationType"),
+    section: text("section").default("ai-news").notNull(),
+    sphereTags: jsonb("sphereTags").$type<string[]>().default([]).notNull(),
     language: text("language"),
     score: integer("score"),
     metrics: jsonb("metrics"),
@@ -81,6 +83,7 @@ export const news = pgTable(
     index("idx_news_is_science").on(table.isScience),
     index("idx_news_science_field").on(table.scienceField),
     index("idx_news_classification_type").on(table.classificationType),
+    index("idx_news_section").on(table.section),
     index("idx_news_published_at").on(table.publishedAt),
     index("idx_news_source").on(table.source),
     index("idx_news_status").on(table.status),
@@ -97,6 +100,33 @@ export const news = pgTable(
 
 export type News = typeof news.$inferSelect;
 export type InsertNews = typeof news.$inferInsert;
+
+// Curated, persistent catalog of AI tools that enable scientific inventions.
+// Tool cards are intentionally separate from news: a release/update creates a
+// news item while the canonical tool record remains stable.
+export const inventionTools = pgTable(
+  "invention_tools",
+  {
+    id: serial("id").primaryKey(),
+    slug: text("slug").notNull().unique(),
+    name: text("name").notNull(),
+    organization: text("organization"),
+    country: text("country"),
+    kind: text("kind").notNull(),
+    spheres: jsonb("spheres").$type<string[]>().default([]).notNull(),
+    accessStatus: text("accessStatus").notNull(),
+    description: text("description").notNull(),
+    officialUrl: text("officialUrl").notNull(),
+    docsUrl: text("docsUrl"),
+    lastVerifiedAt: timestamp("lastVerifiedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  },
+  (table) => [index("idx_invention_tools_kind").on(table.kind)],
+);
+
+export type InventionTool = typeof inventionTools.$inferSelect;
+export type InsertInventionTool = typeof inventionTools.$inferInsert;
 
 // --- Favorites ---
 export const favorites = pgTable(

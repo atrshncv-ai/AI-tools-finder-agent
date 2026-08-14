@@ -4,6 +4,7 @@ import {
   findAllNews,
   findNewsById,
   findCategories,
+  findInventionTools,
   seedCategories,
 } from "./queries/news";
 import { translateArticle } from "./ai/zenClient";
@@ -18,6 +19,7 @@ export const newsRouter = createRouter({
         .object({
           isScience: z.boolean().optional(),
           categorySlug: z.array(z.string()).optional(),
+          section: z.enum(["ai-news", "science", "invention-tools"]).optional(),
           classificationType: z.enum(["new_tool", "update", "closure", "achievement"]).optional(),
           search: z.string().optional(),
           limit: z.number().min(1).max(100).optional(),
@@ -29,6 +31,7 @@ export const newsRouter = createRouter({
       return findAllNews({
         isScience: input?.isScience,
         categorySlug: input?.categorySlug,
+        section: input?.section,
         classificationType: input?.classificationType,
         search: input?.search,
         limit: input?.limit,
@@ -87,4 +90,8 @@ export const newsRouter = createRouter({
     await seedCategories();
     return { success: true };
   }),
+
+  inventionTools: authedQuery
+    .input(z.object({ sphere: z.string().optional(), limit: z.number().min(1).max(200).optional() }).optional())
+    .query(({ input }) => findInventionTools(input)),
 });

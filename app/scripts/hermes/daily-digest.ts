@@ -57,6 +57,8 @@ interface DigestItem {
   originalUrl: string;
   source: string | null;
   isScience: boolean | null;
+  section: string;
+  sphereTags: string[];
 }
 
 function formatSection(emoji: string, name: string, items: DigestItem[], withChannel: boolean): string[] {
@@ -73,10 +75,25 @@ function formatSection(emoji: string, name: string, items: DigestItem[], withCha
   return lines;
 }
 
-function buildDigest(items: DigestItem[]): string {
+export function splitTelegramText(text: string, maxLen = TELEGRAM_MAX_LEN): string[] {
+  if (text.length <= maxLen) return [text];
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > maxLen) {
+    let cut = remaining.lastIndexOf("\n", maxLen);
+    if (cut < 200) cut = maxLen;
+    chunks.push(remaining.slice(0, cut));
+    remaining = remaining.slice(cut).replace(/^\n+/, "");
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
+export function buildDigest(items: DigestItem[]): string {
   const videos = items.filter((i) => i.source?.startsWith("youtube-"));
-  const science = items.filter((i) => !i.source?.startsWith("youtube-") && i.isScience);
-  const tech = items.filter((i) => !i.source?.startsWith("youtube-") && !i.isScience);
+  const science = items.filter((i) => i.section === "science" || (!i.section && i.isScience));
+  const inventions = items.filter((i) => i.section === "invention-tools");
+  const tech = items.filter((i) => i.section === "ai-news" || (!i.section && !i.isScience));
 
   const dateStr = new Date().toLocaleDateString("ru-RU", {
     day: "numeric",
@@ -92,16 +109,13 @@ function buildDigest(items: DigestItem[]): string {
     `За последние ${WINDOW_HOURS} часа опубликовано: *${items.length}*`,
     "",
     ...formatSection("🎬", "Видео с YouTube", videos, true),
-    ...formatSection("🛠", "IT-инструменты", tech, false),
+    ...formatSection("🛠", "ИИ-новости", tech, false),
     ...formatSection("🔬", "Наука", science, false),
+    ...formatSection("🧪", "Инструменты для изобретений", inventions, false),
     `📊 [Открыть дашборд](${DASHBOARD_URL})`,
   ];
 
-  let text = lines.join("\n");
-  if (text.length > TELEGRAM_MAX_LEN) {
-    text = text.slice(0, TELEGRAM_MAX_LEN - 40) + "\n\n… _(дайджест сокращён)_";
-  }
-  return text;
+  return lines.join("\n");
 }
 
 async function sendTelegram(text: string, chatId: string): Promise<boolean> {
@@ -144,6 +158,8 @@ async function main() {
       originalUrl: news.originalUrl,
       source: news.source,
       isScience: news.isScience,
+      section: news.section,
+      sphereTags: news.sphereTags,
     })
     .from(news)
     .where(and(eq(news.status, "published"), gte(news.updatedAt, since)))
@@ -156,7 +172,7 @@ async function main() {
     process.exit(0);
   }
 
-  const digest = buildDigest(items);
+  const digestParts = splitTelegramText(buildDigest(items));
 
   if (!BOT_TOKEN || CHAT_IDS.length === 0) {
     console.error("[daily-digest] STUB MODE (no TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_IDS) — printing digest:");
@@ -167,7 +183,8 @@ async function main() {
   // Fan-out to every recipient; one failing chat must not block the others.
   let okCount = 0;
   for (const chatId of CHAT_IDS) {
-    const ok = await sendTelegram(digest, chatId);
+    let ok = true;
+    for (const part of digestParts) ok = (await sendTelegram(part, chatId)) && ok;
     console.error(`[daily-digest] → chat ${chatId}: ${ok ? "sent" : "FAILED"}`);
     if (ok) okCount++;
   }

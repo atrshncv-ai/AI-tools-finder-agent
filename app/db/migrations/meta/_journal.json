@@ -57,6 +57,13 @@
       "when": 1784088757435,
       "tag": "0007_jazzy_cobalt_man",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786682855045,
+      "tag": "0008_happy_moira_mactaggert",
+      "breakpoints": true
     }
   ]
 }

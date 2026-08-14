@@ -1,5 +1,5 @@
 import { getDb } from "./connection";
-import { news, categories } from "@db/schema";
+import { news, categories, inventionTools } from "@db/schema";
 import { eq, inArray, desc, and, count, sql, getTableColumns } from "drizzle-orm";
 
 // ─── Seed categories ───
@@ -31,13 +31,14 @@ export async function seedCategories() {
 export async function findAllNews(opts: {
   isScience?: boolean;
   categorySlug?: string[];
+  section?: string;
   classificationType?: string;
   search?: string;
   limit?: number;
   offset?: number;
 }) {
   const db = getDb();
-  const { isScience, categorySlug, classificationType, search, limit = 50, offset = 0 } = opts;
+  const { isScience, categorySlug, section, classificationType, search, limit = 50, offset = 0 } = opts;
 
   const conditions = [];
 
@@ -50,6 +51,7 @@ export async function findAllNews(opts: {
   if (categorySlug && categorySlug.length > 0) {
     conditions.push(inArray(news.categorySlug, categorySlug));
   }
+  if (section) conditions.push(eq(news.section, section));
 
   if (classificationType) {
     conditions.push(eq(news.classificationType, classificationType));
@@ -84,6 +86,13 @@ export async function findAllNews(opts: {
     .where(where);
 
   return { items, total: totalResult.count };
+}
+
+export async function findInventionTools(opts: { sphere?: string; limit?: number } = {}) {
+  const db = getDb();
+  const rows = await db.select().from(inventionTools).orderBy(inventionTools.name).limit(opts.limit ?? 100);
+  if (!opts.sphere) return rows;
+  return rows.filter((tool) => tool.spheres.includes(opts.sphere!));
 }
 
 export async function findNewsById(id: number) {
