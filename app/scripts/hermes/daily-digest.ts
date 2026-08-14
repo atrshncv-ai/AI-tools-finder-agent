@@ -24,6 +24,7 @@ import { and, desc, eq, gte, isNull, not, inArray, sql } from "drizzle-orm";
 
 const WINDOW_HOURS = 24;
 const MAX_ITEMS_PER_SECTION = 7;
+const FALLBACK_ITEMS_PER_SECTION = 3;
 const TELEGRAM_MAX_LEN = 4000;
 const DASHBOARD_URL = (process.env.DIGEST_DASHBOARD_URL || "http://localhost:3000").replace(/\/+$/, "");
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
@@ -199,6 +200,22 @@ async function main() {
     .orderBy(desc(news.score), desc(news.updatedAt))
     .limit(10);
   const items = [...recentItems, ...archiveItems];
+
+  // If a section has no fresh publication (for example while Zen is
+  // rate-limited), include a few latest already-published entries so the
+  // scheduled digest remains useful and all three sections stay visible.
+  const fallbackSections = ["ai-news", "science", "invention-tools"];
+  const present = new Set(items.map((item) => item.section));
+  for (const section of fallbackSections) {
+    if (present.has(section)) continue;
+    const fallback = await db.select({
+      id: news.id, title: news.title, originalUrl: news.originalUrl,
+      source: news.source, isScience: news.isScience, section: news.section,
+      sphereTags: news.sphereTags, summary: news.summary,
+    }).from(news).where(and(eq(news.status, "published"), eq(news.section, section)))
+      .orderBy(desc(news.updatedAt)).limit(FALLBACK_ITEMS_PER_SECTION);
+    items.push(...fallback);
+  }
 
   console.error(`[daily-digest] ${items.length} published in last ${WINDOW_HOURS}h`);
 
