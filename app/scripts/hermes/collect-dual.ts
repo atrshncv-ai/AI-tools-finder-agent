@@ -307,6 +307,8 @@ async function collectGithubTrending(): Promise<Candidate[]> {
  * Reddit is a discovery source only — social scoring happens via HN points.
  */
 async function collectReddit(): Promise<Candidate[]> {
+  console.error("[collect] reddit: disabled by policy");
+  return [];
   const subs = ["MachineLearning", "artificial", "LocalLLaMA"];
   const out: Candidate[] = [];
   for (const sub of subs) {

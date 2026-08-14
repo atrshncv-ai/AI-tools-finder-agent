@@ -23,7 +23,7 @@
  *   +20  High Altmetric score (>= 50) — proxy for active scientific discussion
  *   +15  Topic bonus: AI x chemistry/materials/biology/medicine/physics
  *
- * Gate: only articles with score > 65 reach the dashboard pipeline.
+ * Gate: only articles with score >= 50 reach the dashboard pipeline.
  * Daily cap: DISABLED by default (--daily-cap 0 = unlimited); a positive
  * value re-enables the legacy quota of N approved articles per UTC day.
  *
@@ -44,7 +44,7 @@ import { scoreYoutubeCandidate } from "./youtube-policy";
 const FETCH_TIMEOUT_MS = 20_000;
 const UA = process.env.AGENT_UA || "science-agent/2.0";
 
-const SCORE_GATE = 65; // strictly greater passes
+const SCORE_GATE = 50;
 const RELEASE_MAX_AGE_MS = 72 * 3600_000;
 
 // ─── Source tiers for Science scoring ───────────────────────────────────────
@@ -391,7 +391,9 @@ async function evaluate(article: {
 
   // Social traction
   if (hnPoints === null) hnPoints = await hackerNewsPoints(article.originalUrl, article.title);
-  if (redditUpsN === null) redditUpsN = await redditUps(article.originalUrl);
+  // Reddit is intentionally disabled: it is rate-limited and its votes are
+  // too noisy to be used as a quality signal.
+  redditUpsN = null;
 
   // Altmetric (science articles with DOI)
   let altmetric: number | null = null;
@@ -586,7 +588,7 @@ async function main() {
       .where(
         and(
           isNotNull(news.score),
-          gte(news.score, SCORE_GATE + 1),
+          gte(news.score, SCORE_GATE),
           inArray(news.status, ["pending", "summarized", "translated", "published"]),
           gte(news.createdAt, dayStart),
         ),
@@ -601,7 +603,7 @@ async function main() {
   let rejected = 0;
 
   for (const r of results) {
-    const passesGate = r.score > SCORE_GATE;
+    const passesGate = r.score >= SCORE_GATE;
     const approvedDecision = passesGate && slots > 0;
     const metrics = {
       ...r.metrics,
