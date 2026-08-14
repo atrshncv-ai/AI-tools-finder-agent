@@ -20,7 +20,7 @@
 import "dotenv/config";
 import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
-import { and, desc, eq, gte, isNull, not, inArray, lt } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, not, inArray, sql } from "drizzle-orm";
 
 const WINDOW_HOURS = 24;
 const MAX_ITEMS_PER_SECTION = 15;
@@ -186,7 +186,7 @@ async function main() {
       sphereTags: news.sphereTags,
     })
     .from(news)
-    .where(and(eq(news.status, "rejected"), gte(news.score, 50), isNull(news.digestArchiveSentAt), not(news.source.like("youtube-%")), not(inArray(news.source, ["reddit-artificial", "reddit-localllama", "reddit-machinelearning"]))))
+    .where(and(eq(news.status, "rejected"), gte(news.score, 50), isNull(news.digestArchiveSentAt), sql`${news.source} NOT LIKE 'youtube-%'`, not(inArray(news.source, ["reddit-artificial", "reddit-localllama", "reddit-machinelearning"]))))
     .orderBy(desc(news.score), desc(news.updatedAt))
     .limit(10);
   const items = [...recentItems, ...archiveItems];
