@@ -8,6 +8,7 @@ import NewsCard from "@/components/NewsCard";
 import { NewsListSkeleton } from "@/components/NewsCardSkeleton";
 import CategoryFilter from "@/components/CategoryFilter";
 import { Newspaper, Loader2 } from "lucide-react";
+import { getSectionQuery } from "@/lib/sectionFilters";
 
 const PAGE_SIZE = 20;
 
@@ -20,7 +21,7 @@ export default function Home() {
 
   const { data: newsData, isLoading, isFetching } = trpc.news.list.useQuery(
     {
-      isScience: false,
+      ...getSectionQuery("ai-news"),
       categorySlug: activeCategories.length > 0 ? activeCategories : undefined,
       limit: PAGE_SIZE,
       offset,

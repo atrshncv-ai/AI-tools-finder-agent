@@ -7,6 +7,7 @@ import NewsCard from "@/components/NewsCard";
 import { NewsListSkeleton } from "@/components/NewsCardSkeleton";
 import CategoryFilter from "@/components/CategoryFilter";
 import { FlaskConical, Loader2, Wrench, RefreshCw, XCircle, Trophy } from "lucide-react";
+import { getSectionQuery } from "@/lib/sectionFilters";
 
 const CLASSIFICATION_TYPES = [
   { value: "all", name: "Все типы", icon: null },
@@ -34,7 +35,7 @@ export default function Science() {
 
   const { data: newsData, isLoading, isFetching } = trpc.news.list.useQuery(
     {
-      isScience: true,
+      ...getSectionQuery("science"),
       categorySlug: activeFields.length > 0 ? activeFields : undefined,
       classificationType: activeType === "all" ? undefined : activeType as "new_tool" | "update" | "closure" | "achievement",
       limit: PAGE_SIZE,
