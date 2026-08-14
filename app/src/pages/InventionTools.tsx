@@ -1,5 +1,7 @@
+import { Link } from "react-router";
 import Header from "@/components/Header";
 import { trpc } from "@/providers/trpc";
+import { Wrench, ArrowRight, Globe } from "lucide-react";
 
 export default function InventionTools() {
   const { data: tools, isLoading } = trpc.news.inventionTools.useQuery({});
@@ -8,11 +10,135 @@ export default function InventionTools() {
     <div className="min-h-screen" style={{ backgroundColor: "var(--color-bg)" }}>
       <Header />
       <main className="mx-auto max-w-[900px] px-4 py-6">
-        <div className="mb-5">
-          <h1 className="text-2xl font-bold tracking-tight" style={{ color: "var(--color-text-heading)", fontFamily: "Manrope, sans-serif" }}>Инструменты для изобретений <span className="text-sm font-normal" style={{ color: "var(--color-text-muted)" }}>— {total} статей</span></h1>
-          <p className="mt-1 text-sm" style={{ color: "var(--color-text-muted)" }}>ИИ для создания материалов, молекул и научных открытий</p>
+        <div className="flex items-center justify-between mb-5">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight" style={{ color: "var(--color-text-heading)", fontFamily: "Manrope, sans-serif" }}>
+              Инструменты для изобретений
+            </h1>
+            <p className="mt-1 text-sm" style={{ color: "var(--color-text-muted)" }}>
+              ИИ для создания материалов, молекул и научных открытий
+            </p>
+          </div>
+          {total > 0 && (
+            <span className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+              {total} инструментов
+            </span>
+          )}
         </div>
-        {isLoading ? <div className="py-16 text-center text-sm" style={{ color: "var(--color-text-muted)" }}>Загрузка…</div> : <div className="flex flex-col gap-3">{(tools ?? []).map((tool) => <article key={tool.id} className="rounded-xl border p-5 transition-colors" style={{ backgroundColor: "var(--color-card)", borderColor: "var(--color-border)" }}><div className="flex items-start justify-between gap-4"><div><h2 className="text-lg font-semibold" style={{ color: "var(--color-text-heading)" }}>{tool.name}</h2><p className="mt-1 text-xs" style={{ color: "var(--color-text-muted)" }}>{tool.organization} · {tool.country}</p></div><span className="shrink-0 rounded-full px-2.5 py-1 text-xs" style={{ backgroundColor: "var(--color-tag-bg)", color: "var(--color-accent)" }}>{tool.accessStatus}</span></div><p className="mt-3 text-sm leading-6" style={{ color: "var(--color-text-body)" }}>{tool.description}</p><div className="mt-3 flex flex-wrap gap-1.5">{tool.spheres.map((sphere) => <span key={sphere} className="rounded-md px-2 py-1 text-xs" style={{ backgroundColor: "var(--color-tag-bg)", color: "var(--color-text-muted)" }}>{sphere}</span>)}</div><a className="mt-4 inline-block text-sm font-medium hover:underline" href={tool.officialUrl} target="_blank" rel="noreferrer" style={{ color: "var(--color-accent)" }}>Официальный сайт →</a></article>)}</div>}
+
+        {isLoading ? (
+          <div className="py-16 text-center text-sm" style={{ color: "var(--color-text-muted)" }}>
+            Загрузка…
+          </div>
+        ) : (tools ?? []).length > 0 ? (
+          <div className="flex flex-col gap-3">
+            {(tools ?? []).map((tool) => (
+              <Link
+                key={tool.id}
+                to={`/tools/${tool.id}`}
+                className="group block rounded-xl border transition-all duration-200 hover:-translate-y-px"
+                style={{ backgroundColor: "var(--color-card)", borderColor: "var(--color-border)" }}
+              >
+                <div className="flex">
+                  <div
+                    className="w-[3px] rounded-l-xl shrink-0 transition-opacity duration-300"
+                    style={{ backgroundColor: "var(--color-accent)" }}
+                  />
+                  <div className="flex-1 p-5">
+                    <div className="flex flex-wrap gap-1.5">
+                      {tool.kind && (
+                        <span
+                          className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium uppercase tracking-wider"
+                          style={{ backgroundColor: "var(--color-tag-bg)", color: "var(--color-tag-text)" }}
+                        >
+                          <Wrench className="w-3 h-3 mr-1" />
+                          {tool.kind}
+                        </span>
+                      )}
+                      {tool.accessStatus && (
+                        <span
+                          className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium"
+                          style={{ backgroundColor: "var(--color-search-bg)", color: "var(--color-text-muted)" }}
+                        >
+                          {tool.accessStatus}
+                        </span>
+                      )}
+                      {tool.spheres.slice(0, 2).map((sphere: string) => (
+                        <span
+                          key={sphere}
+                          className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium"
+                          style={{ backgroundColor: "var(--color-search-bg)", color: "var(--color-text-muted)" }}
+                        >
+                          {sphere}
+                        </span>
+                      ))}
+                    </div>
+
+                    <span className="mt-3 text-base leading-snug transition-colors block">
+                      {tool.name}
+                    </span>
+
+                    <p
+                      className="mt-2 text-sm leading-relaxed line-clamp-3"
+                      style={{ color: "var(--color-text-body)" }}
+                    >
+                      {tool.description}
+                    </p>
+
+                    <div className="flex items-center justify-between mt-4 text-[13px]" style={{ color: "var(--color-text-muted)" }}>
+                      <div className="flex items-center gap-2">
+                        {tool.organization && <span className="font-medium" style={{ color: "var(--color-text-body)" }}>{tool.organization}</span>}
+                        {tool.country && (
+                          <>
+                            <span>·</span>
+                            <span>{tool.country}</span>
+                          </>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            // Only open http(s) URLs — never javascript:/data: etc.
+                            if (!/^https?:\/\//i.test(tool.officialUrl)) return;
+                            window.open(tool.officialUrl, "_blank", "noopener,noreferrer");
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[13px] font-medium transition-colors hover:underline"
+                          style={{
+                            color: "var(--color-accent)",
+                            backgroundColor: "var(--color-tag-bg)",
+                          }}
+                          title="Открыть официальный сайт в новой вкладке"
+                        >
+                          <Globe className="w-3.5 h-3.5" />
+                          Сайт
+                        </button>
+                        <span
+                          className="flex items-center gap-1 text-[13px] font-medium transition-colors group-hover:underline"
+                          style={{ color: "var(--color-accent)" }}
+                        >
+                          Подробнее
+                          <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <Wrench className="w-12 h-12 mb-4" style={{ color: "var(--color-border)" }} />
+            <p className="text-base font-medium" style={{ color: "var(--color-text-muted)" }}>
+              Инструменты появятся здесь позже
+            </p>
+            <p className="text-sm mt-1" style={{ color: "var(--color-text-muted)" }}>
+              Каталог ИИ-инструментов для научных изобретений
+            </p>
+          </div>
+        )}
       </main>
     </div>
   );

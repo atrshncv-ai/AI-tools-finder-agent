@@ -5,6 +5,7 @@ import {
   findNewsById,
   findCategories,
   findInventionTools,
+  findInventionToolById,
   seedCategories,
 } from "./queries/news";
 import { translateArticle } from "./ai/zenClient";
@@ -94,4 +95,12 @@ export const newsRouter = createRouter({
   inventionTools: authedQuery
     .input(z.object({ sphere: z.string().optional(), limit: z.number().min(1).max(200).optional() }).optional())
     .query(({ input }) => findInventionTools(input)),
+
+  inventionToolById: authedQuery
+    .input(z.object({ id: z.number() }))
+    .query(async ({ input }) => {
+      const tool = await findInventionToolById(input.id);
+      if (!tool) throw new Error("Tool not found");
+      return tool;
+    }),
 });

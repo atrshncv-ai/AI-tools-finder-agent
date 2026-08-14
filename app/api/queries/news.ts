@@ -95,6 +95,12 @@ export async function findInventionTools(opts: { sphere?: string; limit?: number
   return rows.filter((tool) => tool.spheres.includes(opts.sphere!));
 }
 
+export async function findInventionToolById(id: number) {
+  const db = getDb();
+  const [row] = await db.select().from(inventionTools).where(eq(inventionTools.id, id)).limit(1);
+  return row ?? null;
+}
+
 export async function findNewsById(id: number) {
   const db = getDb();
   return db.query.news.findFirst({
