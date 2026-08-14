@@ -95,7 +95,7 @@ export default function Science() {
             className="text-2xl font-bold tracking-tight"
             style={{ color: "var(--color-text-heading)", fontFamily: "Manrope, sans-serif" }}
           >
-            ИИ-инструменты для научной работы
+            ИИ-инструменты для научной работы <span className="text-sm font-normal" style={{ color: "var(--color-text-muted)" }}>— {total} статей</span>
           </h1>
           <p className="mt-1 text-sm" style={{ color: "var(--color-text-muted)" }}>
             Новые платформы, открытия и достижения ИИ в научной сфере

@@ -81,7 +81,7 @@ export default function Home() {
                 className="text-2xl font-bold tracking-tight"
                 style={{ color: "var(--color-text-heading)", fontFamily: "Manrope, sans-serif" }}
               >
-                IT-инструменты
+                ИИ-новости
               </h1>
               {isAuthenticated && unreadCount > 0 && (
                 <span

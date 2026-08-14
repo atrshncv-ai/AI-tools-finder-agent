@@ -63,7 +63,7 @@ export default function Header() {
         <nav className="hidden md:flex items-center gap-1">
           <Link to="/" className={navLinkClass()} style={{ color: isHome ? "var(--color-accent)" : "var(--color-text-muted)", backgroundColor: isHome ? "var(--color-tag-bg)" : "transparent" }}>
             <span className="flex items-center gap-1.5">
-              Лента
+              ИИ-новости
               {isAuthenticated && unreadCount > 0 && (
                 <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[11px] font-semibold text-white" style={{ backgroundColor: "var(--color-accent)" }}>
                   {unreadCount}
@@ -182,7 +182,7 @@ export default function Header() {
             </form>
 
             <Link to="/" onClick={() => setMobileMenuOpen(false)} className="flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors" style={{ color: isHome ? "var(--color-accent)" : "var(--color-text-body)", backgroundColor: isHome ? "var(--color-tag-bg)" : "transparent" }}>
-              <span>Лента</span>
+              <span>ИИ-новости</span>
               {isAuthenticated && unreadCount > 0 && (
                 <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-semibold text-white" style={{ backgroundColor: "var(--color-accent)" }}>
                   {unreadCount}
