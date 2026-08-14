@@ -19,7 +19,7 @@
 
 import "dotenv/config";
 import { getDb } from "../../api/queries/connection";
-import { news } from "@db/schema";
+import { news, inventionTools } from "@db/schema";
 import { and, desc, eq, gte, isNull, not, inArray, sql } from "drizzle-orm";
 
 const WINDOW_HOURS = 24;
@@ -215,6 +215,31 @@ async function main() {
     }).from(news).where(and(eq(news.status, "published"), eq(news.section, section)))
       .orderBy(desc(news.updatedAt)).limit(FALLBACK_ITEMS_PER_SECTION);
     items.push(...fallback);
+  }
+
+  // The invention-tools section is a persistent catalog, not a news feed:
+  // when no fresh invention news exists (typical), surface the catalog
+  // cards themselves so the morning digest always carries all three sections.
+  if (!present.has("invention-tools")) {
+    const catalogTools = await db.select({
+      id: inventionTools.id,
+      name: inventionTools.name,
+      officialUrl: inventionTools.officialUrl,
+      organization: inventionTools.organization,
+      spheres: inventionTools.spheres,
+      description: inventionTools.description,
+      updatedAt: inventionTools.updatedAt,
+    }).from(inventionTools).orderBy(desc(inventionTools.updatedAt)).limit(FALLBACK_ITEMS_PER_SECTION);
+    items.push(...catalogTools.map((tool) => ({
+      id: tool.id,
+      title: tool.name,
+      originalUrl: tool.officialUrl,
+      source: tool.organization ?? null,
+      isScience: true,
+      section: "invention-tools" as const,
+      sphereTags: tool.spheres,
+      summary: tool.description,
+    })));
   }
 
   console.error(`[daily-digest] ${items.length} published in last ${WINDOW_HOURS}h`);
