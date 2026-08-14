@@ -127,7 +127,7 @@ export function buildDigest(items: DigestItem[]): string {
     ...formatSection("🛠", "ИИ-новости", tech, false),
     ...formatSection("🔬", "ИИ для науки", science, false),
     ...formatSection("🧪", "Инструменты для изобретений", inventions, false),
-    `📊 [Открыть дашборд](${DASHBOARD_URL})`,
+    `📊 Дашборд доступен по кнопке ниже`,
   ];
 
   return lines.join("\n");
@@ -143,6 +143,9 @@ async function sendTelegram(text: string, chatId: string): Promise<boolean> {
         text,
         parse_mode: "Markdown",
         disable_web_page_preview: true,
+        reply_markup: {
+          inline_keyboard: [[{ text: "📊 Открыть дашборд", url: DASHBOARD_URL }]],
+        },
       }),
       signal: AbortSignal.timeout(15_000),
     });
