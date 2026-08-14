@@ -1,11 +1,9 @@
 import Header from "@/components/Header";
 import { trpc } from "@/providers/trpc";
-import { getSectionQuery } from "@/lib/sectionFilters";
 
 export default function InventionTools() {
   const { data: tools, isLoading } = trpc.news.inventionTools.useQuery({});
-  const { data: newsData } = trpc.news.list.useQuery({ ...getSectionQuery("invention-tools"), limit: 1, offset: 0 });
-  const total = newsData?.total ?? 0;
+  const total = tools?.length ?? 0;
   return (
     <div className="min-h-screen" style={{ backgroundColor: "var(--color-bg)" }}>
       <Header />
