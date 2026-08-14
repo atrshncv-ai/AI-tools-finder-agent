@@ -103,7 +103,6 @@ export function paymentReminderText(dueAt = PAYMENT_DUE_AT): string {
 }
 
 export function buildDigest(items: DigestItem[]): string {
-  const videos = items.filter((i) => i.source?.startsWith("youtube-"));
   const science = items.filter((i) => i.section === "science" || (!i.section && i.isScience));
   const inventions = items.filter((i) => i.section === "invention-tools");
   const tech = items.filter((i) => i.section === "ai-news" || (!i.section && !i.isScience));
@@ -121,7 +120,6 @@ export function buildDigest(items: DigestItem[]): string {
     "",
     `За последние ${WINDOW_HOURS} часа опубликовано: *${items.length}*`,
     "",
-    ...formatSection("🎬", "Видео с YouTube", videos, true),
     ...formatSection("🛠", "ИИ-новости", tech, false),
     ...formatSection("🔬", "Наука", science, false),
     ...formatSection("🧪", "Инструменты для изобретений", inventions, false),
