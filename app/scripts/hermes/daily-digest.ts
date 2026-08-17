@@ -19,7 +19,7 @@
 
 import "dotenv/config";
 import { getDb } from "../../api/queries/connection";
-import { news, inventionTools } from "@db/schema";
+import { news } from "@db/schema";
 import { and, desc, eq, gte, isNull, not, inArray, sql } from "drizzle-orm";
 
 const WINDOW_HOURS = 24;
@@ -204,7 +204,7 @@ async function main() {
   // If a section has no fresh publication (for example while Zen is
   // rate-limited), include a few latest already-published entries so the
   // scheduled digest remains useful and all three sections stay visible.
-  const fallbackSections = ["ai-news", "science", "invention-tools"];
+  const fallbackSections = ["ai-news", "science"];
   const present = new Set(items.map((item) => item.section));
   for (const section of fallbackSections) {
     if (present.has(section)) continue;
@@ -217,30 +217,9 @@ async function main() {
     items.push(...fallback);
   }
 
-  // The invention-tools section is a persistent catalog, not a news feed:
-  // when no fresh invention news exists (typical), surface the catalog
-  // cards themselves so the morning digest always carries all three sections.
-  if (!present.has("invention-tools")) {
-    const catalogTools = await db.select({
-      id: inventionTools.id,
-      name: inventionTools.name,
-      officialUrl: inventionTools.officialUrl,
-      organization: inventionTools.organization,
-      spheres: inventionTools.spheres,
-      description: inventionTools.description,
-      updatedAt: inventionTools.updatedAt,
-    }).from(inventionTools).orderBy(desc(inventionTools.updatedAt)).limit(FALLBACK_ITEMS_PER_SECTION);
-    items.push(...catalogTools.map((tool) => ({
-      id: tool.id,
-      title: tool.name,
-      originalUrl: tool.officialUrl,
-      source: tool.organization ?? null,
-      isScience: true,
-      section: "invention-tools" as const,
-      sphereTags: tool.spheres,
-      summary: tool.description,
-    })));
-  }
+  // NOTE: invention-tools section has no fallback from the catalog.
+  // If no fresh invention news exists the section simply does not appear
+  // in the digest (per user requirement: only send sections with new items).
 
   console.error(`[daily-digest] ${items.length} published in last ${WINDOW_HOURS}h`);
 
