@@ -17,6 +17,7 @@ import { toast } from "sonner";
 
 export default function ToolDetail() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const toolId = Number(id);
 
   const { data: tool, isLoading } = trpc.news.inventionToolById.useQuery(
