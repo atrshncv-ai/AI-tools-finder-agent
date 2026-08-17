@@ -25,7 +25,7 @@ export const newsRouter = createRouter({
           classificationType: z.enum(["new_tool", "update", "closure", "achievement"]).optional(),
           search: z.string().optional(),
           freshness: z.enum(["all", "day", "3days", "week", "month"]).optional(),
-          limit: z.number().min(1).max(100).optional(),
+          limit: z.number().min(1).max(300).optional(),
           offset: z.number().min(0).optional(),
         })
         .optional(),
