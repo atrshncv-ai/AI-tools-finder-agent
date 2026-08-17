@@ -31,6 +31,7 @@ import { listChannelVideos } from "./youtube-transcript";
 import { YOUTUBE_SOURCES } from "./youtube-sources";
 import { ssrfCheck } from "../../api/lib/url-safety";
 import { classifyScience } from "../ensure-science-categories";
+import { classifyInvention } from "../../api/lib/invention-classify";
 
 const FETCH_TIMEOUT_MS = 20_000;
 const HN_MIN_POINTS = 100;
@@ -488,6 +489,16 @@ async function main() {
         }
       }
 
+      // Classify into sections: invention-tools / science / ai-news.
+      // classifyInvention checks if the article describes a discovery /
+      // invention tool and assigns sphere tags from the catalog.
+      const invention = classifyInvention(c.title);
+      const section = invention.isInvention
+        ? "invention-tools"
+        : c.isScience
+          ? "science"
+          : "ai-news";
+
       const rows = await db
         .insert(news)
         .values({
@@ -500,6 +511,8 @@ async function main() {
           language: c.language,
           isScience: c.isScience,
           scienceField: c.scienceField,
+          section,
+          sphereTags: invention.spheres,
           categoryId,
           categorySlug,
           status: "pending",
