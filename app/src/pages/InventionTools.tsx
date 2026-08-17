@@ -123,7 +123,13 @@ export default function InventionTools() {
 
                     <div className="flex items-center justify-between mt-4 text-[13px]" style={{ color: "var(--color-text-muted)" }}>
                       <div className="flex items-center gap-2">
-                        {tool.organization && <span className="font-medium" style={{ color: "var(--color-text-body)" }}>{tool.organization}</span>}
+                        <span>{new Date(tool.updatedAt).toLocaleDateString("ru-RU")}</span>
+                        {tool.organization && (
+                          <>
+                            <span>·</span>
+                            <span className="font-medium" style={{ color: "var(--color-text-body)" }}>{tool.organization}</span>
+                          </>
+                        )}
                         {tool.country && (
                           <>
                             <span>·</span>
