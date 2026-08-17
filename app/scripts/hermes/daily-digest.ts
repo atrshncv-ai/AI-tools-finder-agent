@@ -18,6 +18,7 @@
  */
 
 import "dotenv/config";
+import { SPHERE_NAMES } from "../src/lib/sphereNames";
 import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
 import { and, desc, eq, gte, isNull, not, inArray, sql } from "drizzle-orm";
@@ -71,7 +72,7 @@ function formatSection(emoji: string, name: string, items: DigestItem[], withCha
   for (const item of items.slice(0, MAX_ITEMS_PER_SECTION)) {
     const via = withChannel && item.source ? ` — _${esc(channelName(item.source))}_` : "";
     const description = item.summary ? ` — ${esc(item.summary.replace(/\s+/g, " ").trim().slice(0, 180))}` : "";
-    const tags = item.sphereTags?.length ? item.sphereTags.slice(0, 3).map(t => esc(t)).join(", ") : "";
+    const tags = item.sphereTags?.length ? item.sphereTags.slice(0, 3).map(t => esc(SPHERE_NAMES[t] || t)).join(", ") : "";
     lines.push(tags ? `▫️ [${esc(item.title)}](${item.originalUrl}) — ${tags}` : `▫️ [${esc(item.title)}](${item.originalUrl})${description}${via}`);
   }
   if (items.length > MAX_ITEMS_PER_SECTION) {

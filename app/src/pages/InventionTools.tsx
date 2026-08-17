@@ -4,6 +4,7 @@ import Header from "@/components/Header";
 import { trpc } from "@/providers/trpc";
 import { Wrench, ArrowRight, Globe } from "lucide-react";
 import CategoryFilter from "@/components/CategoryFilter";
+import { SPHERE_NAMES } from "@/lib/sphereNames";
 import FreshnessFilter, { type FreshnessKey } from "@/components/FreshnessFilter";
 
 export default function InventionTools() {
@@ -54,7 +55,7 @@ export default function InventionTools() {
     return true;
   });
 
-  const sphereOptions = (spheresData ?? []).map((s) => ({ slug: s, name: s }));
+  const sphereOptions = (spheresData ?? []).map((s) => ({ slug: s, name: SPHERE_NAMES[s] || s }));
   const visible = freshness === "all"
     ? merged
     : merged.filter((tool) => {
