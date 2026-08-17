@@ -16,10 +16,48 @@ export default function InventionTools() {
     limit: 300,
   });
 
+  // Also fetch news articles classified as invention-tools
+  const { data: newsData } = trpc.news.list.useQuery({
+    section: "invention-tools",
+    limit: 300,
+  });
+
+  // Merge catalog tools + news articles, deduplicate by title
+  const newsItems = (newsData?.items ?? []).map((n) => ({
+    id: n.id,
+    name: n.title,
+    organization: n.source ?? "",
+    country: "",
+    kind: "news",
+    spheres: n.sphereTags ?? [],
+    accessStatus: "published",
+    description: n.summary ?? "",
+    officialUrl: n.originalUrl ?? "",
+    docsUrl: "",
+    lastVerifiedAt: n.updatedAt,
+    updatedAt: n.updatedAt,
+    createdAt: n.createdAt,
+    _source: "news" as const,
+  }));
+
+  const catalogItems = (tools ?? []).map((t) => ({
+    ...t,
+    _source: "catalog" as const,
+  }));
+
+  const allItems = [...catalogItems, ...newsItems];
+  const seen = new Set<string>();
+  const merged = allItems.filter((item) => {
+    const key = item.name.toLowerCase().trim();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
   const sphereOptions = (spheresData ?? []).map((s) => ({ slug: s, name: s }));
   const visible = freshness === "all"
-    ? (tools ?? [])
-    : (tools ?? []).filter((tool) => {
+    ? merged
+    : merged.filter((tool) => {
         const ageMs = Date.now() - new Date(tool.updatedAt).getTime();
         const hours = freshness === "day" ? 24 : freshness === "3days" ? 72 : freshness === "week" ? 168 : 720;
         return ageMs <= hours * 3600_000;
