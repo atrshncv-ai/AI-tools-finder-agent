@@ -1,4 +1,4 @@
-import { useParams, Link } from "react-router";
+import { useParams, Link, useNavigate } from "react-router";
 import { trpc } from "@/providers/trpc";
 import Header from "@/components/Header";
 import {
@@ -56,14 +56,14 @@ export default function ToolDetail() {
         <Header />
         <div className="mx-auto max-w-[900px] px-4 py-12 text-center">
           <p style={{ color: "var(--color-text-muted)" }}>Инструмент не найден</p>
-          <Link
-            to="/inventions"
+          <button
+            onClick={() => navigate(-1)}
             className="inline-flex items-center gap-1.5 mt-4 text-sm font-medium"
             style={{ color: "var(--color-accent)" }}
           >
             <ArrowLeft className="w-4 h-4" />
-            Вернуться к инструментам
-          </Link>
+            Назад
+          </button>
         </div>
       </div>
     );
@@ -216,14 +216,14 @@ export default function ToolDetail() {
 
         {/* Navigation */}
         <div className="flex items-center justify-between mt-6 pt-6 border-t" style={{ borderColor: "var(--color-border)" }}>
-          <Link
-            to="/inventions"
+          <button
+            onClick={() => navigate(-1)}
             className="inline-flex items-center gap-1.5 text-sm font-medium transition-colors hover:underline"
             style={{ color: "var(--color-accent)" }}
           >
             <ArrowLeft className="w-4 h-4" />
-            Ко всем инструментам
-          </Link>
+            Назад
+          </button>
           <a
             href={tool.officialUrl}
             target="_blank"

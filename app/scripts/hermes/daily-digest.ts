@@ -71,7 +71,8 @@ function formatSection(emoji: string, name: string, items: DigestItem[], withCha
   for (const item of items.slice(0, MAX_ITEMS_PER_SECTION)) {
     const via = withChannel && item.source ? ` — _${esc(channelName(item.source))}_` : "";
     const description = item.summary ? ` — ${esc(item.summary.replace(/\s+/g, " ").trim().slice(0, 180))}` : "";
-    lines.push(`▫️ [${esc(item.title)}](${item.originalUrl})${description}${via}`);
+    const tags = item.sphereTags?.length ? ` · _${esc(item.sphereTags.slice(0, 3).join(", "))}_` : "";
+    lines.push(`▫️ [${esc(item.title)}](${item.originalUrl})${description}${tags}${via}`);
   }
   if (items.length > MAX_ITEMS_PER_SECTION) {
     const themes = [...new Set(items.slice(MAX_ITEMS_PER_SECTION).flatMap((item) => item.sphereTags ?? []))].slice(0, 4);

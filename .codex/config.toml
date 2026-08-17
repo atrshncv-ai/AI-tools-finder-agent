@@ -1,0 +1,128 @@
+[mcp_servers.aws]
+command = "npx"
+args = [
+    "-y",
+    "@modelcontextprotocol/server-aws",
+]
+env_vars = [
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_REGION",
+]
+
+[mcp_servers.brave-search]
+command = "npx"
+args = [
+    "-y",
+    "@modelcontextprotocol/server-brave-search",
+]
+env_vars = ["BRAVE_API_KEY"]
+
+[mcp_servers.cloudflare]
+command = "npx"
+args = [
+    "-y",
+    "@cloudflare/mcp-server-cloudflare",
+]
+env_vars = [
+    "CLOUDFLARE_API_TOKEN",
+    "CLOUDFLARE_ACCOUNT_ID",
+]
+
+[mcp_servers.context7]
+command = "npx"
+args = [
+    "-y",
+    "@upstash/context7-mcp@latest",
+]
+env_vars = ["CONTEXT7_API_KEY"]
+
+[mcp_servers.docker]
+command = "npx"
+args = [
+    "-y",
+    "@modelcontextprotocol/server-docker",
+]
+
+[mcp_servers.linear]
+command = "npx"
+args = [
+    "-y",
+    "@linear/mcp-server",
+]
+env_vars = ["LINEAR_API_KEY"]
+
+[mcp_servers.memory]
+command = "npx"
+args = [
+    "-y",
+    "@modelcontextprotocol/server-memory",
+]
+
+[mcp_servers.netlify]
+command = "npx"
+args = [
+    "-y",
+    "@netlify/mcp-server",
+]
+env_vars = ["NETLIFY_AUTH_TOKEN"]
+
+[mcp_servers.notion]
+command = "npx"
+args = [
+    "-y",
+    "@anthropic-ai/notion-mcp",
+]
+env_vars = ["NOTION_API_KEY"]
+
+[mcp_servers.playwright]
+command = "npx"
+args = [
+    "-y",
+    "@anthropic-ai/playwright-mcp",
+]
+
+[mcp_servers.posthog]
+command = "npx"
+args = [
+    "-y",
+    "@posthog/mcp-server",
+]
+env_vars = [
+    "POSTHOG_API_KEY",
+    "POSTHOG_HOST",
+]
+
+[mcp_servers.puppeteer]
+command = "npx"
+args = [
+    "-y",
+    "@anthropic-ai/puppeteer",
+]
+
+[mcp_servers.sentry]
+command = "npx"
+args = [
+    "-y",
+    "@sentry/mcp-server",
+]
+env_vars = [
+    "SENTRY_AUTH_TOKEN",
+    "SENTRY_ORG",
+    "SENTRY_PROJECT",
+]
+
+[mcp_servers.sequential-thinking]
+command = "npx"
+args = [
+    "-y",
+    "@modelcontextprotocol/server-sequentialthinking",
+]
+
+[mcp_servers.vercel]
+command = "npx"
+args = [
+    "-y",
+    "@vercel/mcp-server",
+]
+env_vars = ["VERCEL_TOKEN"]

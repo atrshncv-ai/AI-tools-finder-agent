@@ -123,14 +123,14 @@ export default function NewsDetail() {
         <Header />
         <div className="mx-auto max-w-[900px] px-4 py-12 text-center">
           <p style={{ color: "var(--color-text-muted)" }}>Новость не найдена</p>
-          <Link
-            to="/"
+          <button
+            onClick={() => navigate(-1)}
             className="inline-flex items-center gap-1.5 mt-4 text-sm font-medium"
             style={{ color: "var(--color-accent)" }}
           >
             <ArrowLeft className="w-4 h-4" />
-            Вернуться к ленте
-          </Link>
+            Назад
+          </button>
         </div>
       </div>
     );
