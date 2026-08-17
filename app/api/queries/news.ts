@@ -95,7 +95,7 @@ export async function findAllNews(opts: {
     .from(news)
     .leftJoin(categories, eq(news.categoryId, categories.id))
     .where(where)
-    .orderBy(desc(news.publishedAt))
+    .orderBy(desc(news.updatedAt))
     .limit(limit)
     .offset(offset);
 
