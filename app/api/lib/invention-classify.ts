@@ -25,17 +25,23 @@ const INVENTION_TERMS = new RegExp(
     "докинг",
     "электронная структур",
     "DFT|density functional|квантовая химия",
-    // Biology & proteins
-    "протеин|бел(?:ков|ок)",
-    "геном(?:ик|ика)",
+    // Biology & proteins (both RU and EN)
+    "протеин|protein",
+    "геном(?:ик|ика)|genome",
     "стволовые клетк",
-    "белков(?:ая|ую|ой) структур",
-    "фолдинг|сворачив",
+    "белков(?:ая|ую|ой) структур|protein structure",
+    "фолдинг|сворачив|folding",
+    "peptide|пептид",
+    // Gene editing & CRISPR
+    "CRISPR|crispr",
+    "base editing|редактирование (?:ген|баз|ДНК|DNA)",
+    "gene editing|генное редактирован",
+    "DNA|ДНК",
     // Medicine
     "лекарственн|антител|вакцин|терапи(?:я|ю|и|ческ)|клиническ",
     // Materials & energy
     "батаре[яйю]|аккумулятор|электрод|энергонакопит",
-    "перовскит|алloy|сплав",
+    "перовскит|alloy|сплав",
     "суперпроводник",
     // Climate & weather
     "климат(?:ическ|олог|а)|прогноз(?:ирование)? погоды|атмосфер",
@@ -53,12 +59,15 @@ const INVENTION_TERMS = new RegExp(
     // Engineering & robotics
     "робот(?:отехник|отехн|otechnik|остроение)|манипулятор",
     "автономн(?:ый|ого|ая|ых)|самостоятельн",
+    // Drug discovery & design
+    "drug discover|drug design|лекарственн(?:ый|ое) дизайн",
+    // AI tools for science
+    "AlphaFold|RoseTTAFold|DiffDock|ProteinMPNN|ESMFold",
+    "nanopore|нанопор",
     // Generic discovery keywords
     "discover(?:ed|ies)?|de novo|high-throughput|screening",
     "materials? design|materials? discovery",
     "retrosynthesis|autonomous lab",
-    "drug discover(?:ed|ies)?|drug design",
-    "AlphaFold|RoseTTAFold|DiffDock|ProteinMPNN|ESMFold",
   ].join("|"),
   "i",
 );
@@ -68,8 +77,8 @@ const INVENTION_TERMS = new RegExp(
 
 const SPHERES: Array<[string, RegExp]> = [
   ["chemistry", /хими|молекул|катализ|синтез|chemistry|chemical|retrosynthes|docking|drug design|pharm|pharmac/i],
-  ["materials", /материал|кристалл|сплав|alloy|battery|batteries|supercconduct|perovskit|alloy|material(?:s)? (?:design|discover)/i],
-  ["biology", /биолог|геном|протеин|бел(?:ок|ков|ковое)|protein|genome|biolog|CRISPR|cell|клетк/i],
+  ["materials", /материал|кристалл|сплав|supercconduct|perovskit|alloy|material(?:s)? (?:design|discover)|nanopore|membran|cucurbituril/i],
+  ["biology", /биолог|геном|протеин|бел(?:ок|ков|ковое)|protein|genome|biolog|CRISPR|cell|клетк|peptide|пептид|epigenet|DNA|ДНК|gene/i],
   ["medicine", /медицинск|лекарств|вакцин|терапи|клинич|medicine|drug discover|antibod|antibod|immunotherapy|oncolog/i],
   ["physics", /физик|quantum (?:computing|bit|algorithm)|квантов(?:ый|ая)|supercconduct|astrophysic|physics|DFT|density functional/i],
   ["climate", /климат|погод|atmospher|weather|climate|atmospher|greenhouse|carbon seques/i],
