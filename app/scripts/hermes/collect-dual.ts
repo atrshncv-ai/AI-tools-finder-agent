@@ -31,7 +31,7 @@ import { listChannelVideos } from "./youtube-transcript";
 import { YOUTUBE_SOURCES } from "./youtube-sources";
 import { ssrfCheck } from "../../api/lib/url-safety";
 import { classifyScience } from "../ensure-science-categories";
-import { classifyInvention } from "../../api/lib/invention-classify";
+import { classifyInvention, buildInventionContext } from "../../api/lib/invention-classify";
 
 const FETCH_TIMEOUT_MS = 20_000;
 const HN_MIN_POINTS = 100;
@@ -64,6 +64,8 @@ interface Candidate {
   language: string;
   isScience: boolean;
   scienceField: string | null;
+  /** RSS/YouTube description or abstract, used for richer invention classification. */
+  description?: string | null;
   /** Pre-collected hard metrics from the source API (if available). */
   metrics: Record<string, unknown>;
 }
@@ -122,6 +124,7 @@ function fromRssItem(
   const title = (item.title || "").trim();
   const url = (item.link || "").trim();
   if (!title || !url || !url.startsWith("http")) return null;
+  const description = (item.summary || "").trim();
   return {
     title,
     url,
@@ -130,7 +133,8 @@ function fromRssItem(
     language: src.language,
     isScience: src.isScience,
     scienceField: src.scienceField,
-    metrics: { origin: "rss" },
+    description,
+    metrics: { origin: "rss", hasDescription: description.length > 0 },
   };
 }
 
@@ -341,7 +345,9 @@ async function collectReddit(): Promise<Candidate[]> {
 
 // ─── Science stream ──────────────────────────────────────────────────────────
 
-const SCIENCE_FEEDS = [
+type ScienceFeed = { url: string; name: string; field: string; inventionOnly?: boolean };
+
+const SCIENCE_FEEDS: ScienceFeed[] = [
   { url: "https://www.nature.com/nature.rss", name: "nature", field: "multidisciplinary" },
   { url: "https://www.science.org/rss/news_current.xml", name: "science", field: "multidisciplinary" },
   // NOTE: Lancet killed its own RSS feeds (410 Gone) — collected via PubMed eutils below.
@@ -351,6 +357,20 @@ const SCIENCE_FEEDS = [
     url: "http://export.arxiv.org/api/query?search_query=all:%22artificial+intelligence%22&sortBy=submittedDate&sortOrder=descending&max_results=25",
     name: "arxiv",
     field: "computer-science",
+  },
+  // No-cost arXiv category feeds for AI-for-science tools / emerging tech.
+  // Filtered by invention keywords so generic AI papers do not flood the queue.
+  {
+    url: "http://export.arxiv.org/api/query?search_query=cat:cs.AI&sortBy=submittedDate&sortOrder=descending&max_results=20",
+    name: "arxiv-cs-ai",
+    field: "computer-science",
+    inventionOnly: true,
+  },
+  {
+    url: "http://export.arxiv.org/api/query?search_query=cat:cs.ET&sortBy=submittedDate&sortOrder=descending&max_results=20",
+    name: "arxiv-cs-et",
+    field: "computer-science",
+    inventionOnly: true,
   },
   { url: "https://naked-science.ru/?feed=rss2", name: "naked-science", field: "multidisciplinary" },
 ];
@@ -404,7 +424,17 @@ async function collectScience(): Promise<Candidate[]> {
           scienceField: feed.field,
           language: feed.name === "naked-science" ? "ru" : "en",
         });
-        if (c) out.push(c);
+        if (!c) continue;
+        // Keyword filter for arXiv category feeds: only keep items that look
+        // like AI-for-science tools or discoveries. Generic AI theory papers
+        // are dropped here to avoid flooding the queue.
+        if (feed.inventionOnly) {
+          const ctx = buildInventionContext(c.title, c.description);
+          if (!classifyInvention(ctx).isInvention) {
+            continue;
+          }
+        }
+        out.push(c);
       }
       console.error(`[collect] ${feed.name}: ${parsed.items.length} items`);
     } catch (err) {
@@ -492,7 +522,8 @@ async function main() {
       // Classify into sections: invention-tools / science / ai-news.
       // classifyInvention checks if the article describes a discovery /
       // invention tool and assigns sphere tags from the catalog.
-      const invention = classifyInvention(c.title);
+      // Use title + description to reduce false negatives on sparse titles.
+      const invention = classifyInvention(buildInventionContext(c.title, c.description));
       const section = invention.isInvention
         ? "invention-tools"
         : c.isScience

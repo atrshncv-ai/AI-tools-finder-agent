@@ -5,7 +5,7 @@ describe("classifyInvention", () => {
   it("routes material discovery to inventions and keeps multiple sphere tags", () => {
     const result = classifyInvention("ИИ открыл новый материал и предложил химический синтез");
     expect(result.section).toBe("invention-tools");
-    expect(result.sphereTags).toEqual(expect.arrayContaining(["materials", "chemistry"]));
+    expect(result.sphereTags).toEqual(expect.arrayContaining(["материалы", "химия"]));
   });
 
   it("leaves ordinary AI news in the generic section", () => {

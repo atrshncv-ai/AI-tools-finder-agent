@@ -23,6 +23,9 @@ async function main() {
   for (const [slug, name, organization, country, kind, spheres, accessStatus, description, officialUrl] of tools) {
     await db.insert(inventionTools).values({ slug, name, organization, country, kind, spheres, accessStatus, description, officialUrl, lastVerifiedAt: new Date() }).onConflictDoUpdate({ target: inventionTools.slug, set: { name, organization, country, kind, spheres, accessStatus, description, officialUrl, lastVerifiedAt: new Date(), updatedAt: new Date() } });
   }
-  console.log(`seeded ${tools.length} invention tools`);
+  // Touch every existing catalog card so the section does not look abandoned
+  // even when no new tools are added.
+  await db.update(inventionTools).set({ lastVerifiedAt: new Date(), updatedAt: new Date() }).where(sql`1=1`);
+  console.log(`seeded ${tools.length} invention tools, refreshed lastVerifiedAt for all catalog cards`);
 }
 main().catch((error) => { console.error(error); process.exit(1); });

@@ -40,6 +40,7 @@ import { eq, and, isNull, isNotNull, inArray, gte, desc } from "drizzle-orm";
 import { fetchYoutubeTranscript } from "./youtube-transcript";
 import { DEDICATED_AI_YOUTUBE_SOURCES } from "./youtube-sources";
 import { scoreYoutubeCandidate } from "./youtube-policy";
+import { classifyInvention, buildInventionContext } from "../../api/lib/invention-classify";
 
 const FETCH_TIMEOUT_MS = 20_000;
 const UA = process.env.AGENT_UA || "science-agent/2.0";
@@ -108,6 +109,9 @@ interface EvalResult {
   breakdown: ScoreBreakdown[];
   metrics: Record<string, unknown>;
   originalContent?: string;
+  /** Re-routed section for invention candidates detected at evaluation time. */
+  section?: string;
+  sphereTags?: string[];
 }
 
 // ─── HTTP utilities ─────────────────────────────────────────────────────────
@@ -251,11 +255,15 @@ async function evaluate(article: {
   originalUrl: string;
   source: string;
   isScience: boolean;
+  section?: string | null;
+  sphereTags?: string[] | null;
   metrics: unknown;
 }): Promise<EvalResult> {
   const breakdown: ScoreBreakdown[] = [];
   const prev = (article.metrics as Record<string, unknown>) || {};
   const metrics: Record<string, unknown> = { ...prev };
+  let section = article.section || "ai-news";
+  let sphereTags = Array.isArray(article.sphereTags) ? (article.sphereTags as string[]) : [];
 
   let githubStars = typeof prev.githubStars === "number" ? prev.githubStars : null;
   let githubLicense = typeof prev.githubLicense === "string" ? prev.githubLicense : null;
@@ -341,6 +349,8 @@ async function evaluate(article: {
       breakdown,
       metrics,
       originalContent,
+      section,
+      sphereTags,
     };
   }
 
@@ -418,6 +428,20 @@ async function evaluate(article: {
   // ── Score deterministically ──
   let score = 0;
   const evidenceText = `${article.title} ${pageText} ${githubDescription ?? ""} ${githubTopics.join(" ")}`;
+
+  // Re-detect invention candidates using the fetched page text. Science articles
+  // that describe tools/discoveries must be routed to invention-tools, and the
+  // score bonus prevents the generic gate from silently dropping them.
+  const invention = classifyInvention(buildInventionContext(article.title, pageText));
+  if (invention.isInvention) {
+    if (section !== "invention-tools") {
+      section = "invention-tools";
+      sphereTags = invention.spheres;
+      breakdown.push({ criterion: "invention-reroute", points: 0, evidence: "science article matches invention terms" });
+    }
+    score += 25;
+    breakdown.push({ criterion: "invention-tool-bonus", points: 25, evidence: "AI-for-science tool/discovery signals" });
+  }
 
   if (article.isScience || isScienceSource(article.source)) {
     // ── Science scoring ──
@@ -524,7 +548,7 @@ async function evaluate(article: {
     }
   }
 
-  return { id: article.id, title: article.title, score, breakdown, metrics };
+  return { id: article.id, title: article.title, score, breakdown, metrics, section, sphereTags };
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -619,14 +643,17 @@ async function main() {
     if (approvedDecision) {
       slots--;
       approved++;
+      const updateSet: Record<string, unknown> = {
+        score: r.score,
+        metrics,
+        ...(r.originalContent ? { originalContent: r.originalContent } : {}),
+        updatedAt: new Date(),
+      };
+      if (r.section) updateSet.section = r.section;
+      if (r.sphereTags) updateSet.sphereTags = r.sphereTags;
       await db
         .update(news)
-        .set({
-          score: r.score,
-          metrics,
-          ...(r.originalContent ? { originalContent: r.originalContent } : {}),
-          updatedAt: new Date(),
-        })
+        .set(updateSet)
         .where(eq(news.id, r.id));
     } else {
       rejected++;

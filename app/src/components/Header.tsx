@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/hooks/useTheme";
+import { useUnreadCounts } from "@/hooks/useUnreadCounts";
 
 export default function Header() {
   const location = useLocation();
@@ -18,20 +19,20 @@ export default function Header() {
     enabled: isAuthenticated,
   });
 
-  const { data: unreadData } = trpc.readStatus.unreadCount.useQuery(undefined, {
-    enabled: isAuthenticated,
-  });
+  const unreadCounts = useUnreadCounts();
 
   const markAllRead = trpc.readStatus.markAllRead.useMutation({
     onSuccess: () => {
       utils.readStatus.unreadCount.invalidate();
+      utils.readStatus.unreadCountBySection.invalidate();
       utils.readStatus.list.invalidate();
     },
   });
 
   const utils = trpc.useUtils();
 
-  const unreadCount = unreadData?.count ?? 0;
+  const unreadCount = unreadCounts.aiNews;
+  const totalUnread = unreadCount + unreadCounts.science + unreadCounts.inventionTools;
 
   const isHome = location.pathname === "/";
   const isScience = location.pathname === "/science";
@@ -71,7 +72,7 @@ export default function Header() {
               )}
             </span>
           </Link>
-          {isAuthenticated && unreadCount > 0 && (
+          {isAuthenticated && totalUnread > 0 && (
             <button
               onClick={() => markAllRead.mutate()}
               className="flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors"
@@ -82,10 +83,24 @@ export default function Header() {
             </button>
           )}
           <Link to="/science" className={navLinkClass()} style={{ color: isScience ? "var(--color-accent)" : "var(--color-text-muted)", backgroundColor: isScience ? "var(--color-tag-bg)" : "transparent" }}>
-            ИИ для науки
+            <span className="flex items-center gap-1.5">
+              ИИ для науки
+              {isAuthenticated && unreadCounts.science > 0 && (
+                <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[11px] font-semibold text-white" style={{ backgroundColor: "var(--color-accent)" }}>
+                  {unreadCounts.science}
+                </span>
+              )}
+            </span>
           </Link>
           <Link to="/inventions" className={navLinkClass()} style={{ color: isInventions ? "var(--color-accent)" : "var(--color-text-muted)", backgroundColor: isInventions ? "var(--color-tag-bg)" : "transparent" }}>
-            Инструменты для изобретений
+            <span className="flex items-center gap-1.5">
+              Инструменты для изобретений
+              {isAuthenticated && unreadCounts.inventionTools > 0 && (
+                <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[11px] font-semibold text-white" style={{ backgroundColor: "var(--color-accent)" }}>
+                  {unreadCounts.inventionTools}
+                </span>
+              )}
+            </span>
           </Link>
           {isAuthenticated && (
             <Link to="/favorites" className={navLinkClass()} style={{ color: isFavorites ? "var(--color-accent)" : "var(--color-text-muted)", backgroundColor: isFavorites ? "var(--color-tag-bg)" : "transparent" }}>
@@ -190,8 +205,22 @@ export default function Header() {
               )}
             </Link>
 
-            <Link to="/science" onClick={() => setMobileMenuOpen(false)} className="flex items-center px-3 py-2.5 rounded-lg text-sm font-medium transition-colors" style={{ color: isScience ? "var(--color-accent)" : "var(--color-text-body)", backgroundColor: isScience ? "var(--color-tag-bg)" : "transparent" }}>
-              ИИ для науки
+            <Link to="/science" onClick={() => setMobileMenuOpen(false)} className="flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors" style={{ color: isScience ? "var(--color-accent)" : "var(--color-text-body)", backgroundColor: isScience ? "var(--color-tag-bg)" : "transparent" }}>
+              <span>ИИ для науки</span>
+              {isAuthenticated && unreadCounts.science > 0 && (
+                <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-semibold text-white" style={{ backgroundColor: "var(--color-accent)" }}>
+                  {unreadCounts.science}
+                </span>
+              )}
+            </Link>
+
+            <Link to="/inventions" onClick={() => setMobileMenuOpen(false)} className="flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors" style={{ color: isInventions ? "var(--color-accent)" : "var(--color-text-body)", backgroundColor: isInventions ? "var(--color-tag-bg)" : "transparent" }}>
+              <span>Инструменты для изобретений</span>
+              {isAuthenticated && unreadCounts.inventionTools > 0 && (
+                <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-semibold text-white" style={{ backgroundColor: "var(--color-accent)" }}>
+                  {unreadCounts.inventionTools}
+                </span>
+              )}
             </Link>
 
             {isAuthenticated && (

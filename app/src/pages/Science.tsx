@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useSearchParams } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { useAuth } from "@/hooks/useAuth";
 import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
@@ -21,9 +22,13 @@ const CLASSIFICATION_TYPES = [
 const PAGE_SIZE = 20;
 
 export default function Science() {
-  const [activeFields, setActiveFields] = useState<string[]>([]);
-  const [activeType, setActiveType] = useState("all");
-  const [freshness, setFreshness] = useState<FreshnessKey>("all");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeFields = (searchParams.get("fields") ?? "").split(",").filter(Boolean);
+  const activeType = searchParams.get("type") ?? "all";
+  const freshnessParam = searchParams.get("freshness") as FreshnessKey | null;
+  const freshness: FreshnessKey = freshnessParam && ["all", "day", "3days", "week", "month"].includes(freshnessParam)
+    ? freshnessParam
+    : "all";
   const [offset, setOffset] = useState(0);
   const { isAuthenticated } = useAuth();
   const utils = trpc.useUtils();
@@ -53,6 +58,7 @@ export default function Science() {
   const markRead = trpc.readStatus.markRead.useMutation({
     onSuccess: () => {
       utils.readStatus.list.invalidate();
+      utils.readStatus.unreadCountBySection.invalidate();
     },
   });
 
@@ -79,17 +85,32 @@ export default function Science() {
   const sentinelRef = useInfiniteScroll(loadMore, hasMore, isFetching && offset > 0);
 
   const handleFieldChange = (slugs: string[]) => {
-    setActiveFields(slugs);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (slugs.length > 0) next.set("fields", slugs.join(","));
+      else next.delete("fields");
+      return next;
+    });
     setOffset(0);
   };
 
   const handleTypeChange = (value: string) => {
-    setActiveType(value);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (value === "all") next.delete("type");
+      else next.set("type", value);
+      return next;
+    });
     setOffset(0);
   };
 
   const handleFreshnessChange = (key: FreshnessKey) => {
-    setFreshness(key);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (key === "all") next.delete("freshness");
+      else next.set("freshness", key);
+      return next;
+    });
     setOffset(0);
   };
 
@@ -159,6 +180,7 @@ export default function Science() {
                   article={article}
                   isRead={readSet.has(article.id)}
                   onMarkRead={handleMarkRead}
+                  returnQuery={searchParams.toString()}
                 />
               ))}
             </div>

@@ -9,9 +9,10 @@ interface NewsCardProps {
   isRead?: boolean;
   onMarkRead?: (newsId: number) => void;
   showFavorite?: boolean;
+  returnQuery?: string;
 }
 
-export default function NewsCard({ article, isRead = false, onMarkRead, showFavorite = true }: NewsCardProps) {
+export default function NewsCard({ article, isRead = false, onMarkRead, showFavorite = true, returnQuery = "" }: NewsCardProps) {
   const { isAuthenticated } = useAuth();
   const utils = trpc.useUtils();
 
@@ -59,7 +60,7 @@ export default function NewsCard({ article, isRead = false, onMarkRead, showFavo
 
   return (
     <Link
-      to={`/news/${article.id}`}
+      to={`/news/${article.id}${returnQuery ? `?${returnQuery}` : ""}`}
       onClick={handleClick}
       className="group block rounded-xl border transition-all duration-200 hover:-translate-y-px"
       style={{
@@ -136,7 +137,7 @@ export default function NewsCard({ article, isRead = false, onMarkRead, showFavo
 
           <div className="flex items-center justify-between mt-4 text-[13px]" style={{ color: "var(--color-text-muted)" }}>
             <div className="flex items-center gap-2">
-              <span>{new Date(article.updatedAt || article.publishedAt).toLocaleDateString("ru-RU")}</span>
+              <span>{new Date(article.publishedAt).toLocaleDateString("ru-RU")}</span>
               <span>·</span>
               <span className="flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5" />

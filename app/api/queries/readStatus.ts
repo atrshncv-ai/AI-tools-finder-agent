@@ -1,6 +1,6 @@
 import { getDb } from "./connection";
-import { readStatus } from "@db/schema";
-import { eq, and, count } from "drizzle-orm";
+import { news, readStatus } from "@db/schema";
+import { eq, and, count, isNull, isNotNull, ne } from "drizzle-orm";
 
 export async function findReadStatus(userId: number, newsId: number) {
   const db = getDb();
@@ -37,6 +37,34 @@ export async function getUnreadCount(userId: number) {
     .select({ count: count() })
     .from(readStatus)
     .where(and(eq(readStatus.userId, userId), eq(readStatus.read, false)));
+  return result.count;
+}
+
+export async function getUnreadCountBySection(
+  userId: number,
+  section: "ai-news" | "science" | "invention-tools",
+) {
+  const db = getDb();
+  const [result] = await db
+    .select({ count: count() })
+    .from(news)
+    .leftJoin(
+      readStatus,
+      and(
+        eq(readStatus.userId, userId),
+        eq(readStatus.newsId, news.id),
+        eq(readStatus.read, true),
+      ),
+    )
+    .where(
+      and(
+        eq(news.status, "published"),
+        eq(news.section, section),
+        isNotNull(news.summary),
+        ne(news.summary, ""),
+        isNull(readStatus.id),
+      ),
+    );
   return result.count;
 }
 

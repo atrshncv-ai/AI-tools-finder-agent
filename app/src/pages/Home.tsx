@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { useAuth } from "@/hooks/useAuth";
 import { useInfiniteScroll } from "@/hooks/useInfiniteScroll";
@@ -10,16 +10,22 @@ import CategoryFilter from "@/components/CategoryFilter";
 import { Newspaper, Loader2 } from "lucide-react";
 import { getSectionQuery } from "@/lib/sectionFilters";
 import FreshnessFilter, { type FreshnessKey } from "@/components/FreshnessFilter";
+import { useUnreadCounts } from "@/hooks/useUnreadCounts";
 
 const PAGE_SIZE = 20;
 
 export default function Home() {
-  const [activeCategories, setActiveCategories] = useState<string[]>([]);
-  const [freshness, setFreshness] = useState<FreshnessKey>("all");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeCategories = (searchParams.get("categories") ?? "").split(",").filter(Boolean);
+  const freshnessParam = searchParams.get("freshness") as FreshnessKey | null;
+  const freshness: FreshnessKey = freshnessParam && ["all", "day", "3days", "week", "month"].includes(freshnessParam)
+    ? freshnessParam
+    : "all";
   const [offset, setOffset] = useState(0);
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const utils = trpc.useUtils();
+  const unreadCounts = useUnreadCounts();
 
   const { data: newsData, isLoading, isFetching } = trpc.news.list.useQuery(
     {
@@ -40,6 +46,7 @@ export default function Home() {
   const markRead = trpc.readStatus.markRead.useMutation({
     onSuccess: () => {
       utils.readStatus.list.invalidate();
+      utils.readStatus.unreadCountBySection.invalidate();
     },
   });
 
@@ -65,15 +72,25 @@ export default function Home() {
 
   const sentinelRef = useInfiniteScroll(loadMore, hasMore, isFetching && offset > 0);
 
-  const unreadCount = items.filter((n) => !readSet.has(n.id)).length;
+  const unreadCount = unreadCounts.aiNews;
 
   const handleCategoryChange = (slugs: string[]) => {
-    setActiveCategories(slugs);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (slugs.length > 0) next.set("categories", slugs.join(","));
+      else next.delete("categories");
+      return next;
+    });
     setOffset(0);
   };
 
   const handleFreshnessChange = (key: FreshnessKey) => {
-    setFreshness(key);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (key === "all") next.delete("freshness");
+      else next.set("freshness", key);
+      return next;
+    });
     setOffset(0);
   };
 
@@ -146,6 +163,7 @@ export default function Home() {
                   article={article}
                   isRead={readSet.has(article.id)}
                   onMarkRead={handleMarkRead}
+                  returnQuery={searchParams.toString()}
                 />
               ))}
             </div>

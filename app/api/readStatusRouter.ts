@@ -7,6 +7,7 @@ import {
   getAllReadStatuses,
   findReadStatus,
   getUnreadCount,
+  getUnreadCountBySection,
 } from "./queries/readStatus";
 
 export const readStatusRouter = createRouter({
@@ -25,6 +26,13 @@ export const readStatusRouter = createRouter({
     const count = await getUnreadCount(ctx.user.id);
     return { count };
   }),
+
+  unreadCountBySection: authedQuery
+    .input(z.object({ section: z.enum(["ai-news", "science", "invention-tools"]) }))
+    .query(async ({ ctx, input }) => {
+      const count = await getUnreadCountBySection(ctx.user.id, input.section);
+      return { count };
+    }),
 
   markRead: authedMutation
     .input(z.object({ newsId: z.number() }))

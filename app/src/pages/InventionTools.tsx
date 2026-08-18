@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useSearchParams } from "react-router";
 import { Link } from "react-router";
 import Header from "@/components/Header";
 import { trpc } from "@/providers/trpc";
@@ -8,8 +8,12 @@ import { SPHERE_NAMES } from "@/lib/sphereNames";
 import FreshnessFilter, { type FreshnessKey } from "@/components/FreshnessFilter";
 
 export default function InventionTools() {
-  const [activeSpheres, setActiveSpheres] = useState<string[]>([]);
-  const [freshness, setFreshness] = useState<FreshnessKey>("all");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeSpheres = (searchParams.get("spheres") ?? "").split(",").filter(Boolean);
+  const freshnessParam = searchParams.get("freshness") as FreshnessKey | null;
+  const freshness: FreshnessKey = freshnessParam && ["all", "day", "3days", "week", "month"].includes(freshnessParam)
+    ? freshnessParam
+    : "all";
 
   const { data: spheresData } = trpc.news.inventionToolSpheres.useQuery();
   const { data: tools, isLoading } = trpc.news.inventionTools.useQuery({
@@ -35,7 +39,7 @@ export default function InventionTools() {
     description: n.summary ?? "",
     officialUrl: n.originalUrl ?? "",
     docsUrl: "",
-    lastVerifiedAt: n.updatedAt,
+    publishedAt: n.publishedAt,
     updatedAt: n.updatedAt,
     createdAt: n.createdAt,
     _source: "news" as const,
@@ -65,6 +69,16 @@ export default function InventionTools() {
       });
   const total = visible.length;
 
+  const updateFilter = (key: "spheres" | "freshness", value: string | string[]) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      const serialized = Array.isArray(value) ? value.join(",") : value;
+      if (!serialized || serialized === "all") next.delete(key);
+      else next.set(key, serialized);
+      return next;
+    });
+  };
+
   return (
     <div className="min-h-screen" style={{ backgroundColor: "var(--color-bg)" }}>
       <Header />
@@ -91,14 +105,14 @@ export default function InventionTools() {
             <CategoryFilter
               categories={sphereOptions}
               active={activeSpheres}
-              onChange={setActiveSpheres}
+              onChange={(slugs) => updateFilter("spheres", slugs)}
             />
           </div>
         )}
 
         {/* Freshness filter */}
         <div className="mb-5">
-          <FreshnessFilter active={freshness} onChange={setFreshness} />
+          <FreshnessFilter active={freshness} onChange={(key) => updateFilter("freshness", key)} />
         </div>
 
         {isLoading ? (
@@ -110,7 +124,7 @@ export default function InventionTools() {
             {visible.map((tool) => (
               <Link
                 key={tool.id}
-                to={`/tools/${tool.id}`}
+                to={`${tool._source === "news" ? `/news/${tool.id}` : `/tools/${tool.id}`}${tool._source === "news" && searchParams.toString() ? `?${searchParams.toString()}` : ""}`}
                 className="group block rounded-xl border transition-all duration-200 hover:-translate-y-px"
                 style={{ backgroundColor: "var(--color-card)", borderColor: "var(--color-border)" }}
               >
@@ -162,7 +176,9 @@ export default function InventionTools() {
 
                     <div className="flex items-center justify-between mt-4 text-[13px]" style={{ color: "var(--color-text-muted)" }}>
                       <div className="flex items-center gap-2">
-                        <span>{new Date(tool.updatedAt).toLocaleDateString("ru-RU")}</span>
+                        <span>
+                          {new Date(tool._source === "news" ? tool.publishedAt : (tool.lastVerifiedAt ?? tool.createdAt)).toLocaleDateString("ru-RU")}
+                        </span>
                         {tool.organization && (
                           <>
                             <span>·</span>

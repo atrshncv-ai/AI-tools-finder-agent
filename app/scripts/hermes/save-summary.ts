@@ -21,6 +21,7 @@ import { isYoutubeUrl, fetchYoutubeTranscript } from "./youtube-transcript";
 import { ssrfCheck } from "../../api/lib/url-safety";
 import { extractArticleText } from "./article-content";
 import { isGarbageText, isUnusableExtractedContent } from "./content-quality";
+import { classifyInvention, buildInventionContext } from "../../api/lib/invention-classify";
 
 function normalizeSpace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
@@ -211,6 +212,24 @@ async function main() {
   if (!args.auto && detailedSummary) updateData.content = detailedSummary;
   if (modelUsed) updateData.modelUsed = modelUsed;
   if (originalContent) updateData.originalContent = originalContent;
+
+  // Re-check invention classification with the richer context now available
+  // (Russian title + generated summary + extracted content). Reassign section
+  // and sphere tags when the fuller signal changes the decision.
+  const titleForContext = (titleRu || article.title || "").trim();
+  const summaryForContext = (summary || "").trim();
+  const contentForContext = (originalContent || detailedSummary || "").trim();
+  const inventionContext = buildInventionContext(titleForContext, summaryForContext, contentForContext);
+  const invention = classifyInvention(inventionContext);
+  const currentSection = article.section || "ai-news";
+  const targetSection = invention.isInvention ? "invention-tools" : currentSection;
+  if (targetSection !== currentSection) {
+    updateData.section = targetSection;
+    console.error(`[save-summary] Reassigning #${args.id} ${currentSection} -> ${targetSection}`);
+  }
+  if (invention.isInvention) {
+    updateData.sphereTags = invention.spheres;
+  }
 
   await db.update(news).set(updateData).where(eq(news.id, args.id!));
 

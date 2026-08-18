@@ -91,6 +91,23 @@ const SPHERES: Array<[string, RegExp]> = [
 ];
 
 /**
+ * Build the richest possible context for invention classification.
+ * RSS often exposes only a title, while YouTube and fetched articles
+ * can include a description or summary. Joining all available text
+ * reduces false negatives on invention-tool candidates.
+ */
+export function buildInventionContext(
+  title: string,
+  description?: string | null,
+  summary?: string | null,
+): string {
+  const parts = [title.trim()];
+  if (description?.trim()) parts.push(description.trim());
+  if (summary?.trim()) parts.push(summary.trim());
+  return parts.join(". ");
+}
+
+/**
  * Classify whether an article describes an AI-for-science tool / discovery
  * and which spheres it belongs to.
  *
@@ -100,10 +117,18 @@ export function classifyInvention(text: string) {
   const normalized = text.trim();
   const isInvention = INVENTION_TERMS.test(normalized);
   const sphereNames: Record<string, string> = {
-    chemistry: "химия", materials: "материалы", biology: "биология",
-    medicine: "медицина", physics: "физика", climate: "климат",
-    astronomy: "астрономия", mathematics: "математика", engineering: "инженерия",
-    quantum: "квантовые вычисления", genomics: "геномика", energy: "энергетика",
+    chemistry: "химия",
+    materials: "материалы",
+    biology: "биология",
+    medicine: "медицина",
+    physics: "физика",
+    climate: "климат",
+    astronomy: "астрономия",
+    mathematics: "математика",
+    engineering: "инженерия",
+    quantum: "квантовые вычисления",
+    genomics: "геномика",
+    energy: "энергетика",
   };
   const spheres = SPHERES.filter(([, pattern]) => pattern.test(normalized)).map(
     ([name]) => sphereNames[name] || name,

@@ -1,4 +1,4 @@
-import { useParams, Link, useNavigate } from "react-router";
+import { useParams, Link, useNavigate, useLocation } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { useAuth } from "@/hooks/useAuth";
 import Header from "@/components/Header";
@@ -22,6 +22,7 @@ import { useTheme } from "@/hooks/useTheme";
 export default function NewsDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const newsId = Number(id);
   const { isAuthenticated } = useAuth();
   const { theme, toggleTheme } = useTheme();
@@ -47,6 +48,7 @@ export default function NewsDetail() {
     onSuccess: () => {
       utils.readStatus.list.invalidate();
       utils.readStatus.unreadCount.invalidate();
+      utils.readStatus.unreadCountBySection.invalidate();
     },
   });
 
@@ -105,6 +107,12 @@ export default function NewsDetail() {
   };
 
   const tags = article?.tags?.split(",").filter(Boolean) ?? [];
+  const listPath = article?.section === "invention-tools"
+    ? "/inventions"
+    : article?.isScience
+      ? "/science"
+      : "/";
+  const listUrl = `${listPath}${location.search}`;
 
   if (isLoading) {
     return (
@@ -143,13 +151,13 @@ export default function NewsDetail() {
       <main className="mx-auto max-w-[900px] px-4 py-6">
         {/* Breadcrumbs */}
         <nav className="flex items-center gap-1.5 text-sm mb-5" style={{ color: "var(--color-text-muted)" }}>
-          <Link to="/" className="hover:underline" style={{ color: "var(--color-accent)" }}>
+          <Link to={listUrl} className="hover:underline" style={{ color: "var(--color-accent)" }}>
             Лента
           </Link>
           <span>/</span>
-          {article.isScience && (
+          {article.isScience && article.section !== "invention-tools" && (
             <>
-              <Link to="/science" className="hover:underline" style={{ color: "var(--color-accent)" }}>
+              <Link to={listUrl} className="hover:underline" style={{ color: "var(--color-accent)" }}>
                 ИИ для науки
               </Link>
               <span>/</span>
@@ -328,7 +336,7 @@ export default function NewsDetail() {
         {/* Navigation */}
         <div className="flex items-center justify-between mt-6 pt-6 border-t" style={{ borderColor: "var(--color-border)" }}>
           <Link
-            to={article.isScience ? "/science" : "/"}
+            to={listUrl}
             className="inline-flex items-center gap-1.5 text-sm font-medium transition-colors hover:underline"
             style={{ color: "var(--color-accent)" }}
           >

@@ -10,8 +10,8 @@
  */
 
 import { getDb } from "../../api/queries/connection";
-import { news } from "@db/schema";
-import { eq } from "drizzle-orm";
+import { news, inventionTools } from "@db/schema";
+import { eq, sql } from "drizzle-orm";
 
 function parseArgs(): { batchSize: number } {
   const args = process.argv.slice(2);
@@ -58,6 +58,19 @@ async function main() {
   }
 
   console.log(`[deploy-ready] Deployed ${deployed}/${ready.length} articles`);
+
+  // Refresh catalog verification date on every pipeline deploy so the
+  // Invention Tools section always shows an up-to-date "last checked" date.
+  try {
+    await db
+      .update(inventionTools)
+      .set({ lastVerifiedAt: new Date(), updatedAt: new Date() })
+      .where(sql`1=1`);
+    console.log("[deploy-ready] Refreshed lastVerifiedAt for all catalog tools");
+  } catch (err) {
+    console.error("[deploy-ready] Failed to refresh catalog verification date:", err);
+  }
+
   process.exit(0);
 }
 

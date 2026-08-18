@@ -1,25 +1,23 @@
 import { Link, useLocation } from "react-router";
-import { Home, FlaskConical, Star } from "lucide-react";
+import { Home, FlaskConical, Star, Wrench } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { trpc } from "@/providers/trpc";
+import { useUnreadCounts } from "@/hooks/useUnreadCounts";
 
 export function BottomNav() {
   const location = useLocation();
   const { isAuthenticated } = useAuth();
 
-  const { data: unreadData } = trpc.readStatus.unreadCount.useQuery(undefined, {
-    enabled: isAuthenticated,
-  });
+  const unreadCounts = useUnreadCounts();
 
   const { data: favCount } = trpc.favorite.count.useQuery(undefined, {
     enabled: isAuthenticated,
   });
 
-  const unreadCount = unreadData?.count ?? 0;
-
   const items = [
-    { path: "/", icon: Home, label: "Лента", badge: unreadCount },
-    { path: "/science", icon: FlaskConical, label: "Наука", badge: 0 },
+    { path: "/", icon: Home, label: "Лента", badge: unreadCounts.aiNews },
+    { path: "/science", icon: FlaskConical, label: "Наука", badge: unreadCounts.science },
+    { path: "/inventions", icon: Wrench, label: "Изобретения", badge: unreadCounts.inventionTools },
     ...(isAuthenticated
       ? [{ path: "/favorites", icon: Star, label: "Избранное", badge: favCount?.count ?? 0 }]
       : []),
