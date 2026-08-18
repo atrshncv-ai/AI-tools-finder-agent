@@ -48,7 +48,7 @@ export default function InventionTools() {
 
   const allItems = [...catalogItems, ...newsItems];
   const seen = new Set<string>();
-  const merged = allItems.filter((item) => {
+  const merged = allItems.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()).filter((item) => {
     const key = item.name.toLowerCase().trim();
     if (seen.has(key)) return false;
     seen.add(key);
