@@ -18,7 +18,7 @@
  */
 
 import "dotenv/config";
-import { SPHERE_NAMES } from "../src/lib/sphereNames";
+import { SPHERE_NAMES } from "../../src/lib/sphereNames";
 import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
 import { and, desc, eq, gte, isNull, not, inArray, sql } from "drizzle-orm";
