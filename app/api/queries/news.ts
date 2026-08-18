@@ -52,6 +52,9 @@ export async function findAllNews(opts: {
   const conditions = [];
 
   conditions.push(eq(news.status, "published"));
+  // Dashboard listing must exclude cards without a summary (empty/null).
+  // Direct article links via findNewsById remain unaffected.
+  conditions.push(sql`${news.summary} is not null and ${news.summary} <> ''`);
 
   if (isScience !== undefined) {
     conditions.push(eq(news.isScience, isScience));
