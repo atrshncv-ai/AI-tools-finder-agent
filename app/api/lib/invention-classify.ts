@@ -99,8 +99,14 @@ const SPHERES: Array<[string, RegExp]> = [
 export function classifyInvention(text: string) {
   const normalized = text.trim();
   const isInvention = INVENTION_TERMS.test(normalized);
+  const sphereNames: Record<string, string> = {
+    chemistry: "химия", materials: "материалы", biology: "биология",
+    medicine: "медицина", physics: "физика", climate: "климат",
+    astronomy: "астрономия", mathematics: "математика", engineering: "инженерия",
+    quantum: "квантовые вычисления", genomics: "геномика", energy: "энергетика",
+  };
   const spheres = SPHERES.filter(([, pattern]) => pattern.test(normalized)).map(
-    ([name]) => name,
+    ([name]) => sphereNames[name] || name,
   );
 
   // Section assignment mirrors the logic from parseAgent:
