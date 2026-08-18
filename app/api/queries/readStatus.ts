@@ -11,24 +11,16 @@ export async function findReadStatus(userId: number, newsId: number) {
 
 export async function markAsRead(userId: number, newsId: number) {
   const db = getDb();
-  const existing = await findReadStatus(userId, newsId);
-
-  if (existing) {
-    if (!existing.read) {
-      await db
-        .update(readStatus)
-        .set({ read: true, readAt: new Date() })
-        .where(eq(readStatus.id, existing.id));
-    }
-    return { ...existing, read: true };
-  }
-
   const [result] = await db
     .insert(readStatus)
     .values({ userId, newsId, read: true, readAt: new Date() })
+    .onConflictDoUpdate({
+      target: [readStatus.userId, readStatus.newsId],
+      set: { read: true, readAt: new Date() },
+    })
     .returning();
 
-  return db.query.readStatus.findFirst({ where: eq(readStatus.id, result.id) });
+  return result;
 }
 
 export async function markAsUnread(userId: number, newsId: number) {

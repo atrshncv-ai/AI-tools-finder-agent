@@ -13,6 +13,26 @@ import type { ReactNode } from "react";
 
 export const trpc = createTRPCReact<AppRouter>();
 
+function isRawDbError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("unique constraint") ||
+    lower.includes("duplicate key") ||
+    lower.includes("violates") ||
+    lower.includes("constraint") ||
+    lower.includes("insert into") ||
+    lower.includes("read_status")
+  );
+}
+
+function friendlyMutationMessage(error: Error): string {
+  const raw = error.message || "";
+  if (isRawDbError(raw)) {
+    return "Не удалось сохранить изменения. Попробуйте ещё раз.";
+  }
+  return raw || "Действие не выполнено. Попробуйте ещё раз.";
+}
+
 const queryClient = new QueryClient({
   // Global error handlers: a network failure or a non-JSON error response
   // must never crash the UI with "Unable to transform response from server".
@@ -25,7 +45,8 @@ const queryClient = new QueryClient({
     onError: (error) => {
       console.error("[mutation error]", error);
       // Mutations used to fail silently (dead buttons) — surface them.
-      toast.error(error.message || "Действие не выполнено. Попробуйте ещё раз.");
+      // Replace raw SQL/constraint errors with a friendly Russian message.
+      toast.error(friendlyMutationMessage(error));
     },
   }),
   defaultOptions: {
