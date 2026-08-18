@@ -21,13 +21,14 @@ import "dotenv/config";
 import { SPHERE_NAMES } from "../../src/lib/sphereNames";
 import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
-import { and, desc, eq, gte, isNull, not, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, isNull, ne, not, inArray, sql } from "drizzle-orm";
 
 const WINDOW_HOURS = 24;
 const MAX_ITEMS_PER_SECTION = 7;
 const FALLBACK_ITEMS_PER_SECTION = 3;
 const TELEGRAM_MAX_LEN = 4000;
 const DASHBOARD_URL = (process.env.DIGEST_DASHBOARD_URL || "http://localhost:3000").replace(/\/+$/, "");
+const nonEmptySummary = and(isNotNull(news.summary), ne(news.summary, ""));
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 // Recipient list: TELEGRAM_CHAT_IDS (comma-separated) takes precedence; the
 // legacy single-recipient TELEGRAM_CHAT_ID still works as a fallback.
@@ -184,7 +185,7 @@ async function main() {
       summary: news.summary,
     })
     .from(news)
-    .where(and(eq(news.status, "published"), gte(news.updatedAt, since)))
+    .where(and(eq(news.status, "published"), gte(news.updatedAt, since), nonEmptySummary))
     .orderBy(desc(news.updatedAt));
 
   // Backfill at most ten strong historical candidates per digest. They are
@@ -198,7 +199,7 @@ async function main() {
       summary: news.summary,
     })
     .from(news)
-    .where(and(eq(news.status, "rejected"), gte(news.score, 50), isNull(news.digestArchiveSentAt), sql`${news.source} NOT LIKE 'youtube-%'`, not(inArray(news.source, ["reddit-artificial", "reddit-localllama", "reddit-machinelearning"]))))
+    .where(and(eq(news.status, "rejected"), gte(news.score, 50), isNull(news.digestArchiveSentAt), nonEmptySummary, sql`${news.source} NOT LIKE 'youtube-%'`, not(inArray(news.source, ["reddit-artificial", "reddit-localllama", "reddit-machinelearning"]))))
     .orderBy(desc(news.score), desc(news.updatedAt))
     .limit(10);
   const items = [...recentItems, ...archiveItems];
@@ -214,7 +215,7 @@ async function main() {
       id: news.id, title: news.title, originalUrl: news.originalUrl,
       source: news.source, isScience: news.isScience, section: news.section,
       sphereTags: news.sphereTags, summary: news.summary,
-    }).from(news).where(and(eq(news.status, "published"), eq(news.section, section)))
+    }).from(news).where(and(eq(news.status, "published"), eq(news.section, section), nonEmptySummary))
       .orderBy(desc(news.updatedAt)).limit(FALLBACK_ITEMS_PER_SECTION);
     items.push(...fallback);
   }

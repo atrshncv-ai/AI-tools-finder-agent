@@ -8,4 +8,4 @@
 | 10 | Сохранение фильтров в URL | pending |
 | 11 | Исправление ошибок read_status | pending |
 | 12 | Приток материалов в invention-tools | pending |
-| 13 | Дайджест без пустых summary | pending |
+| 13 | Дайджест без пустых summary | done |
