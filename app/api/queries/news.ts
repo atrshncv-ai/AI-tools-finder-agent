@@ -69,13 +69,14 @@ export async function findAllNews(opts: {
     conditions.push(eq(news.classificationType, classificationType));
   }
 
-  // Freshness = when the article appeared on the platform (updatedAt is set
-  // by the pipeline when we publish it, unlike publishedAt which is the
-  // source-side publication date).
+  // Freshness = when the article was published by the original SOURCE
+  // (publishedAt). Using updatedAt would pull in old backlog articles that
+  // were re-published today by the pipeline, showing July content in the
+  // "today" view.
   if (freshness && freshness !== "all") {
     const hours = FRESHNESS_HOURS[freshness];
     if (hours) {
-      conditions.push(gte(news.updatedAt, new Date(Date.now() - hours * 3600_000)));
+      conditions.push(gte(news.publishedAt, new Date(Date.now() - hours * 3600_000)));
     }
   }
 
@@ -98,7 +99,7 @@ export async function findAllNews(opts: {
     .from(news)
     .leftJoin(categories, eq(news.categoryId, categories.id))
     .where(where)
-    .orderBy(desc(news.updatedAt))
+    .orderBy(desc(news.publishedAt))
     .limit(limit)
     .offset(offset);
 
