@@ -18,7 +18,7 @@
  */
 
 import "dotenv/config";
-import { SPHERE_NAMES } from "../../src/lib/sphereNames";
+
 import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
 import { and, desc, eq, gte, isNotNull, isNull, ne, not, inArray, sql } from "drizzle-orm";
@@ -49,15 +49,6 @@ function esc(text: string): string {
   return text.replace(/([_*\[\]`])/g, "\\$1");
 }
 
-function channelName(source: string | null): string {
-  if (!source) return "";
-  return source
-    .replace(/^youtube-/, "")
-    .split("-")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
-
 interface DigestItem {
   id: number;
   title: string;
@@ -69,14 +60,12 @@ interface DigestItem {
   summary?: string | null;
 }
 
-function formatSection(emoji: string, name: string, items: DigestItem[], withChannel: boolean): string[] {
+function formatSection(emoji: string, name: string, items: DigestItem[]): string[] {
   if (items.length === 0) return [];
   const lines = [`${emoji} *${name}* — ${items.length}`];
   for (const item of items.slice(0, MAX_ITEMS_PER_SECTION)) {
-    const via = withChannel && item.source ? ` — _${esc(channelName(item.source))}_` : "";
     const description = item.summary ? ` — ${esc(item.summary.replace(/\s+/g, " ").trim().slice(0, 180))}` : "";
-    const tags = item.sphereTags?.length ? item.sphereTags.slice(0, 3).map(t => esc(SPHERE_NAMES[t] || t)).join(", ") : "";
-    lines.push(tags ? `▫️ [${esc(item.title)}](${item.originalUrl}) — ${tags}` : `▫️ [${esc(item.title)}](${item.originalUrl})${description}${via}`);
+    lines.push(`▫️ ${esc(item.title)} (@url:\`${item.originalUrl}\`)${description}`);
   }
   if (items.length > MAX_ITEMS_PER_SECTION) {
     const themes = [...new Set(items.slice(MAX_ITEMS_PER_SECTION).flatMap((item) => item.sphereTags ?? []))].slice(0, 4);
@@ -130,9 +119,9 @@ export function buildDigest(items: DigestItem[], archiveItems: DigestItem[] = []
     "",
     `За последние ${WINDOW_HOURS} часа опубликовано: *${items.length}*`,
     "",
-    ...formatSection("🛠", "ИИ-новости", tech, false),
-    ...formatSection("🔬", "ИИ для науки", science, false),
-    ...formatSection("🧪", "Инструменты для изобретений", inventions, false),
+    ...formatSection("🛠", "ИИ-новости", tech),
+    ...formatSection("🔬", "ИИ для науки", science),
+    ...formatSection("🧪", "Инструменты для изобретений", inventions),
   ];
 
   // Archive backfill is a separate labeled block: these are older picked

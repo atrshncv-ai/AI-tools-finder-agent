@@ -29,6 +29,22 @@ describe("digest sections", () => {
     expect(text).toContain("Инструменты для изобретений");
     expect(text).not.toContain("Видео с YouTube");
   });
+
+  it("uses the legacy title, URL marker, and short description format in every section", () => {
+    const text = buildDigest([
+      { id: 1, title: "ИИ-новость", originalUrl: "https://example.com/news", source: "rss", isScience: false, section: "ai-news", sphereTags: [], summary: "Краткое описание новости." },
+      { id: 2, title: "Научный инструмент", originalUrl: "https://example.com/science", source: "nature", isScience: true, section: "science", sphereTags: [], summary: "Краткое описание научного инструмента." },
+      { id: 3, title: "Инструмент для изобретений", originalUrl: "https://example.com/invention", source: "catalog", isScience: false, section: "invention-tools", sphereTags: [], summary: "Краткое описание инструмента для изобретений." },
+    ]);
+
+    expect(text).toContain("🛠 *ИИ-новости* — 1");
+    expect(text).toContain("🔬 *ИИ для науки* — 1");
+    expect(text).toContain("🧪 *Инструменты для изобретений* — 1");
+    expect(text).toContain("▫️ ИИ-новость (@url:`https://example.com/news`) — Краткое описание новости.");
+    expect(text).toContain("▫️ Научный инструмент (@url:`https://example.com/science`) — Краткое описание научного инструмента.");
+    expect(text).toContain("▫️ Инструмент для изобретений (@url:`https://example.com/invention`) — Краткое описание инструмента для изобретений.");
+    expect(text).not.toContain("[ИИ-новость](");
+  });
 });
 
 describe("digest archive block", () => {
