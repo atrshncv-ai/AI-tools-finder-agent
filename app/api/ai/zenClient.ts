@@ -6,6 +6,18 @@ import { encode, decode } from "gpt-tokenizer";
 const ZEN_BASE_URL = process.env.ZEN_BASE_URL || "https://api.opencode Zen.ai/v1";
 const DEFAULT_MODEL = process.env.ZEN_MODEL || "zen-default";
 
+// Model chain: primary ZEN_MODEL first, then fallbacks (comma-separated).
+// Quota on OpenCode Zen is tracked per key+model pair, so when every key is
+// 429 on the primary model the request is retried on the next model in the
+// chain before giving up.
+const MODEL_CHAIN: string[] = [
+  DEFAULT_MODEL,
+  ...(process.env.ZEN_FALLBACK_MODELS || "")
+    .split(",")
+    .map((m) => m.trim())
+    .filter(Boolean),
+].filter((m, i, arr) => m && arr.indexOf(m) === i);
+
 // ─── API Key Pool (rotation / fallback) ─────────────────────────────────────
 //
 // ZEN_API_KEYS — comma-separated pool of Opencode Zen keys. Legacy single-key
@@ -240,7 +252,7 @@ interface CompletionResponse {
   id: string;
   choices: {
     text?: string;
-    message?: { role: string; content: string };
+    message?: { role: string; content: string; reasoning_content?: string };
     finish_reason: string;
   }[];
   usage?: {
@@ -313,7 +325,15 @@ async function rawChatCompletion(
 
   const data = (await response.json()) as CompletionResponse;
   const choice = data.choices[0];
-  const rawText = (choice?.message?.content ?? choice?.text ?? "").trim();
+  // Reasoning models (e.g. hy3-free) can return an empty `content` with the
+  // whole answer inside `reasoning_content` — fall back to it so the caller
+  // never receives an empty string for a successful HTTP 200.
+  const rawText = (
+    choice?.message?.content ||
+    choice?.message?.reasoning_content ||
+    choice?.text ||
+    ""
+  ).trim();
   const text = cleanAiOutput(rawText);
   return extractParagraph ? extractFirstParagraph(text) : text;
 }
@@ -321,6 +341,88 @@ async function rawChatCompletion(
 /**
  * Main entry point for Zen API calls. Handles retry with exponential backoff
  * and circuit breaker protection.
+ */
+type ChatOptions = {
+  temperature?: number;
+  max_tokens?: number;
+  model?: string;
+  extractParagraph?: boolean;
+};
+
+/** Single-model attempt loop: key rotation + retry with backoff. */
+async function chatCompletionSingleModel(
+  messages: { role: string; content: string }[],
+  rest: ChatOptions,
+  retries: number,
+  timeoutMs: number,
+  retryDelayMs: number,
+): Promise<string> {
+  return aiLimiter(async () => {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      // Capture the key index BEFORE the request: under concurrency another
+      // request may rotate the pool while this one is in flight. The catch
+      // block must mark exactly the key that failed, not the current one.
+      const myKeyIdx = getCurrentKeyIndex();
+      try {
+        const result = await rawChatCompletion(messages, rest, myKeyIdx, timeoutMs);
+        return result;
+      } catch (error) {
+        // Key rotation: quota/balance exhaustion → swap key, retry immediately
+        // without consuming a backoff attempt.
+        if (error instanceof ZenQuotaError) {
+          if (exhaustKeyAndRotate(myKeyIdx)) {
+            console.log(`[Zen] Retrying request with rotated key...`);
+            attempt--;
+            continue;
+          }
+          circuitRecordFailure();
+          throw new ZenPoolExhaustedError(
+            `Zen API key pool exhausted: all ${keyPool.length} key(s) hit quota/balance limits. ` +
+              `Original error: ${error.message}`,
+          );
+        }
+
+        circuitRecordFailure();
+        const isLast = attempt === retries;
+        const msg = error instanceof Error ? error.message : String(error);
+
+        if (isLast) {
+          throw new Error(`chatCompletion failed after ${retries + 1} attempts: ${msg}`);
+        }
+
+        console.log(
+          `[Zen] Attempt ${attempt + 1}/${retries + 1} failed, retrying in ${retryDelayMs * Math.pow(2, attempt)}ms...`,
+          msg,
+        );
+        await sleep(retryDelayMs * Math.pow(2, attempt));
+      }
+    }
+    throw new Error("chatCompletion: all retries exhausted");
+  });
+}
+
+/**
+ * Pool-exhausted marker: the whole key pool is quota-limited for the current
+ * model. Exported so the model-chain fallback in chatCompletion() can catch
+ * it precisely and switch models instead of a generic failure.
+ */
+export class ZenPoolExhaustedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ZenPoolExhaustedError";
+  }
+}
+
+function resetKeyCooldowns(): void {
+  keyCooldownUntil.clear();
+}
+
+/**
+ * Main entry point for Zen API calls. Model chain: the primary ZEN_MODEL is
+ * tried with the full key pool; when every key is quota-limited on it, the
+ * cooldowns reset (quota is per key+model pair) and the next fallback model
+ * from ZEN_FALLBACK_MODELS gets the same chance. Retries, backoff and the
+ * circuit breaker live in chatCompletionSingleModel.
  */
 export async function chatCompletion(
   messages: { role: string; content: string }[],
@@ -349,49 +451,40 @@ export async function chatCompletion(
     );
   }
 
-  return aiLimiter(async () => {
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      // Capture the key index BEFORE the request: under concurrency another
-      // request may rotate the pool while this one is in flight. The catch
-      // block must mark exactly the key that failed, not the current one.
-      const myKeyIdx = getCurrentKeyIndex();
-      try {
-        const result = await rawChatCompletion(messages, rest, myKeyIdx, timeoutMs);
-        circuitRecordSuccess();
-        return result;
-      } catch (error) {
-        // Key rotation: quota/balance exhaustion → swap key, retry immediately
-        // without consuming a backoff attempt.
-        if (error instanceof ZenQuotaError) {
-          if (exhaustKeyAndRotate(myKeyIdx)) {
-            console.log(`[Zen] Retrying request with rotated key...`);
-            attempt--;
-            continue;
-          }
-          circuitRecordFailure();
-          throw new Error(
-            `Zen API key pool exhausted: all ${keyPool.length} key(s) hit quota/balance limits. ` +
-              `Original error: ${error.message}`,
-          );
-        }
+  const chain = rest.model ? [rest.model] : MODEL_CHAIN;
+  let lastError: unknown = null;
 
-        circuitRecordFailure();
-        const isLast = attempt === retries;
-        const msg = error instanceof Error ? error.message : String(error);
-
-        if (isLast) {
-          throw new Error(`chatCompletion failed after ${retries + 1} attempts: ${msg}`);
-        }
-
-        console.log(
-          `[Zen] Attempt ${attempt + 1}/${retries + 1} failed, retrying in ${retryDelayMs * Math.pow(2, attempt)}ms...`,
-          msg,
-        );
-        await sleep(retryDelayMs * Math.pow(2, attempt));
-      }
+  for (let m = 0; m < chain.length; m++) {
+    const model = chain[m];
+    if (m > 0) {
+      // Quota is tracked per key+model: give every key a fresh chance on the
+      // new model before deciding the pool is dead.
+      resetKeyCooldowns();
+      console.log(`[Zen] Falling back to model '${model}' (${m + 1}/${chain.length})...`);
     }
-    throw new Error("chatCompletion: all retries exhausted");
-  });
+    try {
+      const result = await chatCompletionSingleModel(
+        messages,
+        { ...rest, model },
+        retries,
+        timeoutMs,
+        retryDelayMs,
+      );
+      circuitRecordSuccess();
+      return result;
+    } catch (error) {
+      lastError = error;
+      if (error instanceof ZenPoolExhaustedError) {
+        continue; // next model in the chain
+      }
+      throw error; // non-quota failure — no point switching models
+    }
+  }
+
+  throw new Error(
+    `Zen API key pool exhausted: all models in chain [${chain.join(", ")}] hit quota/balance limits. ` +
+      `Original error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  );
 }
 
 // ─── Domain functions (prompts transferred from old client.ts) ──────────────

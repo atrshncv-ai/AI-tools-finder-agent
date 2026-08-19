@@ -26,6 +26,7 @@ import { and, desc, eq, gte, isNotNull, isNull, ne, not, inArray, sql } from "dr
 const WINDOW_HOURS = 24;
 const MAX_ITEMS_PER_SECTION = 7;
 const FALLBACK_ITEMS_PER_SECTION = 3;
+const ARCHIVE_ITEMS_MAX = 5;
 const TELEGRAM_MAX_LEN = 4000;
 const DASHBOARD_URL = (process.env.DIGEST_DASHBOARD_URL || "http://localhost:3000").replace(/\/+$/, "");
 const nonEmptySummary = and(isNotNull(news.summary), ne(news.summary, ""));
@@ -110,7 +111,7 @@ export function paymentReminderText(dueAt = PAYMENT_DUE_AT): string {
   return `💳 *Напоминание об оплате сервера*\n\nПожалуйста, проверьте оплату сервера. Текущий ориентир окончания оплаченного периода: *${dueAt}*.\n\nПосле этой даты напоминание будет приходить каждые 30 дней.`;
 }
 
-export function buildDigest(items: DigestItem[]): string {
+export function buildDigest(items: DigestItem[], archiveItems: DigestItem[] = []): string {
   const science = items.filter((i) => i.section === "science" || (!i.section && i.isScience));
   const inventions = items.filter((i) => i.section === "invention-tools");
   const tech = items.filter((i) => i.section === "ai-news" || (!i.section && !i.isScience));
@@ -123,7 +124,7 @@ export function buildDigest(items: DigestItem[]): string {
   });
 
   const lines = [
-    `🌅 *Утренний дайджест научного агента*`,
+    `🌅 *Утренний дайджест научного агента`,
     `_${dateStr}_`,
     "",
     `За последние ${WINDOW_HOURS} часа опубликовано: *${items.length}*`,
@@ -131,20 +132,36 @@ export function buildDigest(items: DigestItem[]): string {
     ...formatSection("🛠", "ИИ-новости", tech, false),
     ...formatSection("🔬", "ИИ для науки", science, false),
     ...formatSection("🧪", "Инструменты для изобретений", inventions, false),
-    `📊 Дашборд доступен по кнопке ниже`,
   ];
 
+  // Archive backfill is a separate labeled block: these are older picked
+  // articles (rejected by the daily gate but strong), NOT part of the 24-hour
+  // counters — mixing them into sections made digest counts diverge from the
+  // dashboard.
+  if (archiveItems.length > 0) {
+    lines.push(`📚 *Из архива* — ${archiveItems.length} (в счётчики суток не входят)`);
+    for (const item of archiveItems.slice(0, ARCHIVE_ITEMS_MAX)) {
+      lines.push(`▫️ [${esc(item.title)}](${item.originalUrl})`);
+    }
+    lines.push("");
+  }
+
+  lines.push(`📊 Дашборд доступен по кнопке ниже`);
   return lines.join("\n");
 }
 
 async function sendTelegram(text: string, chatId: string): Promise<boolean> {
   try {
+    // Plain-text dashboard URL inside the body: inline keyboards can be
+    // missed at the bottom of long messages, but a tappable link in the text
+    // itself always works (client reported "no dashboard button").
+    const body = text.includes(DASHBOARD_URL) ? text : `${text}\n${DASHBOARD_URL}`;
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         chat_id: chatId,
-        text,
+        text: body,
         parse_mode: "Markdown",
         disable_web_page_preview: true,
         reply_markup: {
@@ -188,9 +205,10 @@ async function main() {
     .where(and(eq(news.status, "published"), gte(news.updatedAt, since), nonEmptySummary))
     .orderBy(desc(news.updatedAt));
 
-  // Backfill at most ten strong historical candidates per digest. They are
-  // marked after a successful send, so the archive is consumed over days and
-  // never duplicates the current 24-hour feed.
+  // Backfill a few strong historical candidates per digest as a SEPARATE
+  // archive block (not mixed into section counters). They are marked after a
+  // successful send, so the archive is consumed over days and never
+  // duplicates the current 24-hour feed.
   const archiveItems = await db
     .select({
       id: news.id, title: news.title, originalUrl: news.originalUrl,
@@ -201,8 +219,8 @@ async function main() {
     .from(news)
     .where(and(eq(news.status, "rejected"), gte(news.score, 50), isNull(news.digestArchiveSentAt), nonEmptySummary, sql`${news.source} NOT LIKE 'youtube-%'`, not(inArray(news.source, ["reddit-artificial", "reddit-localllama", "reddit-machinelearning"]))))
     .orderBy(desc(news.score), desc(news.updatedAt))
-    .limit(10);
-  const items = [...recentItems, ...archiveItems];
+    .limit(ARCHIVE_ITEMS_MAX);
+  const items = [...recentItems];
 
   // If a section has no fresh publication (for example while Zen is
   // rate-limited), include a few latest already-published entries so the
@@ -224,9 +242,11 @@ async function main() {
   // If no fresh invention news exists the section simply does not appear
   // in the digest (per user requirement: only send sections with new items).
 
-  console.error(`[daily-digest] ${items.length} published in last ${WINDOW_HOURS}h`);
+  console.error(`[daily-digest] ${items.length} published in last ${WINDOW_HOURS}h (+${archiveItems.length} from archive)`);
 
-  const digestParts = items.length > 0 ? splitTelegramText(buildDigest(items)) : [];
+  const digestParts = items.length > 0
+    ? splitTelegramText(buildDigest(items, archiveItems))
+    : [];
 
   if (!BOT_TOKEN || CHAT_IDS.length === 0) {
     console.error("[daily-digest] STUB MODE (no TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_IDS) — printing digest:");

@@ -21,11 +21,15 @@ const tools = [
 async function main() {
   const db = getDb();
   for (const [slug, name, organization, country, kind, spheres, accessStatus, description, officialUrl] of tools) {
-    await db.insert(inventionTools).values({ slug, name, organization, country, kind, spheres, accessStatus, description, officialUrl, lastVerifiedAt: new Date() }).onConflictDoUpdate({ target: inventionTools.slug, set: { name, organization, country, kind, spheres, accessStatus, description, officialUrl, lastVerifiedAt: new Date(), updatedAt: new Date() } });
+    // updatedAt is NOT updated here on purpose: it is the sort key of the
+    // merged inventions list (catalog + news); bumping it on every seed run
+    // pushed all catalog cards above fresh news. lastVerifiedAt carries the
+    // "checked" stamp instead.
+    await db.insert(inventionTools).values({ slug, name, organization, country, kind, spheres, accessStatus, description, officialUrl, lastVerifiedAt: new Date() }).onConflictDoUpdate({ target: inventionTools.slug, set: { name, organization, country, kind, spheres, accessStatus, description, officialUrl, lastVerifiedAt: new Date() } });
   }
-  // Touch every existing catalog card so the section does not look abandoned
-  // even when no new tools are added.
-  await db.update(inventionTools).set({ lastVerifiedAt: new Date(), updatedAt: new Date() }).where(sql`1=1`);
+  // Touch only the verification stamp of every existing catalog card so the
+  // section does not look abandoned even when no new tools are added.
+  await db.update(inventionTools).set({ lastVerifiedAt: new Date() }).where(sql`1=1`);
   console.log(`seeded ${tools.length} invention tools, refreshed lastVerifiedAt for all catalog cards`);
 }
 main().catch((error) => { console.error(error); process.exit(1); });

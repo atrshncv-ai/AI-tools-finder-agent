@@ -17,9 +17,14 @@ def run_sql(sql):
     )
     return r.stdout.strip()
 
-# Count pending by section
+# Count publishable articles by section.
+# ONLY status='summarized' with a non-empty summary is publishable: pending
+# articles have no summary yet (they wait for the Ralph loop), and publishing
+# them creates invisible cards that the dashboard filters out.
+PUBLISHABLE = "status='summarized' AND summary IS NOT NULL AND summary <> ''"
+
 pending = {}
-for line in run_sql("SELECT section, COUNT(*) FROM news WHERE status='pending' GROUP BY section;").split("\n"):
+for line in run_sql(f"SELECT section, COUNT(*) FROM news WHERE {PUBLISHABLE} GROUP BY section;").split("\n"):
     if "|" in line:
         sec, cnt = line.split("|")
         pending[sec.strip()] = int(cnt.strip())
@@ -42,7 +47,7 @@ for section, count in pending.items():
     share = max(1, round(DAILY_TARGET * count / total_pending))
     share = min(share, count)  # don't exceed what's available
     ids = run_sql(
-        f"SELECT id FROM news WHERE status='pending' AND section='{section}' "
+        f"SELECT id FROM news WHERE {PUBLISHABLE} AND section='{section}' "
         f"ORDER BY id LIMIT {share};"
     )
     for line in ids.split("\n"):
@@ -71,7 +76,7 @@ print(f"[publisher] IDs: {id_list}")
 
 # Check remaining
 remaining = {}
-for line in run_sql("SELECT section, COUNT(*) FROM news WHERE status='pending' GROUP BY section;").split("\n"):
+for line in run_sql(f"SELECT section, COUNT(*) FROM news WHERE {PUBLISHABLE} GROUP BY section;").split("\n"):
     if "|" in line:
         sec, cnt = line.split("|")
         remaining[sec.strip()] = int(cnt.strip())

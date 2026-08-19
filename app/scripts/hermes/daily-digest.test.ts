@@ -30,3 +30,21 @@ describe("digest sections", () => {
     expect(text).not.toContain("Видео с YouTube");
   });
 });
+
+describe("digest archive block", () => {
+  it("keeps archive items out of section counters and shows them separately", () => {
+    const fresh = [
+      { id: 1, title: "Свежая ИИ-новость", originalUrl: "https://example.com/a", source: "hn", isScience: false, section: "ai-news", sphereTags: [] },
+    ];
+    const archive = [
+      { id: 2, title: "Архивная статья про CRISPR", originalUrl: "https://example.com/b", source: "nature", isScience: true, section: "science", sphereTags: [] },
+    ];
+    const text = buildDigest(fresh, archive);
+    expect(text).toContain("опубликовано: *1*");
+    expect(text).toContain("Из архива");
+    expect(text).toContain("Архивная статья про CRISPR");
+    expect(text).toContain("в счётчики суток не входят");
+    // Archive science article must NOT inflate the science section header
+    expect(text).not.toContain("ИИ для науки — 1");
+  });
+});

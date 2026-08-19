@@ -431,3 +431,64 @@ describe("key pool rotation", () => {
     expect(firstCall[1].headers["Authorization"]).toBe("Bearer test-key");
   });
 });
+
+// ─── Model chain fallback ───────────────────────────────────────────────────
+
+describe("model chain fallback", () => {
+  it("switches to a fallback model when every key is quota-limited on the primary", async () => {
+    mockZenError(429, "rate limit exceeded");
+    mockZenError(429, "rate limit exceeded");
+    mockZenSuccess("fallback ok");
+    const { chatCompletion } = await importZen({
+      ZEN_API_KEYS: "k1,k2",
+      ZEN_FALLBACK_MODELS: "hy3-free",
+    });
+
+    const result = await chatCompletion([{ role: "user", content: "test" }]);
+
+    expect(result).toBe("fallback ok");
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    const bodies = mockFetch.mock.calls.map((c) => JSON.parse(c[1].body));
+    expect(bodies[0].model).toBe("test-model");
+    expect(bodies[1].model).toBe("test-model");
+    expect(bodies[2].model).toBe("hy3-free");
+  });
+
+  it("throws 'key pool exhausted' when every model in the chain is quota-limited", async () => {
+    mockZenError(429, "quota");
+    mockZenError(429, "quota");
+    mockZenError(429, "quota");
+    mockZenError(429, "quota");
+    const { chatCompletion } = await importZen({
+      ZEN_API_KEYS: "k1,k2",
+      ZEN_FALLBACK_MODELS: "hy3-free",
+    });
+
+    await expect(
+      chatCompletion([{ role: "user", content: "test" }]),
+    ).rejects.toThrow("key pool exhausted");
+  });
+});
+
+// ─── reasoning_content extraction ───────────────────────────────────────────
+
+describe("reasoning_content fallback", () => {
+  it("uses reasoning_content when content is empty", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: "chatcmpl-reasoning",
+        choices: [{
+          message: { role: "assistant", content: "", reasoning_content: "Ответ из reasoning-цепочки." },
+          finish_reason: "stop",
+        }],
+        usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+      }),
+    });
+    const { chatCompletion } = await importZen();
+
+    const result = await chatCompletion([{ role: "user", content: "test" }]);
+
+    expect(result).toBe("Ответ из reasoning-цепочки.");
+  });
+});

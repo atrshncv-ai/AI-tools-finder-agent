@@ -59,12 +59,14 @@ async function main() {
 
   console.log(`[deploy-ready] Deployed ${deployed}/${ready.length} articles`);
 
-  // Refresh catalog verification date on every pipeline deploy so the
-  // Invention Tools section always shows an up-to-date "last checked" date.
+  // Refresh the verification stamp WITHOUT touching updatedAt: updatedAt is
+  // the sort key of the merged inventions list, and bumping it on every deploy
+  // pushed all 42 catalog cards above fresh news. lastVerifiedAt alone says
+  // "checked recently"; updatedAt stays = when the card was added.
   try {
     await db
       .update(inventionTools)
-      .set({ lastVerifiedAt: new Date(), updatedAt: new Date() })
+      .set({ lastVerifiedAt: new Date() })
       .where(sql`1=1`);
     console.log("[deploy-ready] Refreshed lastVerifiedAt for all catalog tools");
   } catch (err) {

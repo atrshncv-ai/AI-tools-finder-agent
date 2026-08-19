@@ -50,9 +50,20 @@ export default function InventionTools() {
     _source: "catalog" as const,
   }));
 
-  const allItems = [...catalogItems, ...newsItems];
+  type MergedItem = typeof newsItems[number] | typeof catalogItems[number];
+  // Freshness/sort date — the SAME date the card displays: news → platform
+  // publish date (updatedAt); catalog → verification date (lastVerifiedAt,
+  // since seed/deploy stopped touching catalog updatedAt). Sorting by
+  // updatedAt alone pushed stale-but-recently-verified catalog cards above
+  // fresh news.
+  const freshnessDate = (tool: MergedItem): Date =>
+    tool._source === "news"
+      ? new Date(tool.updatedAt)
+      : new Date(tool.lastVerifiedAt ?? tool.createdAt);
+
+  const allItems: MergedItem[] = [...newsItems, ...catalogItems];
   const seen = new Set<string>();
-  const merged = allItems.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()).filter((item) => {
+  const merged = allItems.sort((a, b) => freshnessDate(b).getTime() - freshnessDate(a).getTime()).filter((item) => {
     const key = item.name.toLowerCase().trim();
     if (seen.has(key)) return false;
     seen.add(key);
@@ -63,7 +74,7 @@ export default function InventionTools() {
   const visible = freshness === "all"
     ? merged
     : merged.filter((tool) => {
-        const ageMs = Date.now() - new Date(tool.updatedAt).getTime();
+        const ageMs = Date.now() - freshnessDate(tool).getTime();
         const hours = freshness === "day" ? 24 : freshness === "3days" ? 72 : freshness === "week" ? 168 : 720;
         return ageMs <= hours * 3600_000;
       });
