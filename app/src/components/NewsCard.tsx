@@ -137,7 +137,7 @@ export default function NewsCard({ article, isRead = false, onMarkRead, showFavo
 
           <div className="flex items-center justify-between mt-4 text-[13px]" style={{ color: "var(--color-text-muted)" }}>
             <div className="flex items-center gap-2">
-              <span>{new Date(article.publishedAt).toLocaleDateString("ru-RU")}</span>
+              <span>{new Date(article.updatedAt).toLocaleDateString("ru-RU")}</span>
               <span>·</span>
               <span className="flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5" />

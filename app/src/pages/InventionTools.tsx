@@ -188,7 +188,7 @@ export default function InventionTools() {
                     <div className="flex items-center justify-between mt-4 text-[13px]" style={{ color: "var(--color-text-muted)" }}>
                       <div className="flex items-center gap-2">
                         <span>
-                          {new Date(tool._source === "news" ? tool.publishedAt : (tool.lastVerifiedAt ?? tool.createdAt)).toLocaleDateString("ru-RU")}
+                          {new Date(tool.updatedAt).toLocaleDateString("ru-RU")}
                         </span>
                         {tool.organization && (
                           <>

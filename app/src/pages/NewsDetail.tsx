@@ -218,7 +218,7 @@ export default function NewsDetail() {
               <span>·</span>
               <span className="flex items-center gap-1">
                 <Calendar className="w-3.5 h-3.5" />
-                {formatDate(article.publishedAt)}
+                {formatDate(article.updatedAt)}
               </span>
             </div>
             <div className="flex items-center gap-2">

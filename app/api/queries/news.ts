@@ -1,14 +1,7 @@
 import { getDb } from "./connection";
 import { news, categories, inventionTools } from "@db/schema";
-import { eq, inArray, desc, and, count, sql, getTableColumns, gte } from "drizzle-orm";
-
-// Freshness windows in hours — matches src/components/FreshnessFilter.tsx.
-const FRESHNESS_HOURS: Record<string, number> = {
-  day: 24,
-  "3days": 72,
-  week: 7 * 24,
-  month: 30 * 24,
-};
+import { eq, inArray, desc, and, count, sql, getTableColumns, gte, lte } from "drizzle-orm";
+import { getFreshnessWindow } from "./newsDateRules";
 
 // ─── Seed categories ───
 export async function seedCategories() {
@@ -69,12 +62,11 @@ export async function findAllNews(opts: {
     conditions.push(eq(news.classificationType, classificationType));
   }
 
-  // Freshness = when the article was published on our platform (updatedAt).
+  // Freshness and ordering use the date the agent added/updated the article.
+  const freshnessWindow = getFreshnessWindow(freshness);
+  conditions.push(lte(news.updatedAt, freshnessWindow.to));
   if (freshness && freshness !== "all") {
-    const hours = FRESHNESS_HOURS[freshness];
-    if (hours) {
-      conditions.push(gte(news.updatedAt, new Date(Date.now() - hours * 3600_000)));
-    }
+    if (freshnessWindow.from) conditions.push(gte(news.updatedAt, freshnessWindow.from));
   }
 
   if (search) {
@@ -96,7 +88,7 @@ export async function findAllNews(opts: {
     .from(news)
     .leftJoin(categories, eq(news.categoryId, categories.id))
     .where(where)
-    .orderBy(desc(news.publishedAt))
+    .orderBy(desc(news.updatedAt), desc(news.id))
     .limit(limit)
     .offset(offset);
 
