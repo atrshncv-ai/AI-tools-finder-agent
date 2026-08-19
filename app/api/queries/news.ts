@@ -69,12 +69,12 @@ export async function findAllNews(opts: {
     conditions.push(eq(news.classificationType, classificationType));
   }
 
-  // Freshness = when the article appeared on the platform (updatedAt is set
-  // by the pipeline when we publish it, matching the digest window).
+  // Freshness = when the SOURCE published the article (publishedAt).
+  // Using updatedAt pulls in old backlog articles re-processed today.
   if (freshness && freshness !== "all") {
     const hours = FRESHNESS_HOURS[freshness];
     if (hours) {
-      conditions.push(gte(news.updatedAt, new Date(Date.now() - hours * 3600_000)));
+      conditions.push(gte(news.publishedAt, new Date(Date.now() - hours * 3600_000)));
     }
   }
 
