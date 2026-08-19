@@ -31,10 +31,11 @@ const SCIENCE_FIELD_KEYWORDS: Record<string, string[]> = {
   ],
 };
 
-const SCIENCE_TOOL_KEYWORDS = [
-  "инструмент", "instrument", "tool", "платформа", "platform",
-  "сервис", "service", "модель", "model", "framework", "фреймворк",
-  "библиотека", "library", "api", "sdk",
+const SCIENCE_AI_PATTERNS = [
+  /(^|[^\p{L}\p{N}])ии([^\p{L}\p{N}]|$)/u, /искусственн/u, /нейросет/u, /нейронн/u,
+  /\bai\b/u, /artificial intelligence/u, /machine learning/u, /машинн.*обуч/u, /deep learning/u,
+  /глубок.*обуч/u, /neural network/u, /нейронная сеть/u, /\bllm\b/u,
+  /large language model/u, /генеративн/u,
 ];
 
 const CLASSIFICATION_TYPE_KEYWORDS: Record<string, string[]> = {
@@ -108,23 +109,16 @@ function matchesKeywords(text: string, keywords: string[]): boolean {
 export function classifyArticle(title: string, description: string): ClassificationResult {
   const combined = `${title} ${description}`.toLowerCase();
 
-  let isScience = false;
+  const hasScienceDomain = Object.values(SCIENCE_FIELD_KEYWORDS).some((keywords) =>
+    matchesKeywords(combined, keywords),
+  );
+  const hasExplicitAiSignal = SCIENCE_AI_PATTERNS.some((pattern) => pattern.test(combined));
+  const isScience = hasScienceDomain && hasExplicitAiSignal;
   let scienceField: string | null = null;
 
-  for (const [field, keywords] of Object.entries(SCIENCE_FIELD_KEYWORDS)) {
-    if (matchesKeywords(combined, keywords)) {
-      if (matchesKeywords(combined, SCIENCE_TOOL_KEYWORDS)) {
-        isScience = true;
-        scienceField = field;
-        break;
-      }
-    }
-  }
-
-  if (!isScience) {
+  if (isScience) {
     for (const [field, keywords] of Object.entries(SCIENCE_FIELD_KEYWORDS)) {
       if (matchesKeywords(combined, keywords)) {
-        isScience = true;
         scienceField = field;
         break;
       }

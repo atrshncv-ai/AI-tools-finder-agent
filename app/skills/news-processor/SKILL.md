@@ -54,9 +54,13 @@ cd app && npx tsx scripts/hermes/collect-dual.ts --stream both   # tech|science|
 Кандидаты вставляются со `status='pending'`, `score=NULL`, предсобранными
 метриками источника в `metrics` (githubStars, hnPoints, redditUps).
 
-**Routing при вставке:** `isScience` и `scienceField` проставляются сразу:
-lancet→medicine, cell→biology, nature/science/naked-science→multidisciplinary,
-arxiv→computer-science, mit-tech-review→technology, tech-поток→`isScience=false`.
+**Routing при вставке:** кандидаты проходят общую классификацию по заголовку и
+описанию. `isScience=true`, `scienceField` и `section='science'` выставляются
+только при одновременном наличии явного AI/ML-сигнала (ИИ, AI, machine/deep
+learning, neural network, LLM и т.п.) и научного домена. Источник научного RSS
+сам по себе больше не достаточен; tech-поток и общенаучные материалы без AI
+получают `isScience=false`, `section='ai-news'`. Для прошедших gate сохраняются
+научные поля и тип классификации.
 
 **STRICT Time Guard (fail-closed):** абсолютно ВСЕ кандидаты (RSS, GitHub, HN,
 Reddit, PubMed) обязаны иметь валидную дату публикации/создания **не старше

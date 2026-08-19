@@ -31,6 +31,7 @@ import { listChannelVideos } from "./youtube-transcript";
 import { YOUTUBE_SOURCES } from "./youtube-sources";
 import { ssrfCheck } from "../../api/lib/url-safety";
 import { classifyScience } from "../ensure-science-categories";
+import { classifyArticle } from "../../api/lib/classify";
 import { classifyInvention, buildInventionContext } from "../../api/lib/invention-classify";
 
 const FETCH_TIMEOUT_MS = 20_000;
@@ -503,14 +504,15 @@ async function main() {
         inserted++;
         continue;
       }
+      const classification = classifyArticle(c.title, c.description ?? "");
       let categoryId: number | null = null;
       let categorySlug: string | null = null;
-      if (c.isScience) {
+      if (classification.isScience) {
         const slug = classifyScience({
           title: c.title,
-          summary: "",
+          summary: c.description ?? "",
           source: c.source,
-          scienceField: c.scienceField,
+          scienceField: classification.scienceField,
         });
         const cat = scienceCatBySlug.get(slug);
         if (cat) {
@@ -526,7 +528,7 @@ async function main() {
       const invention = classifyInvention(buildInventionContext(c.title, c.description));
       const section = invention.isInvention
         ? "invention-tools"
-        : c.isScience
+        : classification.isScience
           ? "science"
           : "ai-news";
 
@@ -540,8 +542,8 @@ async function main() {
           source: c.source,
           publishedAt: c.publishedAt,
           language: c.language,
-          isScience: c.isScience,
-          scienceField: c.scienceField,
+          isScience: classification.isScience,
+          scienceField: classification.scienceField,
           section,
           sphereTags: invention.spheres,
           categoryId,
