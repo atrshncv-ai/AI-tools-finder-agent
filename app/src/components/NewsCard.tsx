@@ -7,12 +7,12 @@ import type { News } from "@db/schema";
 interface NewsCardProps {
   article: News;
   isRead?: boolean;
-  onMarkRead?: (newsId: number) => void;
+
   showFavorite?: boolean;
   returnQuery?: string;
 }
 
-export default function NewsCard({ article, isRead = false, onMarkRead, showFavorite = true, returnQuery = "" }: NewsCardProps) {
+export default function NewsCard({ article, isRead = false, showFavorite = true, returnQuery = "" }: NewsCardProps) {
   const { isAuthenticated } = useAuth();
   const utils = trpc.useUtils();
 
@@ -50,18 +50,12 @@ export default function NewsCard({ article, isRead = false, onMarkRead, showFavo
     }
   };
 
-  const handleClick = () => {
-    if (!isRead && onMarkRead) {
-      onMarkRead(article.id);
-    }
-  };
-
   const tags = article.tags?.split(",").filter(Boolean) ?? [];
 
   return (
     <Link
       to={`/news/${article.id}${returnQuery ? `?${returnQuery}` : ""}`}
-      onClick={handleClick}
+
       className="group block rounded-xl border transition-all duration-200 hover:-translate-y-px"
       style={{
         backgroundColor: "var(--color-card)",

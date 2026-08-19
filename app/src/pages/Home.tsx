@@ -24,7 +24,7 @@ export default function Home() {
   const [offset, setOffset] = useState(0);
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
-  const utils = trpc.useUtils();
+
   const unreadCounts = useUnreadCounts();
 
   const { data: newsData, isLoading, isFetching } = trpc.news.list.useQuery(
@@ -43,22 +43,11 @@ export default function Home() {
     enabled: isAuthenticated,
   });
 
-  const markRead = trpc.readStatus.markRead.useMutation({
-    onSuccess: () => {
-      utils.readStatus.list.invalidate();
-      utils.readStatus.unreadCountBySection.invalidate();
-    },
-  });
 
   const readSet = new Set(
     (readStatuses ?? []).filter((s) => s.read).map((s) => s.newsId)
   );
 
-  const handleMarkRead = (newsId: number) => {
-    if (isAuthenticated) {
-      markRead.mutate({ newsId });
-    }
-  };
 
   const items = newsData?.items ?? [];
   const total = newsData?.total ?? 0;
@@ -162,7 +151,7 @@ export default function Home() {
                   key={article.id}
                   article={article}
                   isRead={readSet.has(article.id)}
-                  onMarkRead={handleMarkRead}
+
                   returnQuery={searchParams.toString()}
                 />
               ))}

@@ -19,18 +19,11 @@ export default function SearchResults() {
     enabled: isAuthenticated,
   });
 
-  const utils = trpc.useUtils();
-  const markRead = trpc.readStatus.markRead.useMutation({
-    onSuccess: () => utils.readStatus.list.invalidate(),
-  });
 
   const readSet = new Set(
     (readStatuses ?? []).filter((s) => s.read).map((s) => s.newsId)
   );
 
-  const handleMarkRead = (newsId: number) => {
-    markRead.mutate({ newsId });
-  };
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: "var(--color-bg)" }}>
@@ -78,7 +71,7 @@ export default function SearchResults() {
                 key={article.id}
                 article={article}
                 isRead={readSet.has(article.id)}
-                onMarkRead={handleMarkRead}
+
               />
             ))}
           </div>

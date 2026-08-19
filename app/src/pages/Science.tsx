@@ -31,7 +31,7 @@ export default function Science() {
     : "all";
   const [offset, setOffset] = useState(0);
   const { isAuthenticated } = useAuth();
-  const utils = trpc.useUtils();
+
 
   const { data: categoriesData } = trpc.news.categories.useQuery({ type: "science" });
 
@@ -55,22 +55,11 @@ export default function Science() {
     enabled: isAuthenticated,
   });
 
-  const markRead = trpc.readStatus.markRead.useMutation({
-    onSuccess: () => {
-      utils.readStatus.list.invalidate();
-      utils.readStatus.unreadCountBySection.invalidate();
-    },
-  });
 
   const readSet = new Set(
     (readStatuses ?? []).filter((s) => s.read).map((s) => s.newsId)
   );
 
-  const handleMarkRead = (newsId: number) => {
-    if (isAuthenticated) {
-      markRead.mutate({ newsId });
-    }
-  };
 
   const items = newsData?.items ?? [];
   const total = newsData?.total ?? 0;
@@ -179,7 +168,7 @@ export default function Science() {
                   key={article.id}
                   article={article}
                   isRead={readSet.has(article.id)}
-                  onMarkRead={handleMarkRead}
+
                   returnQuery={searchParams.toString()}
                 />
               ))}

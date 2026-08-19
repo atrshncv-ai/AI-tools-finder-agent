@@ -11,6 +11,7 @@ import {
   inventionToolFreshnessDate,
   sortInventionTools,
 } from "@/lib/inventionTools";
+import { withSearchParams } from "@/lib/detailNavigation";
 
 export default function InventionTools() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -89,7 +90,7 @@ export default function InventionTools() {
             {visible.map((tool) => (
               <Link
                 key={tool.id}
-                to={`/tools/${tool.id}`}
+                to={withSearchParams(`/tools/${tool.id}`, searchParams.toString())}
                 className="group block rounded-xl border transition-all duration-200 hover:-translate-y-px"
                 style={{ backgroundColor: "var(--color-card)", borderColor: "var(--color-border)" }}
               >

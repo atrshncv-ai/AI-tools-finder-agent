@@ -11,6 +11,9 @@ export async function findReadStatus(userId: number, newsId: number) {
 
 export async function markAsRead(userId: number, newsId: number) {
   const db = getDb();
+  const existing = await findReadStatus(userId, newsId);
+  if (existing?.read) return existing;
+
   const [result] = await db
     .insert(readStatus)
     .values({ userId, newsId, read: true, readAt: new Date() })

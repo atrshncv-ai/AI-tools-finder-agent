@@ -21,10 +21,6 @@ export default function Profile() {
     { enabled: isAuthenticated }
   );
 
-  const utils = trpc.useUtils();
-  const markRead = trpc.readStatus.markRead.useMutation({
-    onSuccess: () => utils.readStatus.list.invalidate(),
-  });
 
   if (authLoading) return null;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
@@ -86,7 +82,7 @@ export default function Profile() {
                   key={article.id}
                   article={article}
                   isRead={readStatuses?.some((s) => s.newsId === article.id && s.read) ?? false}
-                  onMarkRead={(id) => markRead.mutate({ newsId: id })}
+
                 />
               ))}
             </div>

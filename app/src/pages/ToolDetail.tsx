@@ -1,4 +1,4 @@
-import { useParams, Link, useNavigate } from "react-router";
+import { useParams, Link, useNavigate, useLocation } from "react-router";
 import { trpc } from "@/providers/trpc";
 import Header from "@/components/Header";
 import {
@@ -14,11 +14,14 @@ import {
   Wrench,
 } from "lucide-react";
 import { toast } from "sonner";
+import { detailReturnPath } from "@/lib/detailNavigation";
 
 export default function ToolDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const toolId = Number(id);
+  const listUrl = detailReturnPath("/inventions", location.search);
 
   const { data: tool, isLoading } = trpc.news.inventionToolById.useQuery(
     { id: toolId },
@@ -77,7 +80,7 @@ export default function ToolDetail() {
       <main className="mx-auto max-w-[900px] px-4 py-6">
         {/* Breadcrumbs */}
         <nav className="flex items-center gap-1.5 text-sm mb-5" style={{ color: "var(--color-text-muted)" }}>
-          <Link to="/inventions" className="hover:underline" style={{ color: "var(--color-accent)" }}>
+          <Link to={listUrl} className="hover:underline" style={{ color: "var(--color-accent)" }}>
             Инструменты для изобретений
           </Link>
           <span>/</span>

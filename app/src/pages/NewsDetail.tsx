@@ -18,6 +18,8 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useTheme } from "@/hooks/useTheme";
+import { detailReturnPath } from "@/lib/detailNavigation";
+import { shouldMarkRead } from "@/lib/readStatus";
 
 export default function NewsDetail() {
   const { id } = useParams<{ id: string }>();
@@ -38,13 +40,31 @@ export default function NewsDetail() {
     { enabled: isAuthenticated && !isNaN(newsId) }
   );
 
-  const { data: readStatuses } = trpc.readStatus.list.useQuery(undefined, {
-    enabled: isAuthenticated,
-  });
-
   const utils = trpc.useUtils();
 
   const markRead = trpc.readStatus.markRead.useMutation({
+    onMutate: async () => {
+      await utils.readStatus.list.cancel();
+      const current = utils.readStatus.list.getData();
+      const wasUnread = current ? !current.some((status) => status.newsId === newsId && status.read) : false;
+      if (wasUnread) {
+        utils.readStatus.list.setData(undefined, (statuses) => [
+          ...(statuses ?? []),
+          { id: -newsId, userId: 0, newsId, read: true, readAt: new Date(), createdAt: new Date() },
+        ]);
+      }
+      if (wasUnread && article?.section) {
+        utils.readStatus.unreadCountBySection.setData(
+          { section: article.section as "ai-news" | "science" | "invention-tools" },
+          (data) => data ? { count: Math.max(0, data.count - 1) } : data,
+        );
+      }
+      if (wasUnread) {
+        utils.readStatus.unreadCount.setData(undefined, (data) =>
+          data ? { count: Math.max(0, data.count - 1) } : data,
+        );
+      }
+    },
     onSuccess: () => {
       utils.readStatus.list.invalidate();
       utils.readStatus.unreadCount.invalidate();
@@ -68,18 +88,14 @@ export default function NewsDetail() {
     },
   });
 
-  // Auto-mark as read when viewing — fire ONCE per article. The useMutation
-  // object is referentially unstable, so without this ref-guard the effect
-  // loops: mutate -> invalidate -> re-render -> mutate again -> rate-limited.
+  // Auto-mark only after the detail query succeeds. The ref guard makes this
+  // safe under Strict Mode, remounts, and mutation-triggered re-renders.
   const markedRef = useRef<number | null>(null);
   useEffect(() => {
-    if (!isAuthenticated || isNaN(newsId)) return;
-    if (markedRef.current === newsId) return;
-    const status = readStatuses?.find((s) => s.newsId === newsId);
-    if (status?.read) return;
+    if (!shouldMarkRead(markedRef.current, newsId, isAuthenticated, Boolean(article))) return;
     markedRef.current = newsId;
     markRead.mutate({ newsId });
-  }, [newsId, isAuthenticated, readStatuses, markRead]);
+  }, [newsId, isAuthenticated, article, markRead]);
 
   const isFavorite = favCheck?.isFavorite ?? false;
 
@@ -112,7 +128,7 @@ export default function NewsDetail() {
     : article?.isScience
       ? "/science"
       : "/";
-  const listUrl = `${listPath}${location.search}`;
+  const listUrl = detailReturnPath(listPath, location.search);
 
   if (isLoading) {
     return (

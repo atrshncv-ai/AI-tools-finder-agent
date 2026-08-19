@@ -12,18 +12,11 @@ export default function Favorites() {
   });
   const { data: readStatuses } = trpc.readStatus.list.useQuery();
 
-  const utils = trpc.useUtils();
-  const markRead = trpc.readStatus.markRead.useMutation({
-    onSuccess: () => utils.readStatus.list.invalidate(),
-  });
 
   const readSet = new Set(
     (readStatuses ?? []).filter((s) => s.read).map((s) => s.newsId)
   );
 
-  const handleMarkRead = (newsId: number) => {
-    markRead.mutate({ newsId });
-  };
 
   if (authLoading) return null;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
@@ -66,7 +59,7 @@ export default function Favorites() {
                 // "added to favorites" time instead of the publication date.
                 article={fav.news}
                 isRead={readSet.has(fav.newsId)}
-                onMarkRead={handleMarkRead}
+
               />
             ))}
           </div>
