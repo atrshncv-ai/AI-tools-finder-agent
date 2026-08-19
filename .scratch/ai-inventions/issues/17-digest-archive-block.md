@@ -1,6 +1,6 @@
 # 17 — Дайджест: отдельный блок «Из архива» + текстовая ссылка на дашборд
 
-Status: ready-for-agent  
+Status: done  
 Blocked by: none
 
 ## Задача

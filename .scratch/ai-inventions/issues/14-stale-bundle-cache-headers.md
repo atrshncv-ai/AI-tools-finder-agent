@@ -1,6 +1,6 @@
 # 14 — Cache-Control заголовки для статики (клиент видит старую версию)
 
-Status: ready-for-agent  
+Status: done  
 Blocked by: none
 
 ## Задача

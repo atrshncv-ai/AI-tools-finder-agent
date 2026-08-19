@@ -1,6 +1,6 @@
 # 15 — Фолбэк-модели Zen + извлечение reasoning_content
 
-Status: ready-for-agent  
+Status: done  
 Blocked by: none
 
 ## Задача

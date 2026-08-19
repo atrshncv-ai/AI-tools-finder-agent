@@ -1,6 +1,6 @@
 # 19 — Стабильные даты каталога: не поднимать updatedAt при верификации
 
-Status: ready-for-agent  
+Status: done  
 Blocked by: none
 
 ## Задача

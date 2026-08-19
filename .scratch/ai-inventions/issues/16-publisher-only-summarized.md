@@ -1,6 +1,6 @@
 # 16 — Publisher публикует только статьи с саммари
 
-Status: ready-for-agent  
+Status: done  
 Blocked by: none
 
 ## Задача

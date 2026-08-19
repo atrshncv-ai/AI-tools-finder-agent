@@ -1,6 +1,6 @@
 # 18 — «Прочитать всё» и общий unread-счётчик: учитывать все опубликованные
 
-Status: ready-for-agent  
+Status: done  
 Blocked by: none
 
 ## Задача
