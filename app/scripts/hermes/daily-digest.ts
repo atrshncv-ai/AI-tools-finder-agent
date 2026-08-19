@@ -190,8 +190,7 @@ async function main() {
   const db = getDb();
   const since = new Date(Date.now() - WINDOW_HOURS * 3600_000);
 
-  // publishedAt = when the article was published by the original SOURCE.
-  // Using updatedAt would pull in old backlog articles re-published today.
+  // updatedAt = when the article was published on our platform.
   const recentItems = await db
     .select({
       id: news.id,
@@ -204,8 +203,8 @@ async function main() {
       summary: news.summary,
     })
     .from(news)
-    .where(and(eq(news.status, "published"), gte(news.publishedAt, since), nonEmptySummary))
-    .orderBy(desc(news.publishedAt));
+    .where(and(eq(news.status, "published"), gte(news.updatedAt, since), nonEmptySummary))
+    .orderBy(desc(news.updatedAt));
 
   // Backfill a few strong historical candidates per digest as a SEPARATE
   // archive block (not mixed into section counters). They are marked after a
@@ -236,7 +235,7 @@ async function main() {
       source: news.source, isScience: news.isScience, section: news.section,
       sphereTags: news.sphereTags, summary: news.summary,
     }).from(news).where(and(eq(news.status, "published"), eq(news.section, section), nonEmptySummary))
-      .orderBy(desc(news.publishedAt)).limit(FALLBACK_ITEMS_PER_SECTION);
+      .orderBy(desc(news.updatedAt)).limit(FALLBACK_ITEMS_PER_SECTION);
     items.push(...fallback);
   }
 
