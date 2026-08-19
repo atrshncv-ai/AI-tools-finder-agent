@@ -22,6 +22,7 @@ import { SPHERE_NAMES } from "../../src/lib/sphereNames";
 import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
 import { and, desc, eq, gte, isNotNull, isNull, ne, not, inArray, sql } from "drizzle-orm";
+import { pathToFileURL } from "node:url";
 
 const WINDOW_HOURS = 24;
 const MAX_ITEMS_PER_SECTION = 7;
@@ -92,7 +93,7 @@ export function splitTelegramText(text: string, maxLen = TELEGRAM_MAX_LEN): stri
   let remaining = text;
   while (remaining.length > maxLen) {
     let cut = remaining.lastIndexOf("\n", maxLen);
-    if (cut < 200) cut = maxLen;
+    if (cut < 0) cut = maxLen;
     chunks.push(remaining.slice(0, cut));
     remaining = remaining.slice(cut).replace(/^\n+/, "");
   }
@@ -124,7 +125,7 @@ export function buildDigest(items: DigestItem[], archiveItems: DigestItem[] = []
   });
 
   const lines = [
-    `🌅 *Утренний дайджест научного агента`,
+    `🌅 *Утренний дайджест научного агента*`,
     `_${dateStr}_`,
     "",
     `За последние ${WINDOW_HOURS} часа опубликовано: *${items.length}*`,
@@ -267,13 +268,22 @@ async function main() {
     const reminderOk = !BOT_TOKEN || (await sendTelegram(paymentReminderText(), PAYMENT_MANAGER_CHAT_ID));
     console.error(`[daily-digest] payment reminder → manager: ${reminderOk ? "sent" : "FAILED"}`);
   }
-  if (archiveItems.length > 0 && (CHAT_IDS.length > 0 || !BOT_TOKEN)) {
+  // Mark archive items as consumed ONLY when the digest actually reached at
+  // least one recipient: a failed fan-out (e.g. Telegram 400 on malformed
+  // Markdown) must not silently burn the archive pool.
+  if (archiveItems.length > 0 && okCount > 0) {
     await db.update(news).set({ digestArchiveSentAt: new Date() }).where(inArray(news.id, archiveItems.map((item) => item.id)));
   }
   process.exit(0);
 }
 
-main().catch((err) => {
-  console.error("[daily-digest] Fatal error:", err);
-  process.exit(1);
-});
+// Run only when executed as a script (tsx scripts/hermes/daily-digest.ts),
+// not when imported by tests for buildDigest/splitTelegramText.
+const invokedAsScript =
+  process.argv[1] != null && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedAsScript) {
+  main().catch((err) => {
+    console.error("[daily-digest] Fatal error:", err);
+    process.exit(1);
+  });
+}

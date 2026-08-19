@@ -48,3 +48,45 @@ describe("digest archive block", () => {
     expect(text).not.toContain("ИИ для науки — 1");
   });
 });
+
+describe("digest markdown safety (Telegram parse_mode=Markdown)", () => {
+  const tricky = [
+    { id: 1, title: "Звёздочки *в* _заголовке_ и [скобки]", originalUrl: "https://example.com/a", source: "hn", isScience: false, section: "ai-news", sphereTags: ["ai"], summary: "Саммари с `бэктиками` и *звёздочкой*" },
+    { id: 2, title: "Обычный заголовок", originalUrl: "https://example.com/b", source: null, isScience: true, section: "science", sphereTags: [], summary: null },
+  ];
+
+  it("header bold is closed (regression: Telegram 400 can't find end of entity)", () => {
+    const text = buildDigest(tricky);
+    expect(text).toContain("*Утренний дайджест научного агента*");
+  });
+
+  it("all legacy-Markdown entities are balanced after escaping", () => {
+    const text = buildDigest(tricky, [
+      { id: 3, title: "Архив [с _пометками*]", originalUrl: "https://example.com/c", source: "nature", isScience: true, section: "science", sphereTags: [] },
+    ]);
+    // Walk the text once: \X is a literal X; emphasis chars must pair; every
+    // unescaped "]" must close a [text](url) link — otherwise Telegram 400s.
+    let depth = 0, stars = 0, underscores = 0, backticks = 0;
+    let i = 0;
+    while (i < text.length) {
+      const c = text[i];
+      if (c === "\\") { i += 2; continue; }
+      if (c === "*") stars++;
+      else if (c === "_") underscores++;
+      else if (c === "`") backticks++;
+      else if (c === "[") depth++;
+      else if (c === "]") {
+        depth--;
+        expect(text[i + 1]).toBe("("); // link URL must open right after
+        const close = text.indexOf(")", i + 2);
+        expect(close).toBeGreaterThan(0);
+        i = close;
+      }
+      i++;
+    }
+    expect(depth).toBe(0);
+    expect(stars % 2).toBe(0);
+    expect(underscores % 2).toBe(0);
+    expect(backticks % 2).toBe(0);
+  });
+});
