@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { getDb } from "../api/queries/connection";
 import { inventionTools } from "@db/schema";
+import { validateInventionTool } from "./inventionToolQuality";
 
 // 30 real AI-for-science tools with verified working URLs (HTTP 200 checked
 // from the production server on 2026-08-14). Descriptions are based on the
@@ -117,6 +118,7 @@ async function main() {
   const db = getDb();
   let inserted = 0;
   for (const [slug, name, organization, country, kind, spheres, accessStatus, description, officialUrl, docsUrl] of tools) {
+    validateInventionTool({ slug, name, kind, spheres, description, officialUrl });
     await db.insert(inventionTools).values({
       slug, name, organization, country, kind, spheres, accessStatus, description,
       officialUrl, docsUrl: docsUrl ?? null, lastVerifiedAt: new Date(),

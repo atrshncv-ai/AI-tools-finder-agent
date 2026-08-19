@@ -2,6 +2,7 @@ import "dotenv/config";
 import { getDb } from "../api/queries/connection";
 import { inventionTools } from "@db/schema";
 import { sql } from "drizzle-orm";
+import { validateInventionTool } from "./inventionToolQuality";
 
 const tools = [
   ["gnome", "GNoME", "Google DeepMind", "US", "materials-discovery", ["materials"], "research", "Модель для поиска стабильных кристаллических структур и новых материалов.", "https://deepmind.google/discover/blog/millions-of-new-materials-discovered-with-deep-learning/"],
@@ -21,10 +22,8 @@ const tools = [
 async function main() {
   const db = getDb();
   for (const [slug, name, organization, country, kind, spheres, accessStatus, description, officialUrl] of tools) {
-    // updatedAt is NOT updated here on purpose: it is the sort key of the
-    // merged inventions list (catalog + news); bumping it on every seed run
-    // pushed all catalog cards above fresh news. lastVerifiedAt carries the
-    // "checked" stamp instead.
+    validateInventionTool({ slug, name, kind, spheres, description, officialUrl });
+    // Keep verification freshness separate from the stable catalog timestamps.
     await db.insert(inventionTools).values({ slug, name, organization, country, kind, spheres, accessStatus, description, officialUrl, lastVerifiedAt: new Date() }).onConflictDoUpdate({ target: inventionTools.slug, set: { name, organization, country, kind, spheres, accessStatus, description, officialUrl, lastVerifiedAt: new Date() } });
   }
   // Touch only the verification stamp of every existing catalog card so the

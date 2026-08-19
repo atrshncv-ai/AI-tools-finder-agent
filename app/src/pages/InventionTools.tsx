@@ -6,6 +6,11 @@ import { Wrench, ArrowRight, Globe } from "lucide-react";
 import CategoryFilter from "@/components/CategoryFilter";
 import { SPHERE_NAMES } from "@/lib/sphereNames";
 import FreshnessFilter, { type FreshnessKey } from "@/components/FreshnessFilter";
+import {
+  filterInventionToolsByFreshness,
+  inventionToolFreshnessDate,
+  sortInventionTools,
+} from "@/lib/inventionTools";
 
 export default function InventionTools() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -21,63 +26,12 @@ export default function InventionTools() {
     limit: 300,
   });
 
-  // Also fetch news articles classified as invention-tools
-  const { data: newsData } = trpc.news.list.useQuery({
-    section: "invention-tools",
-    limit: 300,
-  });
-
-  // Merge catalog tools + news articles, deduplicate by title
-  const newsItems = (newsData?.items ?? []).map((n) => ({
-    id: n.id,
-    name: n.title,
-    organization: n.source ?? "",
-    country: "",
-    kind: "news",
-    spheres: n.sphereTags ?? [],
-    accessStatus: "published",
-    description: n.summary ?? "",
-    officialUrl: n.originalUrl ?? "",
-    docsUrl: "",
-    publishedAt: n.publishedAt,
-    updatedAt: n.updatedAt,
-    createdAt: n.createdAt,
-    _source: "news" as const,
-  }));
-
-  const catalogItems = (tools ?? []).map((t) => ({
-    ...t,
-    _source: "catalog" as const,
-  }));
-
-  type MergedItem = typeof newsItems[number] | typeof catalogItems[number];
-  // Freshness/sort date — the SAME date the card displays: news → platform
-  // publish date (updatedAt); catalog → verification date (lastVerifiedAt,
-  // since seed/deploy stopped touching catalog updatedAt). Sorting by
-  // updatedAt alone pushed stale-but-recently-verified catalog cards above
-  // fresh news.
-  const freshnessDate = (tool: MergedItem): Date =>
-    tool._source === "news"
-      ? new Date(tool.updatedAt)
-      : new Date(tool.lastVerifiedAt ?? tool.createdAt);
-
-  const allItems: MergedItem[] = [...newsItems, ...catalogItems];
-  const seen = new Set<string>();
-  const merged = allItems.sort((a, b) => freshnessDate(b).getTime() - freshnessDate(a).getTime()).filter((item) => {
-    const key = item.name.toLowerCase().trim();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  // The inventions section is a catalog, not a news feed. News rows must never
+  // be merged here, even when they carry the historical invention-tools section.
+  const catalogItems = sortInventionTools(tools ?? []);
 
   const sphereOptions = (spheresData ?? []).map((s) => ({ slug: s, name: SPHERE_NAMES[s] || s }));
-  const visible = freshness === "all"
-    ? merged
-    : merged.filter((tool) => {
-        const ageMs = Date.now() - freshnessDate(tool).getTime();
-        const hours = freshness === "day" ? 24 : freshness === "3days" ? 72 : freshness === "week" ? 168 : 720;
-        return ageMs <= hours * 3600_000;
-      });
+  const visible = filterInventionToolsByFreshness(catalogItems, freshness);
   const total = visible.length;
 
   const updateFilter = (key: "spheres" | "freshness", value: string | string[]) => {
@@ -135,7 +89,7 @@ export default function InventionTools() {
             {visible.map((tool) => (
               <Link
                 key={tool.id}
-                to={`${tool._source === "news" ? `/news/${tool.id}` : `/tools/${tool.id}`}${tool._source === "news" && searchParams.toString() ? `?${searchParams.toString()}` : ""}`}
+                to={`/tools/${tool.id}`}
                 className="group block rounded-xl border transition-all duration-200 hover:-translate-y-px"
                 style={{ backgroundColor: "var(--color-card)", borderColor: "var(--color-border)" }}
               >
@@ -188,7 +142,7 @@ export default function InventionTools() {
                     <div className="flex items-center justify-between mt-4 text-[13px]" style={{ color: "var(--color-text-muted)" }}>
                       <div className="flex items-center gap-2">
                         <span>
-                          {new Date(tool.updatedAt).toLocaleDateString("ru-RU")}
+                          {inventionToolFreshnessDate(tool).toLocaleDateString("ru-RU")}
                         </span>
                         {tool.organization && (
                           <>
