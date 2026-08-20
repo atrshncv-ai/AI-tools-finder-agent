@@ -165,7 +165,7 @@ async function main() {
   const db = getDb();
   const since = new Date(Date.now() - WINDOW_HOURS * 3600_000);
 
-  // updatedAt = when the article was published on our platform.
+  // platformPublishedAt is immutable; updatedAt may change during enrichment.
   const recentItems = await db
     .select({
       id: news.id,
@@ -178,8 +178,8 @@ async function main() {
       summary: news.summary,
     })
     .from(news)
-    .where(and(eq(news.status, "published"), gte(news.updatedAt, since), nonEmptySummary))
-    .orderBy(desc(news.updatedAt));
+    .where(and(eq(news.status, "published"), gte(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt})`, since), nonEmptySummary))
+    .orderBy(desc(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt})`));
 
   const items = [...recentItems];
   console.error(`[daily-digest] ${items.length} published in last ${WINDOW_HOURS}h`);

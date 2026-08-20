@@ -59,11 +59,11 @@ export async function findAllNews(opts: {
     conditions.push(eq(news.classificationType, classificationType));
   }
 
-  // Freshness and ordering use the date the agent added/updated the article.
+  // Freshness and ordering use the immutable platform publication date.
   const freshnessWindow = getFreshnessWindow(freshness);
-  conditions.push(lte(news.updatedAt, freshnessWindow.to));
+  conditions.push(lte(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt})`, freshnessWindow.to));
   if (freshness && freshness !== "all") {
-    if (freshnessWindow.from) conditions.push(gte(news.updatedAt, freshnessWindow.from));
+    if (freshnessWindow.from) conditions.push(gte(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt})`, freshnessWindow.from));
   }
 
   if (search) {
@@ -85,7 +85,7 @@ export async function findAllNews(opts: {
     .from(news)
     .leftJoin(categories, eq(news.categoryId, categories.id))
     .where(where)
-    .orderBy(desc(news.updatedAt), desc(news.id))
+    .orderBy(desc(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt})`), desc(news.id))
     .limit(limit)
     .offset(offset);
 

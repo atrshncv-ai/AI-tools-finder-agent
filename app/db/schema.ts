@@ -70,6 +70,8 @@ export const news = pgTable(
     section: text("section").default("ai-news").notNull(),
     sphereTags: jsonb("sphereTags").$type<string[]>().default([]).notNull(),
     digestArchiveSentAt: timestamp("digestArchiveSentAt"),
+    // Immutable timestamp for the first publication on this platform.
+    platformPublishedAt: timestamp("platformPublishedAt"),
     language: text("language"),
     score: integer("score"),
     metrics: jsonb("metrics"),
