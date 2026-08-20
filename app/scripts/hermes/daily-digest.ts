@@ -21,7 +21,7 @@ import "dotenv/config";
 
 import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
-import { and, desc, eq, gte, isNotNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, ne, sql } from "drizzle-orm";
 import { pathToFileURL } from "node:url";
 
 const WINDOW_HOURS = 24;
@@ -178,7 +178,7 @@ async function main() {
       summary: news.summary,
     })
     .from(news)
-    .where(and(eq(news.status, "published"), gte(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt})`, since), nonEmptySummary))
+    .where(and(eq(news.status, "published"), sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt}) >= ${since.toISOString()}`, nonEmptySummary))
     .orderBy(desc(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt})`));
 
   const items = [...recentItems];
