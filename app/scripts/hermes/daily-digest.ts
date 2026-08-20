@@ -20,6 +20,7 @@
 import "dotenv/config";
 
 import { getDb } from "../../api/queries/connection";
+import { hasExplicitAiSignal } from "../../api/lib/classify";
 import { news } from "@db/schema";
 import { and, desc, eq, gte, isNotNull, isNull, ne, not, inArray, sql } from "drizzle-orm";
 import { pathToFileURL } from "node:url";
@@ -197,21 +198,27 @@ async function main() {
     .orderBy(desc(news.updatedAt));
 
   // Backfill a few strong historical candidates per digest as a SEPARATE
-  // archive block (not mixed into section counters). They are marked after a
-  // successful send, so the archive is consumed over days and never
-  // duplicates the current 24-hour feed.
-  const archiveItems = await db
-    .select({
-      id: news.id, title: news.title, originalUrl: news.originalUrl,
-      source: news.source, isScience: news.isScience, section: news.section,
-      sphereTags: news.sphereTags,
-      summary: news.summary,
-    })
-    .from(news)
-    .where(and(eq(news.status, "rejected"), gte(news.score, 50), isNull(news.digestArchiveSentAt), nonEmptySummary, sql`${news.source} NOT LIKE 'youtube-%'`, not(inArray(news.source, ["reddit-artificial", "reddit-localllama", "reddit-machinelearning"]))))
-    .orderBy(desc(news.score), desc(news.updatedAt))
-    .limit(ARCHIVE_ITEMS_MAX);
-  const items = [...recentItems];
+    // archive block (not mixed into section counters). They are marked after a
+    // successful send, so the archive is consumed over days and never
+    // duplicates the current 24-hour feed.
+    // IMPORTANT: only candidates that still carry an explicit AI signal may
+    // appear — rejected non-AI rows (arxiv biology, nature news, etc.) must not
+    // sneak back into the digest through the archive.
+    const archiveCandidates = await db
+      .select({
+        id: news.id, title: news.title, originalUrl: news.originalUrl,
+        source: news.source, isScience: news.isScience, section: news.section,
+        sphereTags: news.sphereTags,
+        summary: news.summary,
+      })
+      .from(news)
+      .where(and(eq(news.status, "rejected"), gte(news.score, 50), isNull(news.digestArchiveSentAt), nonEmptySummary, sql`${news.source} NOT LIKE 'youtube-%'`, not(inArray(news.source, ["reddit-artificial", "reddit-localllama", "reddit-machinelearning"]))))
+      .orderBy(desc(news.score), desc(news.updatedAt))
+      .limit(30);
+    const archiveItems = archiveCandidates
+      .filter((item) => hasExplicitAiSignal(`${item.title} ${item.summary ?? ""}`))
+      .slice(0, ARCHIVE_ITEMS_MAX);
+    const items = [...recentItems];
 
   // NO fallback of older published articles into sections: the digest must
   // reflect strictly the last 24 hours (`since` window above). Empty sections
