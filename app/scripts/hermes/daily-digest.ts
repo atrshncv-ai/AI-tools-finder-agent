@@ -21,13 +21,11 @@ import "dotenv/config";
 
 import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
-import { and, desc, eq, gte, isNotNull, isNull, ne, not, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, ne } from "drizzle-orm";
 import { pathToFileURL } from "node:url";
 
 const WINDOW_HOURS = 24;
 const MAX_ITEMS_PER_SECTION = 7;
-const FALLBACK_ITEMS_PER_SECTION = 3;
-const ARCHIVE_ITEMS_MAX = 5;
 const TELEGRAM_MAX_LEN = 4000;
 const DASHBOARD_URL = (process.env.DIGEST_DASHBOARD_URL || "http://localhost:3000").replace(/\/+$/, "");
 const nonEmptySummary = and(isNotNull(news.summary), ne(news.summary, ""));
@@ -101,7 +99,7 @@ export function paymentReminderText(dueAt = PAYMENT_DUE_AT): string {
   return `💳 *Напоминание об оплате сервера*\n\nПожалуйста, проверьте оплату сервера. Текущий ориентир окончания оплаченного периода: *${dueAt}*.\n\nПосле этой даты напоминание будет приходить каждые 30 дней.`;
 }
 
-export function buildDigest(items: DigestItem[], archiveItems: DigestItem[] = []): string {
+export function buildDigest(items: DigestItem[]): string {
   const science = items.filter((i) => i.section === "science" || (!i.section && i.isScience));
   const inventions = items.filter((i) => i.section === "invention-tools");
   const tech = items.filter((i) => i.section === "ai-news" || (!i.section && !i.isScience));
@@ -123,18 +121,6 @@ export function buildDigest(items: DigestItem[], archiveItems: DigestItem[] = []
     ...formatSection("🔬", "ИИ для науки", science),
     ...formatSection("🧪", "Инструменты для изобретений", inventions),
   ];
-
-  // Archive backfill is a separate labeled block: these are older picked
-  // articles (rejected by the daily gate but strong), NOT part of the 24-hour
-  // counters — mixing them into sections made digest counts diverge from the
-  // dashboard.
-  if (archiveItems.length > 0) {
-    lines.push(`📚 *Из архива* — ${archiveItems.length} (в счётчики суток не входят)`);
-    for (const item of archiveItems.slice(0, ARCHIVE_ITEMS_MAX)) {
-      lines.push(`▫️ [${esc(item.title)}](${item.originalUrl})`);
-    }
-    lines.push("");
-  }
 
   lines.push(`📊 Дашборд доступен по кнопке ниже`);
   return lines.join("\n");
@@ -195,47 +181,11 @@ async function main() {
     .where(and(eq(news.status, "published"), gte(news.updatedAt, since), nonEmptySummary))
     .orderBy(desc(news.updatedAt));
 
-  // Backfill a few strong historical candidates per digest as a SEPARATE
-  // archive block (not mixed into section counters). They are marked after a
-  // successful send, so the archive is consumed over days and never
-  // duplicates the current 24-hour feed.
-  const archiveItems = await db
-    .select({
-      id: news.id, title: news.title, originalUrl: news.originalUrl,
-      source: news.source, isScience: news.isScience, section: news.section,
-      sphereTags: news.sphereTags,
-      summary: news.summary,
-    })
-    .from(news)
-    .where(and(eq(news.status, "rejected"), gte(news.score, 50), isNull(news.digestArchiveSentAt), nonEmptySummary, sql`${news.source} NOT LIKE 'youtube-%'`, not(inArray(news.source, ["reddit-artificial", "reddit-localllama", "reddit-machinelearning"]))))
-    .orderBy(desc(news.score), desc(news.updatedAt))
-    .limit(ARCHIVE_ITEMS_MAX);
   const items = [...recentItems];
-
-  // If a section has no fresh publication (for example while Zen is
-  // rate-limited), include a few latest already-published entries so the
-  // scheduled digest remains useful and all three sections stay visible.
-  const fallbackSections = ["ai-news", "science"];
-  const present = new Set(items.map((item) => item.section));
-  for (const section of fallbackSections) {
-    if (present.has(section)) continue;
-    const fallback = await db.select({
-      id: news.id, title: news.title, originalUrl: news.originalUrl,
-      source: news.source, isScience: news.isScience, section: news.section,
-      sphereTags: news.sphereTags, summary: news.summary,
-    }).from(news).where(and(eq(news.status, "published"), eq(news.section, section), nonEmptySummary))
-      .orderBy(desc(news.updatedAt)).limit(FALLBACK_ITEMS_PER_SECTION);
-    items.push(...fallback);
-  }
-
-  // NOTE: invention-tools section has no fallback from the catalog.
-  // If no fresh invention news exists the section simply does not appear
-  // in the digest (per user requirement: only send sections with new items).
-
-  console.error(`[daily-digest] ${items.length} published in last ${WINDOW_HOURS}h (+${archiveItems.length} from archive)`);
+  console.error(`[daily-digest] ${items.length} published in last ${WINDOW_HOURS}h`);
 
   const digestParts = items.length > 0
-    ? splitTelegramText(buildDigest(items, archiveItems))
+    ? splitTelegramText(buildDigest(items))
     : [];
 
   if (!BOT_TOKEN || CHAT_IDS.length === 0) {
@@ -256,12 +206,6 @@ async function main() {
   if (PAYMENT_MANAGER_CHAT_ID && isPaymentReminderDay(new Date())) {
     const reminderOk = !BOT_TOKEN || (await sendTelegram(paymentReminderText(), PAYMENT_MANAGER_CHAT_ID));
     console.error(`[daily-digest] payment reminder → manager: ${reminderOk ? "sent" : "FAILED"}`);
-  }
-  // Mark archive items as consumed ONLY when the digest actually reached at
-  // least one recipient: a failed fan-out (e.g. Telegram 400 on malformed
-  // Markdown) must not silently burn the archive pool.
-  if (archiveItems.length > 0 && okCount > 0) {
-    await db.update(news).set({ digestArchiveSentAt: new Date() }).where(inArray(news.id, archiveItems.map((item) => item.id)));
   }
   process.exit(0);
 }

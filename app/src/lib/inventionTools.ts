@@ -10,7 +10,7 @@ export type InventionToolListItem = {
 export type FreshnessKey = "all" | "day" | "3days" | "week" | "month";
 
 export function inventionToolFreshnessDate(tool: InventionToolListItem): Date {
-  return new Date(tool.lastVerifiedAt ?? tool.updatedAt ?? tool.createdAt);
+  return new Date(tool.createdAt);
 }
 
 /** Sorts without mutating the query result; id makes equal timestamps deterministic. */

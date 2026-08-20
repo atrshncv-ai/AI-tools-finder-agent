@@ -50,4 +50,14 @@ describe("invention tool catalog presentation", () => {
     ];
     expect(filterInventionToolsByFreshness(records, "day", now).map(({ name }) => name)).toEqual(["Fresh"]);
   });
+
+  it("uses the original catalog date, not the latest verification date", () => {
+    const record = {
+      ...tool(1, "Stable", "2026-08-20T00:00:00Z", ["chemistry"]),
+      createdAt: "2026-08-14T00:00:00Z",
+      lastVerifiedAt: "2026-08-20T00:00:00Z",
+    };
+    expect(record.createdAt).toBe("2026-08-14T00:00:00Z");
+    expect(new Date(record.createdAt).toLocaleDateString("ru-RU")).toBe("14.08.2026");
+  });
 });

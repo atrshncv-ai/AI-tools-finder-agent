@@ -1,7 +1,6 @@
 import "dotenv/config";
 import { getDb } from "../api/queries/connection";
 import { inventionTools } from "@db/schema";
-import { sql } from "drizzle-orm";
 import { validateInventionTool } from "./inventionToolQuality";
 
 const tools = [
@@ -24,11 +23,10 @@ async function main() {
   for (const [slug, name, organization, country, kind, spheres, accessStatus, description, officialUrl] of tools) {
     validateInventionTool({ slug, name, kind, spheres, description, officialUrl });
     // Keep verification freshness separate from the stable catalog timestamps.
-    await db.insert(inventionTools).values({ slug, name, organization, country, kind, spheres, accessStatus, description, officialUrl, lastVerifiedAt: new Date() }).onConflictDoUpdate({ target: inventionTools.slug, set: { name, organization, country, kind, spheres, accessStatus, description, officialUrl, lastVerifiedAt: new Date() } });
+    await db.insert(inventionTools).values({ slug, name, organization, country, kind, spheres, accessStatus, description, officialUrl, lastVerifiedAt: new Date() }).onConflictDoUpdate({ target: inventionTools.slug, set: { name, organization, country, kind, spheres, accessStatus, description, officialUrl } });
   }
   // Touch only the verification stamp of every existing catalog card so the
   // section does not look abandoned even when no new tools are added.
-  await db.update(inventionTools).set({ lastVerifiedAt: new Date() }).where(sql`1=1`);
-  console.log(`seeded ${tools.length} invention tools, refreshed lastVerifiedAt for all catalog cards`);
+  console.log(`seeded ${tools.length} invention tools`);
 }
 main().catch((error) => { console.error(error); process.exit(1); });

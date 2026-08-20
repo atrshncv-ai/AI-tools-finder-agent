@@ -47,20 +47,15 @@ describe("digest sections", () => {
   });
 });
 
-describe("digest archive block", () => {
-  it("keeps archive items out of section counters and shows them separately", () => {
+describe("digest archive handling", () => {
+  it("does not include archive items in the digest", () => {
     const fresh = [
       { id: 1, title: "Свежая ИИ-новость", originalUrl: "https://example.com/a", source: "hn", isScience: false, section: "ai-news", sphereTags: [] },
     ];
-    const archive = [
-      { id: 2, title: "Архивная статья про CRISPR", originalUrl: "https://example.com/b", source: "nature", isScience: true, section: "science", sphereTags: [] },
-    ];
-    const text = buildDigest(fresh, archive);
+    const text = buildDigest(fresh);
     expect(text).toContain("опубликовано: *1*");
-    expect(text).toContain("Из архива");
-    expect(text).toContain("Архивная статья про CRISPR");
-    expect(text).toContain("в счётчики суток не входят");
-    // Archive science article must NOT inflate the science section header
+    expect(text).not.toContain("Из архива");
+    expect(text).not.toContain("Архивная статья про CRISPR");
     expect(text).not.toContain("ИИ для науки — 1");
   });
 });
@@ -77,9 +72,7 @@ describe("digest markdown safety (Telegram parse_mode=Markdown)", () => {
   });
 
   it("all legacy-Markdown entities are balanced after escaping", () => {
-    const text = buildDigest(tricky, [
-      { id: 3, title: "Архив [с _пометками*]", originalUrl: "https://example.com/c", source: "nature", isScience: true, section: "science", sphereTags: [] },
-    ]);
+    const text = buildDigest(tricky);
     // Walk the text once: \X is a literal X; emphasis chars must pair; every
     // unescaped "]" must close a [text](url) link — otherwise Telegram 400s.
     let depth = 0, stars = 0, underscores = 0, backticks = 0;
