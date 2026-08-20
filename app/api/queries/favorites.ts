@@ -30,7 +30,6 @@ export async function findFavoritesByUser(userId: number) {
         section: news.section,
         sphereTags: news.sphereTags,
         digestArchiveSentAt: news.digestArchiveSentAt,
-        platformPublishedAt: news.platformPublishedAt,
         language: news.language,
         score: news.score,
         metrics: news.metrics,

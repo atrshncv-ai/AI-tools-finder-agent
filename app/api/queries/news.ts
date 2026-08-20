@@ -1,6 +1,6 @@
 import { getDb } from "./connection";
 import { news, categories, inventionTools } from "@db/schema";
-import { eq, inArray, desc, and, count, sql, getTableColumns } from "drizzle-orm";
+import { eq, inArray, desc, and, count, sql, getTableColumns, gte, lte } from "drizzle-orm";
 import { getFreshnessWindow } from "./newsDateRules";
 
 // ─── Seed categories ───
@@ -62,14 +62,11 @@ export async function findAllNews(opts: {
     conditions.push(eq(news.classificationType, classificationType));
   }
 
-  // Freshness and ordering use the immutable platform publication date.
-  // `updatedAt` is touched by many pipeline steps (translate, re-evaluate,
-  // admin edits) which made card dates jump around and fall out of filters.
-  // platformPublishedAt is written exactly once at publish time.
+  // Freshness and ordering use the date the agent added/updated the article.
   const freshnessWindow = getFreshnessWindow(freshness);
-  conditions.push(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt}) <= ${freshnessWindow.to}`);
+  conditions.push(lte(news.updatedAt, freshnessWindow.to));
   if (freshness && freshness !== "all") {
-    if (freshnessWindow.from) conditions.push(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt}) >= ${freshnessWindow.from}`);
+    if (freshnessWindow.from) conditions.push(gte(news.updatedAt, freshnessWindow.from));
   }
 
   if (search) {
@@ -91,7 +88,7 @@ export async function findAllNews(opts: {
     .from(news)
     .leftJoin(categories, eq(news.categoryId, categories.id))
     .where(where)
-    .orderBy(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt}) DESC`, desc(news.id))
+    .orderBy(desc(news.updatedAt), desc(news.id))
     .limit(limit)
     .offset(offset);
 

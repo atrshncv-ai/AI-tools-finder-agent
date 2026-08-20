@@ -20,8 +20,6 @@
 import "dotenv/config";
 
 import { getDb } from "../../api/queries/connection";
-import { getFreshnessWindow } from "../../api/queries/newsDateRules";
-import { hasExplicitAiSignal } from "../../api/lib/classify";
 import { news } from "@db/schema";
 import { and, desc, eq, gte, isNotNull, isNull, ne, not, inArray, sql } from "drizzle-orm";
 import { pathToFileURL } from "node:url";
@@ -133,8 +131,7 @@ export function buildDigest(items: DigestItem[], archiveItems: DigestItem[] = []
   if (archiveItems.length > 0) {
     lines.push(`📚 *Из архива* — ${archiveItems.length} (в счётчики суток не входят)`);
     for (const item of archiveItems.slice(0, ARCHIVE_ITEMS_MAX)) {
-      const description = item.summary ? ` — ${esc(item.summary.replace(/\s+/g, " ").trim().slice(0, 180))}` : "";
-      lines.push(`▫️ ${esc(item.title)} (@url:\`${item.originalUrl}\`)${description}`);
+      lines.push(`▫️ [${esc(item.title)}](${item.originalUrl})`);
     }
     lines.push("");
   }
@@ -180,13 +177,9 @@ async function sendTelegram(text: string, chatId: string): Promise<boolean> {
 
 async function main() {
   const db = getDb();
-  // Same calendar MSK window as the dashboard "За сутки" filter —
-  // digest counts and dashboard counts are ONE dataset by construction.
-  const since = getFreshnessWindow("day").from;
+  const since = new Date(Date.now() - WINDOW_HOURS * 3600_000);
 
-  // platformPublishedAt = immutable platform publication date (same field the
-  // dashboard filters/sorts by, with the same MSK calendar window) — digest
-  // and dashboard counts can never diverge again.
+  // updatedAt = when the article was published on our platform.
   const recentItems = await db
     .select({
       id: news.id,
@@ -199,44 +192,41 @@ async function main() {
       summary: news.summary,
     })
     .from(news)
-    .where(
-      and(
-        eq(news.status, "published"),
-        gte(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt})`, since),
-        nonEmptySummary,
-      ),
-    )
-    .orderBy(desc(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt})`));
+    .where(and(eq(news.status, "published"), gte(news.updatedAt, since), nonEmptySummary))
+    .orderBy(desc(news.updatedAt));
 
   // Backfill a few strong historical candidates per digest as a SEPARATE
-    // archive block (not mixed into section counters). They are marked after a
-    // successful send, so the archive is consumed over days and never
-    // duplicates the current 24-hour feed.
-    // IMPORTANT: only candidates that still carry an explicit AI signal may
-    // appear — rejected non-AI rows (arxiv biology, nature news, etc.) must not
-    // sneak back into the digest through the archive.
-    const archiveCandidates = await db
-      .select({
-        id: news.id, title: news.title, originalUrl: news.originalUrl,
-        source: news.source, isScience: news.isScience, section: news.section,
-        sphereTags: news.sphereTags,
-        summary: news.summary,
-      })
-      .from(news)
-      .where(and(eq(news.status, "rejected"), gte(news.score, 50), isNull(news.digestArchiveSentAt), nonEmptySummary, sql`${news.source} NOT LIKE 'youtube-%'`, not(inArray(news.source, ["reddit-artificial", "reddit-localllama", "reddit-machinelearning"]))))
-      .orderBy(desc(news.score), desc(news.updatedAt))
-      .limit(30);
-    const archiveItems = archiveCandidates
-      .filter((item) => hasExplicitAiSignal(`${item.title} ${item.summary ?? ""}`))
-      .slice(0, ARCHIVE_ITEMS_MAX);
-    const items = [...recentItems];
+  // archive block (not mixed into section counters). They are marked after a
+  // successful send, so the archive is consumed over days and never
+  // duplicates the current 24-hour feed.
+  const archiveItems = await db
+    .select({
+      id: news.id, title: news.title, originalUrl: news.originalUrl,
+      source: news.source, isScience: news.isScience, section: news.section,
+      sphereTags: news.sphereTags,
+      summary: news.summary,
+    })
+    .from(news)
+    .where(and(eq(news.status, "rejected"), gte(news.score, 50), isNull(news.digestArchiveSentAt), nonEmptySummary, sql`${news.source} NOT LIKE 'youtube-%'`, not(inArray(news.source, ["reddit-artificial", "reddit-localllama", "reddit-machinelearning"]))))
+    .orderBy(desc(news.score), desc(news.updatedAt))
+    .limit(ARCHIVE_ITEMS_MAX);
+  const items = [...recentItems];
 
-  // NO fallback of older published articles into sections: the digest must
-  // reflect strictly the last 24 hours (`since` window above). Empty sections
-  // are simply omitted — per the owner's rule «пустые секции не отправлять».
-  // (Previous fallback pulled articles from August 17 into a "24h" digest.)
+  // If a section has no fresh publication (for example while Zen is
+  // rate-limited), include a few latest already-published entries so the
+  // scheduled digest remains useful and all three sections stay visible.
+  const fallbackSections = ["ai-news", "science"];
   const present = new Set(items.map((item) => item.section));
-  void present;
+  for (const section of fallbackSections) {
+    if (present.has(section)) continue;
+    const fallback = await db.select({
+      id: news.id, title: news.title, originalUrl: news.originalUrl,
+      source: news.source, isScience: news.isScience, section: news.section,
+      sphereTags: news.sphereTags, summary: news.summary,
+    }).from(news).where(and(eq(news.status, "published"), eq(news.section, section), nonEmptySummary))
+      .orderBy(desc(news.updatedAt)).limit(FALLBACK_ITEMS_PER_SECTION);
+    items.push(...fallback);
+  }
 
   // NOTE: invention-tools section has no fallback from the catalog.
   // If no fresh invention news exists the section simply does not appear
@@ -248,12 +238,12 @@ async function main() {
     ? splitTelegramText(buildDigest(items, archiveItems))
     : [];
 
-  // Fan-out to every recipient; one failing chat must not block the others.
-  let okCount = 0;
   if (!BOT_TOKEN || CHAT_IDS.length === 0) {
     console.error("[daily-digest] STUB MODE (no TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_IDS) — printing digest:");
     if (digestParts.length > 0) console.log(digestParts.join("\n---\n"));
   } else {
+    // Fan-out to every recipient; one failing chat must not block the others.
+    let okCount = 0;
     for (const chatId of CHAT_IDS) {
       let ok = true;
       for (const part of digestParts) ok = (await sendTelegram(part, chatId)) && ok;

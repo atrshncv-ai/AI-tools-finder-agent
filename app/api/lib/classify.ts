@@ -36,18 +36,7 @@ const SCIENCE_AI_PATTERNS = [
   /\bai\b/u, /artificial intelligence/u, /machine learning/u, /машинн.*обуч/u, /deep learning/u,
   /глубок.*обуч/u, /neural network/u, /нейронная сеть/u, /\bllm\b/u,
   /large language model/u, /генеративн/u,
-  /\bchatgpt\b/u, /\bgpt-[.\d]\d*/u, /\bgpt\b/u, /openai/u, /anthropic/u, /\bclaude\b/u,
-  /gemini/u, /deepmind/u, /mistral/i, /\bgrok\b/u, /\bqwen\b/u, /\bllama\b/u,
-  /языков.* модель/u, /языков.*модель/u, /диффузионн/u, /трансформер/u, /transformer/u,
-  /векторн.* представл/u, /embedding/i, /fine-tun/u, /обучени[ея] на данных/u,
-  /computer vision/u, /машинн.* зрен/u, /распознаван/u, /генеративн.* модель/u,
-  /диффуз/u,
 ];
-
-/** True when the text carries an explicit AI/ML signal (RU or EN). */
-export function hasExplicitAiSignal(text: string): boolean {
-  return SCIENCE_AI_PATTERNS.some((pattern) => pattern.test((text ?? "").toLowerCase()));
-}
 
 const CLASSIFICATION_TYPE_KEYWORDS: Record<string, string[]> = {
   new_tool: [

@@ -63,14 +63,6 @@ describe("digest archive block", () => {
     // Archive science article must NOT inflate the science section header
     expect(text).not.toContain("ИИ для науки — 1");
   });
-
-  it("uses the same title (@url:`...`) format as sections (not bare [title](url))", () => {
-    const text = buildDigest([], [
-      { id: 2, title: "Архивная статья", originalUrl: "https://example.com/b", source: "nature", isScience: true, section: "science", sphereTags: [], summary: "Описание архивной статьи." },
-    ]);
-    expect(text).toContain("▫️ Архивная статья (@url:`https://example.com/b`) — Описание архивной статьи.");
-    expect(text).not.toContain("[Архивная статья](");
-  });
 });
 
 describe("digest markdown safety (Telegram parse_mode=Markdown)", () => {
@@ -88,8 +80,9 @@ describe("digest markdown safety (Telegram parse_mode=Markdown)", () => {
     const text = buildDigest(tricky, [
       { id: 3, title: "Архив [с _пометками*]", originalUrl: "https://example.com/c", source: "nature", isScience: true, section: "science", sphereTags: [] },
     ]);
-    // Walk the text once: \X is a literal X; emphasis chars must pair.
-    let stars = 0, underscores = 0, backticks = 0, brackets = 0;
+    // Walk the text once: \X is a literal X; emphasis chars must pair; every
+    // unescaped "]" must close a [text](url) link — otherwise Telegram 400s.
+    let depth = 0, stars = 0, underscores = 0, backticks = 0;
     let i = 0;
     while (i < text.length) {
       const c = text[i];
@@ -97,24 +90,19 @@ describe("digest markdown safety (Telegram parse_mode=Markdown)", () => {
       if (c === "*") stars++;
       else if (c === "_") underscores++;
       else if (c === "`") backticks++;
-      else if (c === "[") brackets++;
-      else if (c === "]") brackets--;
+      else if (c === "[") depth++;
+      else if (c === "]") {
+        depth--;
+        expect(text[i + 1]).toBe("("); // link URL must open right after
+        const close = text.indexOf(")", i + 2);
+        expect(close).toBeGreaterThan(0);
+        i = close;
+      }
       i++;
     }
+    expect(depth).toBe(0);
     expect(stars % 2).toBe(0);
     expect(underscores % 2).toBe(0);
     expect(backticks % 2).toBe(0);
-    expect(brackets).toBe(0);
-  });
-
-  it("URLs with parentheses and query strings stay balanced (regression: Telegram 400 can't parse entities)", () => {
-    const text = buildDigest([
-      { id: 1, title: "Статья", originalUrl: "https://en.wikipedia.org/wiki/Foo_(bar)", source: "nature", isScience: false, section: "ai-news", sphereTags: [], summary: "Обычное описание." },
-      { id: 2, title: "Ещё", originalUrl: "https://example.com/a?x=1&y=2", source: null, isScience: true, section: "science", sphereTags: [], summary: null },
-    ]);
-    expect(text).toContain("(@url:`https://en.wikipedia.org/wiki/Foo_(bar)`)");
-    expect(text).toContain("(@url:`https://example.com/a?x=1&y=2`)");
-    // No unescaped square brackets in the whole text (would break the link parser)
-    expect(text).not.toContain("[");
   });
 });

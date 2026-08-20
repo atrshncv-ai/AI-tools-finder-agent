@@ -70,11 +70,6 @@ export const news = pgTable(
     section: text("section").default("ai-news").notNull(),
     sphereTags: jsonb("sphereTags").$type<string[]>().default([]).notNull(),
     digestArchiveSentAt: timestamp("digestArchiveSentAt"),
-    // Immutable platform publication timestamp: set ONCE by deploy-ready when
-    // the article is published. Never touched again by any pipeline step.
-    // Freshness filters, card dates and the digest all key off this field so
-    // they can never diverge.
-    platformPublishedAt: timestamp("platformPublishedAt"),
     language: text("language"),
     score: integer("score"),
     metrics: jsonb("metrics"),

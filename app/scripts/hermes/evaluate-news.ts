@@ -41,7 +41,6 @@ import { fetchYoutubeTranscript } from "./youtube-transcript";
 import { DEDICATED_AI_YOUTUBE_SOURCES } from "./youtube-sources";
 import { scoreYoutubeCandidate } from "./youtube-policy";
 import { classifyInvention, buildInventionContext } from "../../api/lib/invention-classify";
-import { hasExplicitAiSignal } from "../../api/lib/classify";
 
 const FETCH_TIMEOUT_MS = 20_000;
 const UA = process.env.AGENT_UA || "science-agent/2.0";
@@ -628,13 +627,7 @@ async function main() {
   let rejected = 0;
 
   for (const r of results) {
-    // HARD AI GATE: no explicit AI/ML signal in the article's own text → reject.
-    // Score-based bonuses (tier1 source, invention reroute, stars) must NEVER
-    // let a non-AI story (orcas, Fields medal, exoplanets) reach the feed.
-    const hasAiSignal = hasExplicitAiSignal(
-      `${r.title} ${r.metrics?.evidenceText ?? ""} ${r.originalContent ?? ""}`,
-    );
-    const passesGate = r.score >= SCORE_GATE && hasAiSignal;
+    const passesGate = r.score >= SCORE_GATE;
     const approvedDecision = passesGate && slots > 0;
     const metrics = {
       ...r.metrics,
@@ -644,9 +637,7 @@ async function main() {
         ? "approved"
         : passesGate
           ? "rejected-daily-cap"
-          : hasAiSignal
-            ? "rejected-low-score"
-            : "rejected-no-ai-signal",
+          : "rejected-low-score",
     };
 
     if (approvedDecision) {
