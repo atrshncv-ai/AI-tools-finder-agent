@@ -131,7 +131,8 @@ export function buildDigest(items: DigestItem[], archiveItems: DigestItem[] = []
   if (archiveItems.length > 0) {
     lines.push(`📚 *Из архива* — ${archiveItems.length} (в счётчики суток не входят)`);
     for (const item of archiveItems.slice(0, ARCHIVE_ITEMS_MAX)) {
-      lines.push(`▫️ [${esc(item.title)}](${item.originalUrl})`);
+      const description = item.summary ? ` — ${esc(item.summary.replace(/\s+/g, " ").trim().slice(0, 180))}` : "";
+      lines.push(`▫️ ${esc(item.title)} (@url:\`${item.originalUrl}\`)${description}`);
     }
     lines.push("");
   }
@@ -238,12 +239,12 @@ async function main() {
     ? splitTelegramText(buildDigest(items, archiveItems))
     : [];
 
+  // Fan-out to every recipient; one failing chat must not block the others.
+  let okCount = 0;
   if (!BOT_TOKEN || CHAT_IDS.length === 0) {
     console.error("[daily-digest] STUB MODE (no TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_IDS) — printing digest:");
     if (digestParts.length > 0) console.log(digestParts.join("\n---\n"));
   } else {
-    // Fan-out to every recipient; one failing chat must not block the others.
-    let okCount = 0;
     for (const chatId of CHAT_IDS) {
       let ok = true;
       for (const part of digestParts) ok = (await sendTelegram(part, chatId)) && ok;

@@ -38,6 +38,11 @@ const SCIENCE_AI_PATTERNS = [
   /large language model/u, /генеративн/u,
 ];
 
+/** True when the text carries an explicit AI/ML signal (RU or EN). */
+export function hasExplicitAiSignal(text: string): boolean {
+  return SCIENCE_AI_PATTERNS.some((pattern) => pattern.test((text ?? "").toLowerCase()));
+}
+
 const CLASSIFICATION_TYPE_KEYWORDS: Record<string, string[]> = {
   new_tool: [
     "новый", "new", "запуск", "launch", "релиз", "release", "анонс", "announce",

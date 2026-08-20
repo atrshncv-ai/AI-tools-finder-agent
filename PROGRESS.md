@@ -1,6 +1,6 @@
-# Progress: dashboard-dates-classification
+# News-agent recovery — PROGRESS
 
-- 01 — Единое правило даты, фильтра и сортировки — done
-- 02 — Строгая классификация «ИИ для науки» — done
-- 03 — Только ИИ-инструменты в каталоге — done
-- 04 — Надёжная отметка прочитанного и регрессии — done
+- 01 Восстановить daily-digest.ts из git + фикс Telegram 400 — in progress
+- 02 Backfill: мусор -> rejected (не ai-news) — pending
+- 03 Переклассификация пула summarized до паблишера — pending
+- 04 Деплой + контроль владельцу — pending
