@@ -9,8 +9,13 @@ export type InventionToolListItem = {
 
 export type FreshnessKey = "all" | "day" | "3days" | "week" | "month";
 
+// The catalog must be ordered by when the tool was added/updated, NOT by
+// lastVerifiedAt: a nightly batch verification stamps every row with today's
+// date, which previously pushed all old tools to the top of the list and made
+// the "24 hours" filter show the whole catalog. The counter and freshness
+// filter now reflect the real number of tools added/updated in the period.
 export function inventionToolFreshnessDate(tool: InventionToolListItem): Date {
-  return new Date(tool.lastVerifiedAt ?? tool.updatedAt ?? tool.createdAt);
+  return new Date(tool.updatedAt ?? tool.createdAt);
 }
 
 /** Sorts without mutating the query result; id makes equal timestamps deterministic. */
