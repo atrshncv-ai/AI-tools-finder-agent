@@ -61,9 +61,9 @@ export async function findAllNews(opts: {
 
   // Freshness and ordering use the immutable platform publication date.
   const freshnessWindow = getFreshnessWindow(freshness);
-  conditions.push(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt}) <= ${freshnessWindow.to}`);
+  conditions.push(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt}) <= ${freshnessWindow.to.toISOString()}`);
   if (freshness && freshness !== "all") {
-    if (freshnessWindow.from) conditions.push(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt}) >= ${freshnessWindow.from}`);
+    if (freshnessWindow.from) conditions.push(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt}) >= ${freshnessWindow.from.toISOString()}`);
   }
 
   if (search) {
