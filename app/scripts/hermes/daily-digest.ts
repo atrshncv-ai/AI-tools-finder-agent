@@ -21,7 +21,7 @@ import "dotenv/config";
 
 import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
-import { and, desc, eq, gte, isNotNull, ne } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, ne, sql } from "drizzle-orm";
 import { pathToFileURL } from "node:url";
 
 const WINDOW_HOURS = 24;
