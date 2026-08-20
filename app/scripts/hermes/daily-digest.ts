@@ -213,21 +213,12 @@ async function main() {
     .limit(ARCHIVE_ITEMS_MAX);
   const items = [...recentItems];
 
-  // If a section has no fresh publication (for example while Zen is
-  // rate-limited), include a few latest already-published entries so the
-  // scheduled digest remains useful and all three sections stay visible.
-  const fallbackSections = ["ai-news", "science"];
+  // NO fallback of older published articles into sections: the digest must
+  // reflect strictly the last 24 hours (`since` window above). Empty sections
+  // are simply omitted — per the owner's rule «пустые секции не отправлять».
+  // (Previous fallback pulled articles from August 17 into a "24h" digest.)
   const present = new Set(items.map((item) => item.section));
-  for (const section of fallbackSections) {
-    if (present.has(section)) continue;
-    const fallback = await db.select({
-      id: news.id, title: news.title, originalUrl: news.originalUrl,
-      source: news.source, isScience: news.isScience, section: news.section,
-      sphereTags: news.sphereTags, summary: news.summary,
-    }).from(news).where(and(eq(news.status, "published"), eq(news.section, section), nonEmptySummary))
-      .orderBy(desc(news.updatedAt)).limit(FALLBACK_ITEMS_PER_SECTION);
-    items.push(...fallback);
-  }
+  void present;
 
   // NOTE: invention-tools section has no fallback from the catalog.
   // If no fresh invention news exists the section simply does not appear
