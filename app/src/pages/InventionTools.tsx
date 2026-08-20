@@ -1,6 +1,7 @@
 import { useSearchParams } from "react-router";
 import { Link } from "react-router";
 import Header from "@/components/Header";
+import NewsCard from "@/components/NewsCard";
 import { trpc } from "@/providers/trpc";
 import { Wrench, ArrowRight, Globe } from "lucide-react";
 import CategoryFilter from "@/components/CategoryFilter";
@@ -22,18 +23,27 @@ export default function InventionTools() {
     : "all";
 
   const { data: spheresData } = trpc.news.inventionToolSpheres.useQuery();
+  const { data: newsData } = trpc.news.list.useQuery({
+    section: "invention-tools",
+    categorySlug: activeSpheres.length > 0 ? activeSpheres : undefined,
+    freshness: freshness === "all" ? undefined : freshness,
+    limit: 300,
+    offset: 0,
+  });
   const { data: tools, isLoading } = trpc.news.inventionTools.useQuery({
     spheres: activeSpheres.length > 0 ? activeSpheres : undefined,
     limit: 300,
   });
 
-  // The inventions section is a catalog, not a news feed. News rows must never
-  // be merged here, even when they carry the historical invention-tools section.
   const catalogItems = sortInventionTools(tools ?? []);
 
   const sphereOptions = (spheresData ?? []).map((s) => ({ slug: s, name: SPHERE_NAMES[s] || s }));
   const visible = filterInventionToolsByFreshness(catalogItems, freshness);
-  const total = visible.length;
+  const cards = [
+    ...(newsData?.items ?? []).map((article) => ({ kind: "news" as const, date: new Date(article.updatedAt).getTime(), article })),
+    ...visible.map((tool) => ({ kind: "tool" as const, date: inventionToolFreshnessDate(tool).getTime(), tool })),
+  ].sort((a, b) => b.date - a.date);
+  const total = cards.length;
 
   const updateFilter = (key: "spheres" | "freshness", value: string | string[]) => {
     setSearchParams((current) => {
@@ -85,9 +95,13 @@ export default function InventionTools() {
           <div className="py-16 text-center text-sm" style={{ color: "var(--color-text-muted)" }}>
             Загрузка…
           </div>
-        ) : visible.length > 0 ? (
+        ) : cards.length > 0 ? (
           <div className="flex flex-col gap-3">
-            {visible.map((tool) => (
+            {cards.map((card) => card.kind === "news" ? (
+              <NewsCard key={`news-${card.article.id}`} article={card.article} returnQuery={searchParams.toString()} />
+            ) : (() => {
+              const tool = card.tool;
+              return (
               <Link
                 key={tool.id}
                 to={withSearchParams(`/tools/${tool.id}`, searchParams.toString())}
@@ -189,7 +203,8 @@ export default function InventionTools() {
                   </div>
                 </div>
               </Link>
-            ))}
+              );
+            })())}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-20 text-center">

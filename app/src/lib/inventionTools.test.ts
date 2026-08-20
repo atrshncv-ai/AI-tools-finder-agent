@@ -18,11 +18,12 @@ const tool = (id: number, name: string, verified: string, spheres: string[]): To
 });
 
 describe("invention tool catalog presentation", () => {
-  it("does not merge the news query into the catalog page", () => {
+  it("renders news and catalog tools as one card list", () => {
     const page = readFileSync(new URL("../pages/InventionTools.tsx", import.meta.url), "utf8");
-    expect(page).not.toContain("news.list");
-    expect(page).not.toContain("newsData");
-    expect(page).not.toContain("_source");
+    expect(page).toContain("news.list");
+    expect(page).toContain("newsData");
+    expect(page).toContain("NewsCard");
+    expect(page).toContain('kind: "tool"');
   });
 
   it("uses only catalog records and keeps equal freshness deterministic", () => {
