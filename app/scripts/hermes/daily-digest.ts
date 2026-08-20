@@ -20,6 +20,7 @@
 import "dotenv/config";
 
 import { getDb } from "../../api/queries/connection";
+import { getFreshnessWindow } from "../../api/queries/newsDateRules";
 import { hasExplicitAiSignal } from "../../api/lib/classify";
 import { news } from "@db/schema";
 import { and, desc, eq, gte, isNotNull, isNull, ne, not, inArray, sql } from "drizzle-orm";
@@ -179,7 +180,9 @@ async function sendTelegram(text: string, chatId: string): Promise<boolean> {
 
 async function main() {
   const db = getDb();
-  const since = new Date(Date.now() - WINDOW_HOURS * 3600_000);
+  // Same calendar MSK window as the dashboard "За сутки" filter —
+  // digest counts and dashboard counts are ONE dataset by construction.
+  const since = getFreshnessWindow("day").from;
 
   // platformPublishedAt = immutable platform publication date (same field the
   // dashboard filters/sorts by, with the same MSK calendar window) — digest
