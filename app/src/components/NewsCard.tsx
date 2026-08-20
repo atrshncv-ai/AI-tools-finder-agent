@@ -126,7 +126,7 @@ export default function NewsCard({ article, isRead = false, showFavorite = true,
             className="mt-2 text-sm leading-relaxed line-clamp-3"
             style={{ color: "var(--color-text-body)" }}
           >
-            {article.summary}
+            {article.summary || article.content || "Описание статьи готовится"}
           </p>
 
           <div className="flex items-center justify-between mt-4 text-[13px]" style={{ color: "var(--color-text-muted)" }}>
