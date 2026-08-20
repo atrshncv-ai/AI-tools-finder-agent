@@ -1,6 +1,6 @@
 import { getDb } from "./connection";
 import { news, categories, inventionTools } from "@db/schema";
-import { eq, inArray, desc, and, count, sql, getTableColumns, gte, lte } from "drizzle-orm";
+import { eq, inArray, desc, and, count, sql, getTableColumns } from "drizzle-orm";
 import { getFreshnessWindow } from "./newsDateRules";
 
 // ─── Seed categories ───
@@ -61,9 +61,9 @@ export async function findAllNews(opts: {
 
   // Freshness and ordering use the immutable platform publication date.
   const freshnessWindow = getFreshnessWindow(freshness);
-  conditions.push(lte(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt})`, freshnessWindow.to));
+  conditions.push(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt}) <= ${freshnessWindow.to}`);
   if (freshness && freshness !== "all") {
-    if (freshnessWindow.from) conditions.push(gte(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt})`, freshnessWindow.from));
+    if (freshnessWindow.from) conditions.push(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt}) >= ${freshnessWindow.from}`);
   }
 
   if (search) {
