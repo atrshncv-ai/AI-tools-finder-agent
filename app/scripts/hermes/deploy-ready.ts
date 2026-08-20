@@ -49,7 +49,7 @@ async function main() {
     try {
       await db
         .update(news)
-        .set({ status: "published", updatedAt: new Date() })
+        .set({ status: "published", updatedAt: new Date(), platformPublishedAt: new Date() })
         .where(eq(news.id, article.id));
       deployed++;
     } catch (err) {

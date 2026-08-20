@@ -181,7 +181,9 @@ async function main() {
   const db = getDb();
   const since = new Date(Date.now() - WINDOW_HOURS * 3600_000);
 
-  // updatedAt = when the article was published on our platform.
+  // platformPublishedAt = immutable platform publication date (same field the
+  // dashboard filters/sorts by, with the same MSK calendar window) — digest
+  // and dashboard counts can never diverge again.
   const recentItems = await db
     .select({
       id: news.id,
@@ -194,8 +196,14 @@ async function main() {
       summary: news.summary,
     })
     .from(news)
-    .where(and(eq(news.status, "published"), gte(news.updatedAt, since), nonEmptySummary))
-    .orderBy(desc(news.updatedAt));
+    .where(
+      and(
+        eq(news.status, "published"),
+        gte(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt})`, since),
+        nonEmptySummary,
+      ),
+    )
+    .orderBy(desc(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt})`));
 
   // Backfill a few strong historical candidates per digest as a SEPARATE
     // archive block (not mixed into section counters). They are marked after a
