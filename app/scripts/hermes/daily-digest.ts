@@ -63,7 +63,7 @@ function formatSection(emoji: string, name: string, items: DigestItem[]): string
   const lines = [`${emoji} *${name}* — ${items.length}`];
   for (const item of items.slice(0, MAX_ITEMS_PER_SECTION)) {
     const description = item.summary ? ` — ${esc(item.summary.replace(/\s+/g, " ").trim().slice(0, 180))}` : "";
-    lines.push(`▫️ ${esc(item.title)} (@url:\`${item.originalUrl}\`)${description}`);
+    lines.push(`▫️ [${esc(item.title)}](${item.originalUrl})${description}`);
   }
   if (items.length > MAX_ITEMS_PER_SECTION) {
     const themes = [...new Set(items.slice(MAX_ITEMS_PER_SECTION).flatMap((item) => item.sphereTags ?? []))].slice(0, 4);
