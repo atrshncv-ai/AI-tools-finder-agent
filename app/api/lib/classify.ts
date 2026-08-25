@@ -25,9 +25,11 @@ const SCIENCE_FIELD_KEYWORDS: Record<string, string[]> = {
     "термояд", "fusion", "астрофиз", "astrophysics",
   ],
   engineering: [
-    "инженер", "engineering", "робот", "robot", "чип", "chip", "процессор", "processor",
-    "hardware", "железо", "вычислен", "computing", "сервер", "server",
-    "GPU", "TPU", "NVIDIA", "AMD", "Intel",
+    // Research-flavored engineering only. Pure IT/hardware words (GPU, server,
+    // chip, NVIDIA…) deliberately removed: they matched ordinary AI-industry
+    // news on full text and flooded the science section (backfill 2026-08-25).
+    "инженер", "engineering", "робот", "robot", "робототехн", "манипулятор",
+    "вычислительная", "суперкомпьютер",
   ],
 };
 

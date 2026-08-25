@@ -22,7 +22,7 @@ const INVENTION_TERMS = new RegExp(
   [
     // Chemistry & molecules
     "нов(?:ый|ые|ых) (?:материал|молекул|катализатор)",
-    "материаловед|ретросинтез|синтез(?:ировать|а|ный|ные)",
+    "материаловед|ретросинтез|retrosynthesis",
     "молекул(?:а|ы|ьное|ьный|екулярн)",
     "кристалл(?:ограф|ическое|ический)",
     "докинг",
@@ -33,7 +33,9 @@ const INVENTION_TERMS = new RegExp(
     "геном(?:ик|ика)|genome",
     "стволовые клетк",
     "белков(?:ая|ую|ой) структур|protein structure",
-    "фолдинг|сворачив|folding",
+    // Protein folding only — bare "folding"/"сворачив" also matches
+    // foldable phones with AI features.
+    "фолдинг|protein folding|сворачивание белк",
     "peptide|пептид",
     // Gene editing & CRISPR
     "CRISPR|crispr",
@@ -62,7 +64,9 @@ const INVENTION_TERMS = new RegExp(
     "AlphaFold|RoseTTAFold|DiffDock|ProteinMPNN|ESMFold",
     "nanopore|нанопор",
     // Generic discovery keywords
-    "de novo|high-throughput|screening",
+    // "screening" alone also matches resume/content screening — keep the
+    // lab-specific phrasing.
+    "de novo|high-throughput screening",
     "materials? design|materials? discovery",
     "retrosynthesis|autonomous lab",
   ].join("|"),
