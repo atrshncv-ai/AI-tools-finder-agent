@@ -126,6 +126,28 @@ export function buildDigest(items: DigestItem[]): string {
   return lines.join("\n");
 }
 
+/**
+ * Heartbeat for an empty day: the bot must NEVER be silent — a missing digest
+ * is indistinguishable from a broken cron/pipeline. An explicit "nothing
+ * published" message turns silence back into a diagnosable signal.
+ */
+export function buildEmptyDigest(): string {
+  const dateStr = new Date().toLocaleDateString("ru-RU", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "Europe/Moscow",
+  });
+  return [
+    `🌅 *Утренний дайджест научного агента*`,
+    `_${dateStr}_`,
+    "",
+    `За последние ${WINDOW_HOURS} часа новых публикаций нет — конвейер работает, свежих материалов не нашлось.`,
+    "",
+    `📊 Дашборд доступен по кнопке ниже`,
+  ].join("\n");
+}
+
 async function sendTelegram(text: string, chatId: string): Promise<boolean> {
   try {
     // Plain-text dashboard URL inside the body: inline keyboards can be
@@ -186,11 +208,11 @@ async function main() {
 
   const digestParts = items.length > 0
     ? splitTelegramText(buildDigest(items))
-    : [];
+    : [buildEmptyDigest()];
 
   if (!BOT_TOKEN || CHAT_IDS.length === 0) {
     console.error("[daily-digest] STUB MODE (no TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_IDS) — printing digest:");
-    if (digestParts.length > 0) console.log(digestParts.join("\n---\n"));
+    console.log(digestParts.join("\n---\n"));
   } else {
     // Fan-out to every recipient; one failing chat must not block the others.
     let okCount = 0;
@@ -200,7 +222,10 @@ async function main() {
       console.error(`[daily-digest] → chat ${chatId}: ${ok ? "sent" : "FAILED"}`);
       if (ok) okCount++;
     }
-    console.log(JSON.stringify({ status: okCount === CHAT_IDS.length ? "sent" : "partial", items: items.length, recipients: { ok: okCount, total: CHAT_IDS.length } }));
+    const status = okCount === CHAT_IDS.length ? "sent" : okCount > 0 ? "partial" : "failed";
+    console.log(JSON.stringify({ status, items: items.length, recipients: { ok: okCount, total: CHAT_IDS.length } }));
+    // Total delivery failure must be visible in the cron log (non-zero exit).
+    if (okCount === 0) process.exit(1);
   }
 
   if (PAYMENT_MANAGER_CHAT_ID && isPaymentReminderDay(new Date())) {

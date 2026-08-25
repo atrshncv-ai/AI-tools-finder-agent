@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDigest, isPaymentReminderDay, paymentReminderText, splitTelegramText } from "./daily-digest";
+import { buildDigest, buildEmptyDigest, isPaymentReminderDay, paymentReminderText, splitTelegramText } from "./daily-digest";
 
 describe("splitTelegramText", () => {
   it("splits long digests at line boundaries without truncating", () => {
@@ -7,6 +7,14 @@ describe("splitTelegramText", () => {
     const parts = splitTelegramText(text, 30);
     expect(parts.every((part) => part.length <= 30)).toBe(true);
     expect(parts.join("\n")).toBe(text);
+  });
+});
+
+describe("empty-day heartbeat", () => {
+  it("produces an explicit no-news message so silence always means failure", () => {
+    const text = buildEmptyDigest();
+    expect(text).toContain("новых публикаций нет");
+    expect(text).toContain("Утренний дайджест");
   });
 });
 
