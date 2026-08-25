@@ -13,6 +13,7 @@
  *   npx tsx scripts/check-urls.ts --apply    # actually reject dead articles
  */
 
+import "dotenv/config";
 import { getDb } from "../api/queries/connection";
 import { news } from "@db/schema";
 import { eq } from "drizzle-orm";
