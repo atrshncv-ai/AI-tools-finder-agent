@@ -297,7 +297,7 @@ async function collectGithubTrending(): Promise<Candidate[]> {
       q,
     )}&sort=stars&order=desc&per_page=50`,
   );
-  const ghUrl = \`https://api.github.com/search/repositories?q=\${encodeURIComponent(q)}&sort=stars&order=desc&per_page=50\`;
+  const ghUrl = `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=stars&order=desc&per_page=50`;
   if (!data) void recordFeedHealth("github-trending", ghUrl, false, 0, "github api unreachable");
   const items = data?.items ?? [];
   const out: Candidate[] = items.map((r, idx) => ({
