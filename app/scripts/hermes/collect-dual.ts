@@ -33,6 +33,7 @@ import { ssrfCheck } from "../../api/lib/url-safety";
 import { classifyScience } from "../ensure-science-categories";
 import { resolveSection } from "../../api/lib/section-resolve";
 import { classifyInvention, buildInventionContext } from "../../api/lib/invention-classify";
+import { recordFeedHealth } from "./feed-health";
 
 const FETCH_TIMEOUT_MS = 20_000;
 const HN_MIN_POINTS = 100;
@@ -179,8 +180,10 @@ async function collectYouTube(): Promise<Candidate[]> {
         }
       }
       console.error(`[collect] ${source.name}: ${parsed.items.length} videos (rss)`);
+      void recordFeedHealth(source.name, feedUrl, true, parsed.items.length);
     } catch (err) {
       console.error(`[collect] ${source.name}: RSS failed (${(err as Error).message})`);
+      void recordFeedHealth(source.name, feedUrl, false, 0, (err as Error).message);
     }
 
     // Explicit tab collection ensures ordinary long-form videos are not
@@ -221,8 +224,10 @@ async function collectTechBlogs(): Promise<Candidate[]> {
         if (c) out.push(c);
       }
       console.error(`[collect] ${feed.name}: ${parsed.items.length} items`);
+      void recordFeedHealth(feed.name, feed.url, true, parsed.items.length);
     } catch (err) {
       console.error(`[collect] ${feed.name}: FAILED (${(err as Error).message})`);
+      void recordFeedHealth(feed.name, feed.url, false, 0, (err as Error).message);
     }
   }
   return out;
@@ -238,10 +243,12 @@ interface HnHit {
 }
 
 async function collectHackerNews(): Promise<Candidate[]> {
-  const data = await fetchJson<{ hits: HnHit[] }>(
-    "https://hn.algolia.com/api/v1/search_by_date?tags=story&query=AI%20OR%20LLM%20OR%20GPT%20OR%20%22machine%20learning%22&hitsPerPage=40",
-  );
-  if (!data) return [];
+  const hnUrl = "https://hn.algolia.com/api/v1/search_by_date?tags=story&query=AI%20OR%20LLM%20OR%20GPT%20OR%20%22machine%20learning%22&hitsPerPage=40";
+  const data = await fetchJson<{ hits: HnHit[] }>(hnUrl);
+  if (!data) {
+    void recordFeedHealth("hackernews", hnUrl, false, 0, "algolia unreachable");
+    return [];
+  }
   const cutoff = Date.now() / 1000 - MAX_AGE_MS / 1000;
   const out: Candidate[] = [];
   for (const h of data.hits) {
@@ -260,6 +267,7 @@ async function collectHackerNews(): Promise<Candidate[]> {
     });
   }
   console.error(`[collect] hackernews: ${out.length} hot stories`);
+  void recordFeedHealth("hackernews", hnUrl, true, out.length);
   return out;
 }
 
@@ -289,6 +297,8 @@ async function collectGithubTrending(): Promise<Candidate[]> {
       q,
     )}&sort=stars&order=desc&per_page=50`,
   );
+  const ghUrl = \`https://api.github.com/search/repositories?q=\${encodeURIComponent(q)}&sort=stars&order=desc&per_page=50\`;
+  if (!data) void recordFeedHealth("github-trending", ghUrl, false, 0, "github api unreachable");
   const items = data?.items ?? [];
   const out: Candidate[] = items.map((r, idx) => ({
     title: `${r.full_name}${r.description ? " — " + r.description : ""}`,
@@ -309,6 +319,7 @@ async function collectGithubTrending(): Promise<Candidate[]> {
     },
   }));
   console.error(`[collect] github-trending: ${out.length} repos`);
+  if (data) void recordFeedHealth("github-trending", ghUrl, true, out.length);
   return out;
 }
 
@@ -393,6 +404,7 @@ async function collectPubmedLancet(): Promise<Candidate[]> {
   const ids = search?.esearchresult?.idlist ?? [];
   if (ids.length === 0) {
     console.error("[collect] lancet(pubmed): 0 items (esearch empty or blocked)");
+    void recordFeedHealth("lancet", "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi", false, 0, "esearch empty or blocked");
     return [];
   }
   const summary = await fetchJson<PubmedSummary>(
@@ -415,6 +427,7 @@ async function collectPubmedLancet(): Promise<Candidate[]> {
     });
   }
   console.error(`[collect] lancet(pubmed): ${out.length} items`);
+  void recordFeedHealth("lancet", "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi", true, out.length);
   return out;
 }
 
@@ -443,8 +456,10 @@ async function collectScience(): Promise<Candidate[]> {
         out.push(c);
       }
       console.error(`[collect] ${feed.name}: ${parsed.items.length} items`);
+      void recordFeedHealth(feed.name, feed.url, true, parsed.items.length);
     } catch (err) {
       console.error(`[collect] ${feed.name}: FAILED (${(err as Error).message})`);
+      void recordFeedHealth(feed.name, feed.url, false, 0, (err as Error).message);
     }
   }
   out.push(...(await collectPubmedLancet()));

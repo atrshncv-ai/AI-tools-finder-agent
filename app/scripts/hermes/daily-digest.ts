@@ -20,6 +20,7 @@
 import "dotenv/config";
 
 import { getDb } from "../../api/queries/connection";
+import { collectPipelineStats, formatHealthLine } from "./pipeline-health";
 import { news } from "@db/schema";
 import { and, desc, eq, isNotNull, ne, sql } from "drizzle-orm";
 import { pathToFileURL } from "node:url";
@@ -99,7 +100,7 @@ export function paymentReminderText(dueAt = PAYMENT_DUE_AT): string {
   return `💳 *Напоминание об оплате сервера*\n\nПожалуйста, проверьте оплату сервера. Текущий ориентир окончания оплаченного периода: *${dueAt}*.\n\nПосле этой даты напоминание будет приходить каждые 30 дней.`;
 }
 
-export function buildDigest(items: DigestItem[]): string {
+export function buildDigest(items: DigestItem[], healthLine?: string): string {
   const science = items.filter((i) => i.section === "science" || (!i.section && i.isScience));
   const inventions = items.filter((i) => i.section === "invention-tools");
   const tech = items.filter((i) => i.section === "ai-news" || (!i.section && !i.isScience));
@@ -116,12 +117,14 @@ export function buildDigest(items: DigestItem[]): string {
     `_${dateStr}_`,
     "",
     `За последние ${WINDOW_HOURS} часа опубликовано: *${items.length}*`,
+  ];
+  if (healthLine) lines.push(healthLine);
+  lines.push(
     "",
     ...formatSection("🛠", "ИИ-новости", tech),
     ...formatSection("🔬", "ИИ для науки", science),
     ...formatSection("🧪", "Инструменты для изобретений", inventions),
-  ];
-
+  );
   lines.push(`📊 Дашборд доступен по кнопке ниже`);
   return lines.join("\n");
 }
@@ -206,8 +209,15 @@ async function main() {
   const items = [...recentItems];
   console.error(`[daily-digest] ${items.length} published in last ${WINDOW_HOURS}h`);
 
+  let healthLine: string | undefined;
+  try {
+    healthLine = formatHealthLine(await collectPipelineStats(since));
+  } catch (err) {
+    console.error(`[daily-digest] health line skipped: ${(err as Error).message.slice(0, 120)}`);
+  }
+
   const digestParts = items.length > 0
-    ? splitTelegramText(buildDigest(items))
+    ? splitTelegramText(buildDigest(items, healthLine))
     : [buildEmptyDigest()];
 
   if (!BOT_TOKEN || CHAT_IDS.length === 0) {

@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { buildDigest, buildEmptyDigest, isPaymentReminderDay, paymentReminderText, splitTelegramText } from "./daily-digest";
+import { formatHealthLine, type PipelineStats } from "./pipeline-health";
+
+const healthyStats: PipelineStats = {
+  collected: 210, evaluated: 180, published: 46, processingErrors: 4,
+  feedsTotal: 13, feedsFailing: 0, failingFeedNames: [],
+  zenPoolSize: 4, zenCoolingKeys: 1, zenStateUpdatedAt: null,
+  lastPublishedAt: new Date(Date.now() - 3600_000),
+};
 
 describe("splitTelegramText", () => {
   it("splits long digests at line boundaries without truncating", () => {
@@ -18,6 +26,33 @@ describe("empty-day heartbeat", () => {
   });
 });
 
+describe("health line", () => {
+  it("shows pipeline counters without warnings when healthy", () => {
+    const line = formatHealthLine(healthyStats);
+    expect(line).toContain("⚙️ Конвейер");
+    expect(line).toContain("собрано 210");
+    expect(line).toContain("опубликовано 46");
+    expect(line).toContain("фиды 13/13");
+    expect(line).toContain("Zen 3/4");
+    expect(line).not.toContain("⚠️");
+  });
+
+  it("warns on zero publications, failing feeds and exhausted key pool", () => {
+    const line = formatHealthLine({
+      ...healthyStats,
+      published: 0,
+      feedsFailing: 1,
+      failingFeedNames: ["science"],
+      zenCoolingKeys: 4,
+      lastPublishedAt: new Date(Date.now() - 48 * 3600_000),
+    });
+    expect(line).toContain("⚠️");
+    expect(line).toContain("нет публикаций");
+    expect(line).toContain("science");
+    expect(line).toContain("Zen 0/4");
+  });
+});
+
 describe("payment reminders", () => {
   it("fires 88 days before due date and every 30 days afterwards", () => {
     expect(isPaymentReminderDay(new Date("2026-08-14T12:00:00Z"), "2026-11-10")).toBe(true);
@@ -28,6 +63,16 @@ describe("payment reminders", () => {
 });
 
 describe("digest sections", () => {
+  it("places the health line under the counter when provided", () => {
+    const text = buildDigest([
+      { id: 1, title: "Новость", originalUrl: "https://example.com/n", source: "rss", isScience: false, section: "ai-news", sphereTags: [] },
+    ], formatHealthLine(healthyStats));
+    const counterIdx = text.indexOf("опубликовано: *1*");
+    const healthIdx = text.indexOf("⚙️ Конвейер");
+    expect(healthIdx).toBeGreaterThan(counterIdx);
+    expect(text).toContain("ИИ-новости");
+  });
+
   it("uses exactly the three fixed product sections", () => {
     const text = buildDigest([
       { id: 1, title: "Видео", originalUrl: "https://example.com/v", source: "youtube-demo", isScience: false, section: "ai-news", sphereTags: [] },

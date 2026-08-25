@@ -71,9 +71,19 @@ function rotateKey(): boolean {
   return false;
 }
 
+/** Best-effort persistence so other processes (morning digest) can report pool health. */
+function persistPoolState(): void {
+  void import("../../scripts/hermes/pipeline-health").then(({ persistZenPoolState }) =>
+    persistZenPoolState(getKeyPoolState()),
+  ).catch(() => {
+    // health persistence is best-effort
+  });
+}
+
 /** Mark a specific key as quota-exhausted and rotate away from it if it's still active. */
 function exhaustKeyAndRotate(index: number): boolean {
   keyCooldownUntil.set(index, Date.now() + KEY_COOLDOWN_MS);
+  persistPoolState();
   console.log(
     `[Zen] Key #${index} (${maskKey(keyPool[index])}) marked quota-exhausted for ${KEY_COOLDOWN_MS / 60000}min`,
   );
