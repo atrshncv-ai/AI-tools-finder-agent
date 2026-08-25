@@ -6,8 +6,9 @@
  *   npx tsx scripts/hermes/manifest-gen.ts [--output <path>] [--limit <n>] [--science-only]
  *
  * Reads articles from PostgreSQL with status='pending', content=NULL and
- * score > 65 (the evaluate-news gate), writes a structured manifest.json
- * for Hermes to consume. Unevaluated rows (score=NULL) NEVER reach the LLM.
+ * score >= SCORE_GATE (the shared evaluate-news gate, see pipeline-config.ts),
+ * writes a structured manifest.json for Hermes to consume. Unevaluated rows
+ * (score=NULL) NEVER reach the LLM.
  *
  * Exit codes: 0 = success, 1 = error
  */
@@ -15,12 +16,12 @@
 import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
 import { eq, and, isNull, desc, gte } from "drizzle-orm";
+import { SCORE_GATE } from "./pipeline-config";
 
-// Same gate as evaluate-news.ts (SCORE_GATE=65, strictly greater passes).
-// gte(score, 66) also excludes score=NULL rows: NULL comparisons are never
-// true in SQL, so unevaluated articles cannot slip into LLM processing
-// (e.g. when evaluate-news failed or its batch limit left a backlog).
-const MIN_MANIFEST_SCORE = 66;
+// Same gate as evaluate-news.ts (shared constant). gte(score, SCORE_GATE)
+// also excludes score=NULL rows: NULL comparisons are never true in SQL, so
+// unevaluated articles cannot slip into LLM processing (e.g. when
+// evaluate-news failed or its batch limit left a backlog).
 
 interface ManifestArticle {
   id: number;
@@ -86,7 +87,7 @@ async function main() {
   const whereConditions = [
     eq(news.status, "pending"),
     isNull(news.content),
-    gte(news.score, MIN_MANIFEST_SCORE),
+    gte(news.score, SCORE_GATE),
   ];
   if (scienceOnly) {
     whereConditions.push(eq(news.isScience, true));

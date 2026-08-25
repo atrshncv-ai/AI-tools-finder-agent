@@ -38,6 +38,26 @@ const SCIENCE_AI_PATTERNS = [
   /large language model/u, /генеративн/u,
 ];
 
+/**
+ * Explicit AI/ML signal: generic terms (EN+RU) plus well-known model/tool
+ * names that generic terms miss (AlphaFold, GPT, diffusion models, …).
+ * Shared by the science classifier, the invention classifier and the
+ * evaluate-news hard relevance gate — keep ONE dictionary here.
+ */
+const EXPLICIT_AI_PATTERNS: RegExp[] = [
+  ...SCIENCE_AI_PATTERNS,
+  /\bgpt\b/u, /chatgpt/u, /\bclaude\b/u, /\bgemini\b/u, /\bllama\b/u, /deepseek/u, /mistral/i,
+  /\bbert\b/u, /transformer/i, /diffusion model/i, /\bdiffusion\b/i,
+  /alphafold/i, /rosettafold/i, /diffdock/i, /proteinmpnn/i, /esmfold/i,
+  /deepmind/i, /\bcopilot\b/i, /\bmidjourney\b/i, /\bsora\b/i, /\bdall-e\b/i,
+];
+
+export function hasExplicitAiSignal(text: string): boolean {
+  // Case-insensitive by normalisation (patterns are written lowercase).
+  const combined = text.toLowerCase();
+  return EXPLICIT_AI_PATTERNS.some((pattern) => pattern.test(combined));
+}
+
 const CLASSIFICATION_TYPE_KEYWORDS: Record<string, string[]> = {
   new_tool: [
     "новый", "new", "запуск", "launch", "релиз", "release", "анонс", "announce",
@@ -112,8 +132,8 @@ export function classifyArticle(title: string, description: string): Classificat
   const hasScienceDomain = Object.values(SCIENCE_FIELD_KEYWORDS).some((keywords) =>
     matchesKeywords(combined, keywords),
   );
-  const hasExplicitAiSignal = SCIENCE_AI_PATTERNS.some((pattern) => pattern.test(combined));
-  const isScience = hasScienceDomain && hasExplicitAiSignal;
+  const hasAiSignal = hasExplicitAiSignal(combined);
+  const isScience = hasScienceDomain && hasAiSignal;
   let scienceField: string | null = null;
 
   if (isScience) {

@@ -31,7 +31,7 @@ import { listChannelVideos } from "./youtube-transcript";
 import { YOUTUBE_SOURCES } from "./youtube-sources";
 import { ssrfCheck } from "../../api/lib/url-safety";
 import { classifyScience } from "../ensure-science-categories";
-import { classifyArticle } from "../../api/lib/classify";
+import { resolveSection } from "../../api/lib/section-resolve";
 import { classifyInvention, buildInventionContext } from "../../api/lib/invention-classify";
 
 const FETCH_TIMEOUT_MS = 20_000;
@@ -125,12 +125,17 @@ function fromRssItem(
   const title = (item.title || "").trim();
   const url = (item.link || "").trim();
   if (!title || !url || !url.startsWith("http")) return null;
+  // STRICT Time Guard is fail-closed: an RSS item without a parseable date
+  // cannot be freshness-checked and must not silently pass as "just published".
+  if (!item.isoDate) return null;
+  const publishedAt = new Date(item.isoDate);
+  if (Number.isNaN(publishedAt.getTime())) return null;
   const description = (item.summary || "").trim();
   return {
     title,
     url,
     source: src.name,
-    publishedAt: item.isoDate ? new Date(item.isoDate) : new Date(),
+    publishedAt,
     language: src.language,
     isScience: src.isScience,
     scienceField: src.scienceField,
@@ -504,15 +509,15 @@ async function main() {
         inserted++;
         continue;
       }
-      const classification = classifyArticle(c.title, c.description ?? "");
+      const resolution = resolveSection({ title: c.title, description: c.description });
       let categoryId: number | null = null;
       let categorySlug: string | null = null;
-      if (classification.isScience) {
+      if (resolution.isScience) {
         const slug = classifyScience({
           title: c.title,
           summary: c.description ?? "",
           source: c.source,
-          scienceField: classification.scienceField,
+          scienceField: resolution.scienceField,
         });
         const cat = scienceCatBySlug.get(slug);
         if (cat) {
@@ -521,16 +526,9 @@ async function main() {
         }
       }
 
-      // Classify into sections: invention-tools / science / ai-news.
-      // classifyInvention checks if the article describes a discovery /
-      // invention tool and assigns sphere tags from the catalog.
-      // Use title + description to reduce false negatives on sparse titles.
-      const invention = classifyInvention(buildInventionContext(c.title, c.description));
-      const section = invention.isInvention
-        ? "invention-tools"
-        : classification.isScience
-          ? "science"
-          : "ai-news";
+      // Unified three-way routing (single source of truth, see section-resolve).
+      // Later stages re-run it with richer text and may move the article.
+      const section = resolution.section;
 
       const rows = await db
         .insert(news)
@@ -542,10 +540,10 @@ async function main() {
           source: c.source,
           publishedAt: c.publishedAt,
           language: c.language,
-          isScience: classification.isScience,
-          scienceField: classification.scienceField,
+          isScience: resolution.isScience,
+          scienceField: resolution.scienceField,
           section,
-          sphereTags: invention.spheres,
+          sphereTags: resolution.sphereTags,
           categoryId,
           categorySlug,
           status: "pending",

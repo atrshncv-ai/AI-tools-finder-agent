@@ -9,7 +9,7 @@ import { getAdaptiveSelectors } from "./sourceMonitor";
 import { createParsingLog, updateParsingLog } from "../queries/parsingLogs";
 import { logger } from "../lib/logger";
 import { classifyArticle } from "../lib/classify";
-import { classifyInvention } from "../lib/invention-classify";
+import { resolveSection } from "../lib/section-resolve";
 import type { ParseDecision, ParseResult } from "./types";
 
 const AI_KEYWORDS = [
@@ -422,7 +422,7 @@ export async function runParseAgent(
             newCount++;
             const pubDate = article.pubDate ? new Date(article.pubDate) : new Date();
             const classification = classifyArticle(article.title, article.description);
-            const invention = classifyInvention(`${article.title} ${article.description}`);
+            const resolution = resolveSection({ title: article.title, description: article.description });
             await db.insert(news).values({
               title: article.title,
               summary: article.description || "Ожидает суммаризации...",
@@ -435,8 +435,8 @@ export async function runParseAgent(
               isScience: classification.isScience,
               scienceField: classification.scienceField,
               classificationType: classification.classificationType,
-              section: invention.isInvention ? "invention-tools" : classification.isScience ? "science" : "ai-news",
-              sphereTags: invention.sphereTags,
+              section: resolution.section,
+              sphereTags: resolution.sphereTags,
               language: detectLanguage(`${article.title} ${article.description}`),
               status: "pending",
             });
@@ -518,7 +518,7 @@ export async function runParseAgent(
             newCount++;
             const pubDate = article.pubDate ? new Date(article.pubDate) : new Date();
             const classification = classifyArticle(article.title, article.description);
-            const invention = classifyInvention(`${article.title} ${article.description}`);
+            const resolution = resolveSection({ title: article.title, description: article.description });
             await db.insert(news).values({
               title: article.title,
               summary: article.description || "Ожидает суммаризации...",
@@ -531,8 +531,8 @@ export async function runParseAgent(
               isScience: classification.isScience,
               scienceField: classification.scienceField,
               classificationType: classification.classificationType,
-              section: invention.isInvention ? "invention-tools" : classification.isScience ? "science" : "ai-news",
-              sphereTags: invention.sphereTags,
+              section: resolution.section,
+              sphereTags: resolution.sphereTags,
               language: detectLanguage(`${article.title} ${article.description}`),
               status: "pending",
             });

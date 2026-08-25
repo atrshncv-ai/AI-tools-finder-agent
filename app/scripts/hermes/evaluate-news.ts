@@ -40,12 +40,14 @@ import { eq, and, isNull, isNotNull, inArray, gte, desc } from "drizzle-orm";
 import { fetchYoutubeTranscript } from "./youtube-transcript";
 import { DEDICATED_AI_YOUTUBE_SOURCES } from "./youtube-sources";
 import { scoreYoutubeCandidate } from "./youtube-policy";
-import { classifyInvention, buildInventionContext } from "../../api/lib/invention-classify";
+import { resolveSection } from "../../api/lib/section-resolve";
+
+import { SCORE_GATE } from "./pipeline-config";
+import { hasExplicitAiSignal } from "../../api/lib/classify";
 
 const FETCH_TIMEOUT_MS = 20_000;
 const UA = process.env.AGENT_UA || "science-agent/2.0";
 
-const SCORE_GATE = 50;
 const RELEASE_MAX_AGE_MS = 72 * 3600_000;
 
 // ─── Source tiers for Science scoring ───────────────────────────────────────
@@ -65,13 +67,27 @@ const TIER2_SCIENCE = new Set([
   "mit-tech-review",
   "huggingface-blog",
   // arXiv/conference names detected by content regex, not source slug
+  "arxiv",
+  "arxiv-cs-ai",
+  "arxiv-cs-et",
+  "naked-science",
 ]);
 
 const OPEN_LICENSES = new Set(["MIT", "Apache-2.0"]);
 
-/** AI product/project names (EN+RU) that generic AI_TERMS misses in video titles. */
-const YOUTUBE_AI_TERMS =
-  /\b(gpt|chatgpt|claude|codex|gemini|openai|anthropic|deepseek|llama|mistral|qwen|copilot|sora|veo|nano[ -]banana|grok|diffusion|transformer|agent|agents|robot|llm|mcp|rag)\b|\b(ии|нейросет\w*|нейрон\w*|искусственн\w*)\b/iu;
+/**
+ * Sources whose entire stream is AI by construction (curated queries/channels
+ * and vendor blogs). They skip the hard AI-relevance gate; everything else
+ * must show an explicit AI signal in its own text.
+ */
+const AI_BY_CONSTRUCTION_SOURCES = new Set([
+  ...DEDICATED_AI_YOUTUBE_SOURCES,
+  "openai-blog",
+  "huggingface-blog",
+  "google-ai-blog",
+  "github-trending",
+  "hackernews",
+]);
 
 /** Channels whose entire content is AI — topic bonus needs no keyword proof. */
 // ─── Regex helpers for text signals ─────────────────────────────────────────
@@ -112,6 +128,8 @@ interface EvalResult {
   /** Re-routed section for invention candidates detected at evaluation time. */
   section?: string;
   sphereTags?: string[];
+  isScience?: boolean;
+  scienceField?: string | null;
 }
 
 // ─── HTTP utilities ─────────────────────────────────────────────────────────
@@ -292,10 +310,20 @@ async function evaluate(article: {
 
     const dedicatedChannel = DEDICATED_AI_YOUTUBE_SOURCES.has(article.source);
     const evidenceText = `${article.title} ${transcript.description}`;
-    const aiRelevant =
-      dedicatedChannel ||
-      hasAny(evidenceText, YOUTUBE_AI_TERMS) ||
-      hasAny(evidenceText, AI_TERMS);
+    const aiRelevant = dedicatedChannel || hasExplicitAiSignal(evidenceText);
+    if (!aiRelevant) {
+      metrics.youtubePreflight = {
+        eligible: false,
+        reason: "no-ai-signal",
+        checkedAt: new Date().toISOString(),
+      };
+      breakdown.push({
+        criterion: "ai-relevance-gate",
+        points: 0,
+        evidence: "no explicit AI signal in title/description",
+      });
+      return { id: article.id, title: article.title, score: 0, breakdown, metrics };
+    }
     const decision = scoreYoutubeCandidate({
       hasTranscript: true,
       durationSeconds: transcript.durationSeconds,
@@ -429,18 +457,41 @@ async function evaluate(article: {
   let score = 0;
   const evidenceText = `${article.title} ${pageText} ${githubDescription ?? ""} ${githubTopics.join(" ")}`;
 
-  // Re-detect invention candidates using the fetched page text. Science articles
-  // that describe tools/discoveries must be routed to invention-tools, and the
-  // score bonus prevents the generic gate from silently dropping them.
-  const invention = classifyInvention(buildInventionContext(article.title, pageText));
-  if (invention.isInvention) {
-    if (section !== "invention-tools") {
-      section = "invention-tools";
-      sphereTags = invention.spheres;
-      breakdown.push({ criterion: "invention-reroute", points: 0, evidence: "science article matches invention terms" });
-    }
+  // ── Hard AI-relevance gate: no explicit AI signal anywhere in the article's
+  // own text → reject regardless of social/source score. Curated AI sources
+  // are exempt (AI by construction).
+  const aiSignal =
+    AI_BY_CONSTRUCTION_SOURCES.has(article.source) || hasExplicitAiSignal(evidenceText);
+  metrics.aiSignal = aiSignal;
+  if (!aiSignal) {
+    breakdown.push({
+      criterion: "ai-relevance-gate",
+      points: 0,
+      evidence: "no explicit AI signal in title/content",
+    });
+    return { id: article.id, title: article.title, score: 0, breakdown, metrics };
+  }
+
+  // Unified three-way routing over the fetched page text. Bidirectional:
+  // a science article misrouted on a sparse RSS snippet moves to its real
+  // section (and back) once the full text is available.
+  const resolution = resolveSection({ title: article.title, content: pageText });
+  if (resolution.section !== section) {
+    breakdown.push({
+      criterion: "section-reroute",
+      points: 0,
+      evidence: `${section} -> ${resolution.section} (full text)`,
+    });
+    section = resolution.section;
+  }
+  sphereTags = resolution.sphereTags;
+  if (resolution.section === "invention-tools") {
     score += 25;
-    breakdown.push({ criterion: "invention-tool-bonus", points: 25, evidence: "AI-for-science tool/discovery signals" });
+    breakdown.push({
+      criterion: "invention-tool-bonus",
+      points: 25,
+      evidence: "AI-for-science tool/discovery signals",
+    });
   }
 
   if (article.isScience || isScienceSource(article.source)) {
@@ -454,6 +505,16 @@ async function evaluate(article: {
       score += 30;
       breakdown.push({ criterion: "tier2-source", points: 30, evidence: `source=${article.source}` });
     }
+
+    // Explicit AI signal is the product's core criterion. The hard gate above
+    // guarantees it for non-exempt sources; scored here so AI×science items
+    // clear the gate even without social proof (Tier-1 = 65, Tier-2 = 50).
+    score += 20;
+    breakdown.push({
+      criterion: "science-ai-relevance",
+      points: 20,
+      evidence: "explicit AI/ML signal in title/content",
+    });
 
     // Reproducibility
     const isArxiv =
@@ -548,7 +609,17 @@ async function evaluate(article: {
     }
   }
 
-  return { id: article.id, title: article.title, score, breakdown, metrics, section, sphereTags };
+  return {
+    id: article.id,
+    title: article.title,
+    score,
+    breakdown,
+    metrics,
+    section,
+    sphereTags,
+    isScience: resolution.isScience,
+    scienceField: resolution.scienceField,
+  };
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -650,7 +721,9 @@ async function main() {
         updatedAt: new Date(),
       };
       if (r.section) updateSet.section = r.section;
-      if (r.sphereTags) updateSet.sphereTags = r.sphereTags;
+      updateSet.sphereTags = r.sphereTags ?? [];
+      if (r.isScience !== undefined) updateSet.isScience = r.isScience;
+      if (r.scienceField !== undefined) updateSet.scienceField = r.scienceField;
       await db
         .update(news)
         .set(updateSet)

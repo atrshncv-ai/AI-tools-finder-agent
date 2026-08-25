@@ -4,24 +4,27 @@
  * sphere tags that match the invention_tools catalog.
  *
  * Shared by the Hermes pipeline (collect-dual → evaluate-news) and the
- * parseAgent API.  Keep INVENTION_TERMS broad enough to catch real
- * discoveries while filtering out generic AI news.
+ * parseAgent API.  An invention candidate must describe a discovery/design
+ * topic AND carry an explicit AI signal — household medical/biological
+ * vocabulary alone never routes here.
  */
+
+import { hasExplicitAiSignal } from "./classify";
 
 // ── Invention detection ────────────────────────────────────────────────────
 // The regex must match titles + summaries of articles about AI tools that
 // *discover*, *design*, or *invent* new molecules, materials, algorithms,
-// or scientific solutions — not just tools that analyse data.
+// or scientific solutions. Household science/medical vocabulary is NOT enough:
+// since the client feedback of 2026-08-25 an invention candidate must ALSO
+// carry an explicit AI signal (see AI requirement in classifyInvention).
 
 const INVENTION_TERMS = new RegExp(
   [
     // Chemistry & molecules
-    "нов(?:ый|ые|ых) (?:материал|молекул|катализатор|препарат|кристалл)",
+    "нов(?:ый|ые|ых) (?:материал|молекул|катализатор)",
     "материаловед|ретросинтез|синтез(?:ировать|а|ный|ные)",
     "молекул(?:а|ы|ьное|ьный|екулярн)",
     "кристалл(?:ограф|ическое|ический)",
-    "лаборатори(?:я|ю|и|ных)", // "autonomous lab"
-    "препарат",
     "докинг",
     "электронная структур",
     "DFT|density functional|квантовая химия",
@@ -37,14 +40,14 @@ const INVENTION_TERMS = new RegExp(
     "base editing|редактирование (?:ген|баз|ДНК|DNA)",
     "gene editing|генное редактирован",
     "DNA|ДНК",
-    // Medicine
-    "лекарственн|антител|вакцин|терапи(?:я|ю|и|ческ)|клиническ",
+    // Drug discovery & design (targeted, not generic clinical vocabulary)
+    "drug discover|drug design|лекарственн(?:ый|ое) дизайн",
     // Materials & energy
     "батаре[яйю]|аккумулятор|электрод|энергонакопит",
     "перовскит|alloy|сплав",
     "суперпроводник",
     // Climate & weather
-    "климат(?:ическ|олог|а)|прогноз(?:ирование)? погоды|атмосфер",
+    "климат(?:ическ|олог)|прогноз(?:ирование)? погоды",
     "углерод(?:ный|ной)|paris climate",
     // Quantum
     "квантов(?:ый|ая|ом|ые) (?:вычислени|компют|алгоритм|процессор|бит)",
@@ -55,17 +58,11 @@ const INVENTION_TERMS = new RegExp(
     "radio telescope|gravitational wav",
     // Mathematics
     "математическ(?:ая|ое|их)|доказательств|гипотез|теорем",
-    "optimization|combinatorial|алгоритм(?:ическ|ическ)",
-    // Engineering & robotics
-    "робот(?:отехник|отехн|otechnik|остроение)|манипулятор",
-    "автономн(?:ый|ого|ая|ых)|самостоятельн",
-    // Drug discovery & design
-    "drug discover|drug design|лекарственн(?:ый|ое) дизайн",
     // AI tools for science
     "AlphaFold|RoseTTAFold|DiffDock|ProteinMPNN|ESMFold",
     "nanopore|нанопор",
     // Generic discovery keywords
-    "discover(?:ed|ies)?|de novo|high-throughput|screening",
+    "de novo|high-throughput|screening",
     "materials? design|materials? discovery",
     "retrosynthesis|autonomous lab",
   ].join("|"),
@@ -111,11 +108,15 @@ export function buildInventionContext(
  * Classify whether an article describes an AI-for-science tool / discovery
  * and which spheres it belongs to.
  *
+ * An invention candidate needs BOTH a discovery/tool topic AND an explicit
+ * AI signal (generic medical/biology news has neither the AI part and is
+ * rejected — client feedback 2026-08-25).
+ *
  * @param text Combined title + summary (+ description if available).
  */
 export function classifyInvention(text: string) {
   const normalized = text.trim();
-  const isInvention = INVENTION_TERMS.test(normalized);
+  const isInvention = INVENTION_TERMS.test(normalized) && hasExplicitAiSignal(normalized);
   const sphereNames: Record<string, string> = {
     chemistry: "химия",
     materials: "материалы",
