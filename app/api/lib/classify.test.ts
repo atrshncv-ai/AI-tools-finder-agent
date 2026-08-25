@@ -48,6 +48,15 @@ describe("classifyArticle", () => {
       expect(result.scienceField).toBeNull();
     });
 
+    it("does not let latin substrings fake a science domain (generative != gene)", () => {
+      const result = classifyArticle(
+        "Gemini 3.7 Flash: 50% Cheaper and Faster Than Claude?",
+        "The new model generates answers faster; excellent results on general benchmarks across the board."
+      );
+      expect(result.isScience).toBe(false);
+      expect(result.scienceField).toBeNull();
+    });
+
     it("does not classify generic engineering without AI", () => {
       const result = classifyArticle(
         "Новый GPU для вычислений",

@@ -10,7 +10,11 @@ const SCIENCE_FIELD_KEYWORDS: Record<string, string[]> = {
     "полупроводник", "semiconductor", "проводимость", "conductivity",
   ],
   biology: [
-    "биолог", "biology", "biological", "белок", "protein", "ген", "gene",
+    "биолог", "biology", "biological", "белок", "protein",
+    // "ген"/"gene" as bare substrings matched «генеральный/generative/general»
+    // in full texts — use morphology-specific forms instead.
+    "геном", "гены", "гена", "генов", "генн", "генетич",
+    "genes", "genetic",
     "ДНК", "DNA", "РНК", "RNA", "клетк", "cell", "организм", "organism",
     "эволюц", "evolution", "биоинформат", "bioinformatics",
   ],
@@ -125,7 +129,16 @@ export interface ClassificationResult {
 
 function matchesKeywords(text: string, keywords: string[]): boolean {
   const lower = text.toLowerCase();
-  return keywords.some((kw) => lower.includes(kw));
+  return keywords.some((kw) => {
+    // Latin keywords match at a word boundary: bare substring matching made
+    // «gene» hit «general/generative» and «cell» hit «excellent» inside
+    // full article texts / YouTube transcripts. Cyrillic keywords stay
+    // prefix-substring (morphology: клетк→клетки, биолог→биологии).
+    if (/[a-z]/i.test(kw)) {
+      return new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i").test(lower);
+    }
+    return lower.includes(kw);
+  });
 }
 
 export function classifyArticle(title: string, description: string): ClassificationResult {
