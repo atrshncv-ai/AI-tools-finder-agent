@@ -1,6 +1,6 @@
 # Тикет 02: Еженедельный check-urls по cron
 
-Status: todo
+Status: done
 Blocked by: —
 
 ## Проблема

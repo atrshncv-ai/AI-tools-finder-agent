@@ -1,6 +1,6 @@
 # Тикет 03: Усиление семантического дедупа
 
-Status: todo
+Status: done
 Blocked by: —
 
 ## Проблема

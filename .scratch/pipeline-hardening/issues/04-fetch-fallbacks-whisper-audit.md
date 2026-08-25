@@ -1,6 +1,6 @@
 # Тикет 04: Fetch-fallback цепочка и аудит Whisper-ключа
 
-Status: todo
+Status: done
 Blocked by: —
 
 ## Проблема
