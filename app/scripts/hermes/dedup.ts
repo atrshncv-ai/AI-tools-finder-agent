@@ -3,10 +3,13 @@
  *
  * Two-stage protection against duplicate news BEFORE scoring/summarization:
  *   1. Exact URL match against the DB (fast path).
- *   2. Semantic "same story" guard: normalized Levenshtein similarity of the
- *      candidate title against the last N titles in the DB (default 20).
- *      Threshold 0.85 — e.g. «OpenAI выпустила GPT-5.6» from different media
- *      outlets collapses into a single story.
+ *   2. Semantic "same story" guard against the last N titles in the DB:
+ *      a) normalized Levenshtein similarity >= threshold (0.85);
+ *      b) versioned-entity rule: two titles sharing a versioned model/entity
+ *         name («gpt-5.6», «claude-4», «gemini-3.7») with similarity >= 0.4.
+ *      One story reported by different outlets in different words collapses
+ *      into a single card; brand-only overlap («OpenAI» in both) is NOT
+ *      enough — different news about the same company must stay.
  */
 
 import { getDb } from "../../api/queries/connection";
@@ -27,6 +30,23 @@ export function normalizeTitle(title: string): string {
     .filter((w) => w.length > 1 && !STOP.has(w))
     .join(" ")
     .trim();
+}
+
+/**
+ * Versioned entities: tokens that name a specific model/release — letters
+ * AND digits in one token («gpt-5.6», «claude-4», «ios-26»). Bare numbers
+ * («110 лет») and bare brands («OpenAI») deliberately excluded: brand-only
+ * overlap must not merge different stories.
+ */
+const VERSIONED_ENTITY_RE = /^(?=[a-zа-яё\d._-]*[a-zа-яё])(?=[a-zа-яё\d._-]*\d)[a-zа-яё\d][a-zа-яё\d._-]*$/i;
+
+export function extractVersionedEntities(title: string): Set<string> {
+  const entities = new Set<string>();
+  for (const raw of title.split(/\s+/)) {
+    const token = raw.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+    if (token.length >= 3 && VERSIONED_ENTITY_RE.test(token)) entities.add(token);
+  }
+  return entities;
 }
 
 /** Classic Levenshtein distance (iterative, O(n*m), titles are short). */
@@ -81,7 +101,7 @@ export async function findSemanticDuplicate(
   opts: { threshold?: number; lookback?: number } = {},
 ): Promise<DuplicateMatch | null> {
   const threshold = opts.threshold ?? 0.85;
-  const lookback = opts.lookback ?? 20;
+  const lookback = opts.lookback ?? 300;
   const db = getDb();
   const recent = await db
     .select({ id: news.id, title: news.title, originalTitle: news.originalTitle })
@@ -94,16 +114,42 @@ export async function findSemanticDuplicate(
 
   let best: DuplicateMatch | null = null;
   for (const row of recent) {
-    // Compare against the untranslated original title; `title` may already be
-    // overwritten with the Russian translation, which would never match a new
-    // English candidate. Fall back to `title` for legacy rows.
-    const compareTitle = row.originalTitle ?? row.title;
-    const sim = similarity(norm, normalizeTitle(compareTitle));
-    if (sim >= threshold && (!best || sim > best.similarity)) {
-      best = { id: row.id, title: compareTitle, similarity: sim };
+    const match = matchTitle(title, norm, row.originalTitle ?? row.title, threshold);
+    if (match && (!best || match.similarity > best.similarity)) {
+      best = { id: row.id, title: row.originalTitle ?? row.title, similarity: match.similarity };
     }
   }
   return best;
+}
+
+/**
+ * Combined rule for one candidate/existing title pair:
+ *   - plain similarity >= threshold, OR
+ *   - shared versioned entity («gpt-5.6») with similarity >= 0.4.
+ * Length-difference early exit keeps the 300-row scan cheap.
+ */
+export function matchTitle(
+  candidateRaw: string,
+  candidateNorm: string,
+  existingRaw: string,
+  threshold: number,
+): { similarity: number; reason: string } | null {
+  const existingNorm = normalizeTitle(existingRaw);
+  const maxLen = Math.max(candidateNorm.length, existingNorm.length);
+  if (maxLen === 0) return null;
+  if (Math.abs(candidateNorm.length - existingNorm.length) / maxLen > 0.6) return null;
+
+  const sim = similarity(candidateNorm, existingNorm);
+  if (sim >= threshold) return { similarity: sim, reason: "title-similarity" };
+
+  const candEnt = extractVersionedEntities(candidateRaw);
+  if (candEnt.size > 0) {
+    const existingEnt = extractVersionedEntities(existingRaw);
+    let shared = false;
+    for (const e of candEnt) if (existingEnt.has(e)) { shared = true; break; }
+    if (shared && sim >= 0.4) return { similarity: sim, reason: "versioned-entity" };
+  }
+  return null;
 }
 
 /** Full guard: URL check first (cheap), then semantic title check. */
