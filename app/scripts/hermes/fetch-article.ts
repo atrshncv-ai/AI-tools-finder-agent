@@ -43,7 +43,7 @@ async function main() {
   const blocked = ssrfCheck(url);
   if (blocked) {
     console.error(`[fetch-article] SSRF guard: ${url} (${blocked})`);
-    return null;
+    process.exit(1);
   }
 
   // YouTube branch: transcript via yt-dlp instead of HTML scraping.
