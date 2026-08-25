@@ -41,18 +41,28 @@ describe("resolveSection", () => {
     expect(result.isScience).toBe(false);
   });
 
-  it("rescues an AI×science article whose RSS snippet lacked AI words (full text)", () => {
+  it("rescues an AI×science article whose RSS snippet lacked AI words (RU summary)", () => {
     const sparse = resolveSection({
       title: "Катализатор разлагает пластик за часы",
       description: "Химики испытали соединение на полимерах",
     });
+    // At save-summary time the generated Russian summary carries the AI signal.
     const enriched = resolveSection({
       title: "Катализатор разлагает пластик за часы",
-      description: "Химики испытали соединение на полимерах",
-      content: "Исследователи обучили нейросеть предсказывать активность соединения; машинное обучение сократило подбор с месяцев до часов.",
+      description: "Исследователи обучили нейросеть предсказывать активность соединения; машинное обучение сократило подбор с месяцев до часов.",
     });
     expect(sparse.section).toBe("ai-news");
     expect(enriched.section).toBe("science");
+  });
+
+  it("does not let incidental domain words in full text fake science", () => {
+    const result = resolveSection({
+      title: "Gemini 3.7 Flash: 50% Cheaper and Faster Than Claude?",
+      description: "Новая модель для разработчиков: бенчмарки, цены, Arena.",
+      content: "Модель показывает отличные результаты на бенчмарках кода; упоминаются граничные клетки и общие принципы обучения.",
+    });
+    expect(result.section).toBe("ai-news");
+    expect(result.isScience).toBe(false);
   });
 
   it("moves a misfiled invention-tools article back out when text has no AI signal", () => {

@@ -31,9 +31,13 @@ export function resolveSection(input: {
   const description = (input.description ?? "").trim();
   const content = (input.content ?? "").trim();
 
-  // Full text counts for both classifiers: RSS snippets are often too sparse
-  // to show the AI/science connection that the article body makes obvious.
-  const classification = classifyArticle(title, `${description} ${content}`.trim());
+  // Science detection runs on title + description ONLY (RSS snippet or the
+  // generated Russian summary): both are dense and curated. Full article
+  // text is full of incidental domain words («граничные клетки», «organic
+  // traffic») that faked science domains during the 2026-08-25 backfill.
+  // The invention classifier keeps the full text: its terms are specific
+  // and it independently requires an explicit AI signal.
+  const classification = classifyArticle(title, description);
   const invention = classifyInvention(buildInventionContext(title, description, content));
 
   const section: Section = invention.isInvention
