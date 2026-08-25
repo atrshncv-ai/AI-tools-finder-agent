@@ -17,8 +17,8 @@ Hermes выполняет **Ralph Loop** — автономный цикл сб�
 
 ```
 collect-dual.ts → evaluate-news.ts → manifest-gen.ts → fetch → save-summary (1 Zen call) → deploy-ready
-  Dual pipeline     Data-driven        approved           per-article, SEQUENTIAL, no translation
-  + Dedup Guard     scoring (>65)      pending only
+  Dual pipeline     Data-driven +      approved           per-article, SEQUENTIAL, no translation
+  + Dedup Guard     AI-gate (≥50)      pending only
 ```
 
 Все скрипты расположены в `scripts/hermes/`.
@@ -37,7 +37,7 @@ cd app && npx tsx scripts/hermes/collect-dual.ts --stream both   # tech|science|
 - Тренды через лёгкие JSON-API (без браузера, без скриншотов, без токенов):
   - **Hacker News** — Algolia API (`hn.algolia.com`), посты >100 points за 48ч
   - **GitHub Trending** — REST search API: новые AI/LLM-репозитории >300 звёзд за 3 дня
-  - **Reddit** — публичный JSON r/MachineLearning, r/artificial, r/LocalLLaMA (>100 ups)
+  - **Reddit** — отключён по политике (429 и шумные голоса); discovery через HN/GitHub
 - **YouTube:** смешанный RSS + явный обход настроенных вкладок `/videos` и
   `/shorts`. Обычные ролики не вытесняются всплеском Shorts.
 
@@ -54,8 +54,10 @@ cd app && npx tsx scripts/hermes/collect-dual.ts --stream both   # tech|science|
 Кандидаты вставляются со `status='pending'`, `score=NULL`, предсобранными
 метриками источника в `metrics` (githubStars, hnPoints, redditUps).
 
-**Routing при вставке:** кандидаты проходят общую классификацию по заголовку и
-описанию. `isScience=true`, `scienceField` и `section='science'` выставляются
+**Routing при вставке:** единый резолвер `api/lib/section-resolve.ts`
+(invention ∧ ИИ > science ∧ ИИ > ai-news), затем переоценивается на этапах
+evaluate-news и save-summary по мере появления полного текста — перенос
+двунаправленный. `isScience=true`, `scienceField` и `section='science'` выставляются
 только при одновременном наличии явного AI/ML-сигнала (ИИ, AI, machine/deep
 learning, neural network, LLM и т.п.) и научного домена. Источник научного RSS
 сам по себе больше не достаточен; tech-поток и общенаучные материалы без AI
@@ -74,7 +76,7 @@ cd app && npx tsx scripts/hermes/evaluate-news.ts --batch --daily-cap 5
 ```
 
 LLM **не участвует** в оценке. Скрипт собирает конкретные цифры через
-HTTP/JSON-API (GitHub REST, HN Algolia, Reddit JSON, Altmetric API, DOI из
+HTTP/JSON-API (GitHub REST, HN Algolia, Altmetric API, DOI из
 контента) и детерминированно суммирует баллы.
 
 **Критерии Tech (ИИ-инструменты) — многоуровневая матрица:**
@@ -85,8 +87,8 @@ HTTP/JSON-API (GitHub REST, HN Algolia, Reddit JSON, Altmetric API, DOI из
 | GitHub stars > 10 000 | +30 |
 | GitHub stars > 1 000 | +20 |
 | GitHub stars > 500 и возраст репо < 1 месяца | +25 |
-| HN / Reddit > 100 апвоутов | +30 |
-| HN / Reddit > 30 апвоутов | +15 |
+| HN > 100 апвоутов | +30 |
+| HN > 30 апвоутов | +15 |
 | Трендовый бонус: MCP / AI Agent / RAG | +15 |
 | Открытая лицензия MIT / Apache-2.0 | +10 |
 
@@ -98,14 +100,23 @@ HTTP/JSON-API (GitHub REST, HN Algolia, Reddit JSON, Altmetric API, DOI из
 | Метрика | Баллы |
 |---|---|
 | Tier-1 источник (Nature, Science, Lancet, Cell, OpenAI/Anthropic/Google/DeepMind блог) | +45 |
-| Tier-2 источник (NeurIPS/CVPR/ICLR, HuggingFace Blog, MIT Technology Review) | +30 |
+| Tier-2 источник (MIT Tech Review, HF Blog, arXiv*, Naked Science, NeurIPS/CVPR/ICLR) | +30 |
+| Явный ИИ/ML-сигнал в научной ветке | +20 |
 | arXiv-препринт + открытый код/модель/датасет | +35 |
 | arXiv-препринт без открытого кода | +10 |
 | Altmetric score ≥ 50 | +20 |
 | Тематический бонус: ИИ × химия/материалы/биология/медицина/физика | +15 |
 
-**Gate:** в дашборд проходят только статьи с баллом **> 65**.
-**Daily cap:** не более 5 одобренных статей в сутки (UTC) — элитная курация.
+**Жёсткий ИИ-гейт:** статья без явного ИИ/ML-сигнала в собственном тексте
+отклоняется (`no-ai-signal`) независимо от баллов; curated AI-источники
+(блоги OpenAI/HF/Google, GitHub trending, HN, dedicated AI YouTube-каналы)
+освобождены как «AI by construction».
+
+**Gate:** в дашборд проходят только статьи с баллом **>= 50**
+(единая константа `SCORE_GATE` в `scripts/hermes/pipeline-config.ts`, общий
+источник правды для evaluate-news и manifest-gen). Релевантность обеспечивают
+ИИ-гейты классификации, а не порог баллов.
+**Daily cap:** по умолчанию отключён (`HERMES_DAILY_CAP=0` = безлимит); положительное значение включает квоту N одобренных в сутки (UTC).
 Решение и доказательная база (`scoreBreakdown`, метрики) сохраняются в
 `news.score` / `news.metrics`; отбракованные → `status='rejected'`.
 
@@ -121,7 +132,7 @@ HTTP/JSON-API (GitHub REST, HN Algolia, Reddit JSON, Altmetric API, DOI из
 ## Шаги 1–3: Обработка одобренных статей (строго последовательно)
 
 ```bash
-# Манифест одобренных (pending + score>75 + content IS NULL)
+# Манифест одобренных (pending + score >= SCORE_GATE + content IS NULL)
 npx tsx scripts/hermes/manifest-gen.ts --output /tmp/hermes-manifest.json --limit 50
 
 # По каждой статье из манифеста — ОДНА за раз, без параллелизма:
@@ -144,14 +155,14 @@ npx tsx scripts/hermes/deploy-ready.ts --batch-size 1      # 3c: публика�
 cd app && bash scripts/hermes/ralph-loop.sh
 # Под PM2: процесс hermes-ralph-loop (см. ecosystem.config.cjs)
 # Интервал между циклами: LINEAR_WORKER_INTERVAL_MS (default 600000 = 10 мин)
-# Дневной лимит: HERMES_DAILY_CAP (default 5)
+# Дневной лимит: HERMES_DAILY_CAP (default 0 = безлимит)
 ```
 
 ## Статусы статей в БД
 
 ```
-(pending, score=NULL)  →  evaluate: score>65 & slot → pending (approved)
-                      ↘  score≤65 или нет слота     → rejected
+(pending, score=NULL)  →  evaluate: ИИ-гейт & score≥50 & slot → pending (approved)
+                      ↘  нет ИИ-сигнала / score<50 / нет слота → rejected
 approved pending → summarized (RU title+summary, 1 Zen call) → published
                  ↘ fetch/transcript failure → retry (до 3 раз) → rejected
 ```
@@ -159,8 +170,8 @@ approved pending → summarized (RU title+summary, 1 Zen call) → published
 | Статус | Описание |
 |--------|----------|
 | `pending` + score NULL | Собран коллектором, ждёт оценки |
-| `pending` + score > 65 | Одобрен data-driven скорингом, ждёт обработки |
-| `rejected` | Не прошёл gate 65 или дневной лимит (метрики сохранены) |
+| `pending` + score ≥ 50 | Одобрен скорингом (+ИИ-гейт), ждёт обработки |
+| `rejected` | Нет ИИ-сигнала, не прошёл gate 50 или дневной лимит |
 | `summarized` | RU заголовок + RU саммари получены за 1 вызов Zen |
 | `published` | Видна пользователям в дашборде |
 
@@ -173,7 +184,7 @@ approved pending → summarized (RU title+summary, 1 Zen call) → published
 | collect-dual | RSS/API недоступен | Пропустить источник, продолжить |
 | collect-dual | Дубликат (URL/semantic) | Skip, счётчик duplicates |
 | evaluate-news | Метрика недоступна | Метрика = null, 0 баллов за критерий |
-| evaluate-news | Score ≤ 65 / нет слота | status='rejected' |
+| evaluate-news | Нет ИИ-сигнала / score < 50 / нет слота | status='rejected' |
 | manifest-gen | Пустой манифест | Завершить цикл (success) |
 | fetch-article | YouTube без транскрипта | Сразу `rejected`, без вызова Zen |
 | fetch-article | HTTP/extract error / < 100 chars | Счётчик в `metrics.processingFailures`; после 3 попыток → `rejected` |
@@ -189,11 +200,11 @@ ZEN_BASE_URL=https://opencode.ai/zen/v1
 ZEN_API_KEY=sk-***
 ZEN_MODEL=deepseek-v4-flash-free
 LINEAR_WORKER_INTERVAL_MS=600000   # интервал цикла Ralph Loop
-HERMES_DAILY_CAP=5                 # лимит одобренных статей в сутки
+HERMES_DAILY_CAP=0                 # 0 = безлимит; N включает дневную квоту
 ```
 
 ## Зависимости
 
 - Node.js + tsx, PostgreSQL, Zen API (OpenAI-compatible)
 - `rss-parser` (RSS/Atom), `cheerio` (извлечение ссылок/DOI), `drizzle-orm`
-- Внешние read-only API: GitHub REST, HN Algolia, Reddit JSON, Altmetric
+- Внешние read-only API: GitHub REST, HN Algolia, Altmetric

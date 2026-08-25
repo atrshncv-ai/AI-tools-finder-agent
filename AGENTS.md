@@ -32,8 +32,9 @@ Stack: React/Vite frontend, Hono + tRPC backend, Drizzle ORM + PostgreSQL,
 Opencode Zen API (OpenAI-compatible) via key-pool client `app/api/ai/zenClient.ts`.
 
 Pipeline: `collect-dual.ts` (text + YouTube via yt-dlp, 72h Time Guard +
-Semantic Dedup) → `evaluate-news.ts` (data-driven scoring, gate >65, no
-daily cap by default) → `manifest-gen.ts` → `fetch-article.ts` →
+Semantic Dedup) → `evaluate-news.ts` (hard AI-relevance gate + data-driven
+scoring, gate >=50 via `pipeline-config.ts`, no daily cap by default) →
+`manifest-gen.ts` → `fetch-article.ts` →
 `save-summary.ts` (ONE Zen call, RU title + summary) → `deploy-ready.ts`.
 Strictly sequential, no translation step, no fan-out. Morning Telegram
 digest via cron (`daily-digest.ts`). Full reference: `ARCHITECTURE.md`.
