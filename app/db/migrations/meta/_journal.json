@@ -71,6 +71,13 @@
       "when": 1786685637876,
       "tag": "0009_sour_hellion",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1787230634505,
+      "tag": "0010_handy_paper_doll",
+      "breakpoints": true
     }
   ]
 }
