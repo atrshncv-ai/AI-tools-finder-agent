@@ -1,8 +1,10 @@
 const SCIENCE_FIELD_KEYWORDS: Record<string, string[]> = {
   chemistry: [
     "химия", "chemistry", "chemical",
-    // «синтез» bare matched «синтезирует ответ» in LLM summaries — inflected forms only.
-    "синтеза", "синтезе", "синтезу", "синтезом", "synthesis", "катализ", "catalysis",
+    // «синтез*» removed entirely: it matched «синтезирует ответ» and «синтез
+    // речи» (TTS) in AI texts; chemical synthesis still fires via
+    // химич/катализ/молекул/полимер.
+    "synthesis", "катализ", "catalysis",
     "молекула", "molecule", "органичес", "organic", "неорганич", "inorganic",
     "полимер", "polymer", "электрохим", "electrochemistry", "спектр", "spectro",
   ],
