@@ -29,27 +29,50 @@ function normalizeSpace(text: string): string {
 
 // ─── HTML fetch + clean ──────────────────────────────────────────────────────
 
-async function fetchAndCleanArticle(url: string): Promise<string | null> {
+// Browser-like UA chain: the first UA passes most anti-bot walls (same as
+// collect-dual RSS_UA); the Firefox retry catches per-UA blocks. A generic
+// "ScienceAgent/1.0" UA was the reason ~4 articles/cycle died on Cloudflare.
+const FETCH_UAS = [
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
+];
+
+async function fetchAndCleanArticle(url: string): Promise<{ text: string; attempt: number } | null> {
   // SSRF guard: originalUrl comes from the DB — block private ranges.
   const blocked = ssrfCheck(url);
   if (blocked) {
     console.error(`[save-summary] SSRF guard: ${url} (${blocked})`);
     return null;
   }
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; ScienceAgent/1.0)" },
-    signal: AbortSignal.timeout(20000),
-  });
-  // Skip error pages (403 Cloudflare stubs, 404, 5xx) — never feed them to the LLM.
-  if (!res.ok) return null;
-  const buffer = await res.arrayBuffer();
-  const contentType = res.headers.get("content-type") || "";
-  const charsetMatch = contentType.match(/charset=([^\s;]+)/i);
-  const charset = charsetMatch?.[1]?.toLowerCase() || "utf-8";
-  const decoder = new TextDecoder(charset === "windows-1251" ? "windows-1251" : "utf-8");
-  const html = decoder.decode(buffer);
-  const text = extractArticleText(html, url);
-  return text.length > 100 ? text : null;
+  for (let attempt = 0; attempt < FETCH_UAS.length; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": FETCH_UAS[attempt],
+          Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
+        },
+        signal: AbortSignal.timeout(20000),
+      });
+      // Skip error pages (403 Cloudflare stubs, 404, 5xx) — never feed them to the LLM.
+      if (!res.ok) {
+        console.error(`[save-summary] HTTP ${res.status} (ua#${attempt + 1}) for ${url}`);
+        continue;
+      }
+      const buffer = await res.arrayBuffer();
+      const contentType = res.headers.get("content-type") || "";
+      const charsetMatch = contentType.match(/charset=([^\s;]+)/i);
+      const charset = charsetMatch?.[1]?.toLowerCase() || "utf-8";
+      const decoder = new TextDecoder(charset === "windows-1251" ? "windows-1251" : "utf-8");
+      const html = decoder.decode(buffer);
+      const text = extractArticleText(html, url);
+      if (text.length > 100) return { text, attempt };
+      console.error(`[save-summary] extracted ${text.length} chars (ua#${attempt + 1}) — below threshold`);
+    } catch (err) {
+      console.error(`[save-summary] fetch failed (ua#${attempt + 1}): ${(err as Error).message.slice(0, 100)}`);
+    }
+  }
+  return null;
 }
 
 // ─── Args parsing ────────────────────────────────────────────────────────────
@@ -122,6 +145,7 @@ async function main() {
   let titleRu: string | null = null;
   let detailedSummary: string;
   let originalContent: string | null = null;
+  let fetchFallbackInfo: Record<string, unknown> | null = null;
   let modelUsed: string | null = args.model;
 
   if (args.auto) {
@@ -156,11 +180,16 @@ async function main() {
       console.error(`[save-summary] YouTube transcript: ${t.text.length} chars (${t.kind}, ${t.lang}, channel=${t.channel})`);
       text = normalizeSpace(`${t.title}. ${t.description}\n\nTranscript:\n${t.text}`);
     } else {
-      text = await fetchAndCleanArticle(article.originalUrl);
-    }
-    if (!text) {
-      console.error("[save-summary] Failed to fetch or extract article content");
-      process.exit(1);
+      const fetched = await fetchAndCleanArticle(article.originalUrl);
+      if (!fetched) {
+        console.error("[save-summary] Failed to fetch or extract article content");
+        process.exit(1);
+      }
+      text = fetched.text;
+      if (fetched.attempt > 0) {
+        fetchFallbackInfo = { attempts: fetched.attempt + 1, ua: "firefox-retry", at: new Date().toISOString() };
+        console.error(`[save-summary] fetched via fallback ua#${fetched.attempt + 1}`);
+      }
     }
     const contentKind = isYoutubeUrl(article.originalUrl) ? "youtube-transcript" : "web-article";
     if (isUnusableExtractedContent(text, contentKind)) {
@@ -212,6 +241,9 @@ async function main() {
   if (!args.auto && detailedSummary) updateData.content = detailedSummary;
   if (modelUsed) updateData.modelUsed = modelUsed;
   if (originalContent) updateData.originalContent = originalContent;
+  if (fetchFallbackInfo) {
+    updateData.metrics = { ...((article.metrics as Record<string, unknown>) || {}), fetchFallback: fetchFallbackInfo };
+  }
 
   // Final unified re-routing with the richest context available (Russian
   // title + generated summary + extracted content). Bidirectional: an article

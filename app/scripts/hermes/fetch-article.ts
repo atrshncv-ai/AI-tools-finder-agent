@@ -62,25 +62,36 @@ async function main() {
   }
 
   try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; ScienceAgent/1.0)" },
-      signal: AbortSignal.timeout(20000),
-    });
-
-    // Skip error pages (403 Cloudflare stubs, 404, 5xx) — never feed them to the LLM.
-    if (!res.ok) {
-      console.error(`[fetch-article] HTTP ${res.status} for ${url}`);
-      return null;
+    // Browser-like UA chain (same rationale as save-summary): the generic
+    // bot UA died on Cloudflare walls; Firefox retry catches per-UA blocks.
+    const FETCH_UAS = [
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
+    ];
+    let text = "";
+    for (let attempt = 0; attempt < FETCH_UAS.length; attempt++) {
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": FETCH_UAS[attempt],
+          Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
+        },
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!res.ok) {
+        console.error(`[fetch-article] HTTP ${res.status} (ua#${attempt + 1}) for ${url}`);
+        continue;
+      }
+      const buffer = await res.arrayBuffer();
+      const contentType = res.headers.get("content-type") || "";
+      const charsetMatch = contentType.match(/charset=([^\s;]+)/i);
+      const charset = charsetMatch?.[1]?.toLowerCase() || "utf-8";
+      const decoder = new TextDecoder(charset === "windows-1251" ? "windows-1251" : "utf-8");
+      const html = decoder.decode(buffer);
+      text = extractArticleText(html, url);
+      if (text.length >= 100) break;
+      console.error(`[fetch-article] extracted ${text.length} chars (ua#${attempt + 1}) — trying next UA`);
     }
-
-    const buffer = await res.arrayBuffer();
-    const contentType = res.headers.get("content-type") || "";
-    const charsetMatch = contentType.match(/charset=([^\s;]+)/i);
-    const charset = charsetMatch?.[1]?.toLowerCase() || "utf-8";
-    const decoder = new TextDecoder(charset === "windows-1251" ? "windows-1251" : "utf-8");
-    const html = decoder.decode(buffer);
-
-    const text = extractArticleText(html, url);
 
     if (text.length < 100) {
       console.error("[fetch-article] Extracted text too short (<100 chars)");
