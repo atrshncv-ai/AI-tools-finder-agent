@@ -1,11 +1,15 @@
 const SCIENCE_FIELD_KEYWORDS: Record<string, string[]> = {
   chemistry: [
-    "химия", "chemistry", "chemical", "синтез", "synthesis", "катализ", "catalysis",
+    "химия", "chemistry", "chemical",
+    // «синтез» bare matched «синтезирует ответ» in LLM summaries — inflected forms only.
+    "синтеза", "синтезе", "синтезу", "синтезом", "synthesis", "катализ", "catalysis",
     "молекула", "molecule", "органичес", "organic", "неорганич", "inorganic",
     "полимер", "polymer", "электрохим", "electrochemistry", "спектр", "spectro",
   ],
   materials: [
-    "материал", "material", "материаловед", "nanomaterial", "наноматериал",
+    // Bare «материал/material» removed: in RU summaries «Материал сопоставляет…»
+    // means "the article compares…" and matched every second post.
+    "материаловед", "nanomaterial", "наноматериал",
     "кристалл", "crystal", "сплав", "alloy", "композит", "composite",
     "полупроводник", "semiconductor", "проводимость", "conductivity",
   ],
@@ -24,15 +28,18 @@ const SCIENCE_FIELD_KEYWORDS: Record<string, string[]> = {
     "клиник", "clinical", "пациент", "patient", "вакцин", "vaccine",
   ],
   physics: [
-    "физик", "physics", "physical", "квантов", "quantum", "частиц", "particle",
+    "физик", "physics", "physical",
+    // «квантов» bare also matched «квантование» (LLM quantization) — enumerate forms.
+    "квантовая", "квантовый", "квантовые", "квантовой", "квантовом", "квантовых", "квантовую",
+    "quantum", "частиц", "particle",
     "энерги", "energy", "оптик", "optics", "суперпровод", "superconductor",
     "термояд", "fusion", "астрофиз", "astrophysics",
   ],
   engineering: [
-    // Research-flavored engineering only. Pure IT/hardware words (GPU, server,
-    // chip, NVIDIA…) deliberately removed: they matched ordinary AI-industry
-    // news on full text and flooded the science section (backfill 2026-08-25).
-    "инженер", "engineering", "робот", "robot", "робототехн", "манипулятор",
+    // Research-flavored engineering only. «инженер/engineering» removed too:
+    // «инженерная команда/AI-инженерия» is ordinary AI-news vocabulary.
+    // Pure IT/hardware words (GPU, server, chip, NVIDIA…) removed earlier.
+    "робот", "robot", "робототехн", "манипулятор",
     "вычислительная", "суперкомпьютер",
   ],
 };
@@ -141,8 +148,25 @@ function matchesKeywords(text: string, keywords: string[]): boolean {
   });
 }
 
-export function classifyArticle(title: string, description: string): ClassificationResult {
-  const combined = `${title} ${description}`.toLowerCase();
+/** Diagnostics: which science-domain keywords fire on this text, and where. */
+export function explainScienceDomain(text: string): Array<{ field: string; keyword: string }> {
+  const combined = text.toLowerCase();
+  const hits: Array<{ field: string; keyword: string }> = [];
+  for (const [field, keywords] of Object.entries(SCIENCE_FIELD_KEYWORDS)) {
+    for (const kw of keywords) {
+      if (/[a-z]/i.test(kw)) {
+        if (new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i").test(combined)) {
+          hits.push({ field, keyword: kw });
+        }
+      } else if (combined.includes(kw)) {
+        hits.push({ field, keyword: kw });
+      }
+    }
+  }
+  return hits;
+}
+
+export function classifyArticle(title: string, description: string): ClassificationResult {  const combined = `${title} ${description}`.toLowerCase();
 
   const hasScienceDomain = Object.values(SCIENCE_FIELD_KEYWORDS).some((keywords) =>
     matchesKeywords(combined, keywords),
