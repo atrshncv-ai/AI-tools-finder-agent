@@ -25,20 +25,24 @@ export interface SectionResolution {
 export function resolveSection(input: {
   title: string;
   description?: string | null;
+  /** Accepted for API stability; classifiers intentionally do not scan it. */
   content?: string | null;
 }): SectionResolution {
   const title = (input.title || "").trim();
   const description = (input.description ?? "").trim();
-  const content = (input.content ?? "").trim();
 
   // Science detection runs on title + description ONLY (RSS snippet or the
   // generated Russian summary): both are dense and curated. Full article
   // text is full of incidental domain words («граничные клетки», «organic
   // traffic») that faked science domains during the 2026-08-25 backfill.
-  // The invention classifier keeps the full text: its terms are specific
-  // and it independently requires an explicit AI signal.
+  //
+  // Invention detection likewise runs on title + description ONLY: a
+  // 10k-char transcript almost always contains «ДНК/protein/quantum» in
+  // metaphors or passing mentions («ДНК компании», Google downfall retelling
+  // AlphaFold history), which faked invention matches (backfill 25.08).
+  // Genuine AI-for-science stories carry their topic in the summary.
   const classification = classifyArticle(title, description);
-  const invention = classifyInvention(buildInventionContext(title, description, content));
+  const invention = classifyInvention(buildInventionContext(title, description));
 
   const section: Section = invention.isInvention
     ? "invention-tools"

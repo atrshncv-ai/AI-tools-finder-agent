@@ -18,60 +18,59 @@ import { hasExplicitAiSignal } from "./classify";
 // since the client feedback of 2026-08-25 an invention candidate must ALSO
 // carry an explicit AI signal (see AI requirement in classifyInvention).
 
-const INVENTION_TERMS = new RegExp(
-  [
-    // Chemistry & molecules
-    "нов(?:ый|ые|ых) (?:материал|молекул|катализатор)",
-    "материаловед|ретросинтез|retrosynthesis",
-    "молекул(?:а|ы|ьное|ьный|екулярн)",
-    "кристалл(?:ограф|ическое|ический)",
-    "докинг",
-    "электронная структур",
-    "DFT|density functional|квантовая химия",
-    // Biology & proteins (both RU and EN)
-    "протеин|protein",
-    "геном(?:ик|ика)|genome",
-    "стволовые клетк",
-    "белков(?:ая|ую|ой) структур|protein structure",
-    // Protein folding only — bare "folding"/"сворачив" also matches
-    // foldable phones with AI features.
-    "фолдинг|protein folding|сворачивание белк",
-    "peptide|пептид",
-    // Gene editing & CRISPR
-    "CRISPR|crispr",
-    "base editing|редактирование (?:ген|баз|ДНК|DNA)",
-    "gene editing|генное редактирован",
-    "DNA|ДНК",
-    // Drug discovery & design (targeted, not generic clinical vocabulary)
-    "drug discover|drug design|лекарственн(?:ый|ое) дизайн",
-    // Materials & energy
-    "батаре[яйю]|аккумулятор|электрод|энергонакопит",
-    "перовскит|alloy|сплав",
-    "суперпроводник",
-    // Climate & weather
-    "климат(?:ическ|олог)|прогноз(?:ирование)? погоды",
-    "углерод(?:ный|ной)|paris climate",
-    // Quantum
-    "квантов(?:ый|ая|ом|ые) (?:вычислени|компют|алгоритм|процессор|бит)",
-    "квантовая запутанност",
-    "quantum computing|qubit|кубит",
-    // Astronomy
-    "экзопланет|телескоп|астрономическ|астрофизик|галактик",
-    "radio telescope|gravitational wav",
-    // Mathematics
-    "математическ(?:ая|ое|их)|доказательств|гипотез|теорем",
-    // AI tools for science
-    "AlphaFold|RoseTTAFold|DiffDock|ProteinMPNN|ESMFold",
-    "nanopore|нанопор",
-    // Generic discovery keywords
-    // "screening" alone also matches resume/content screening — keep the
-    // lab-specific phrasing.
-    "de novo|high-throughput screening",
-    "materials? design|materials? discovery",
-    "retrosynthesis|autonomous lab",
-  ].join("|"),
-  "i",
-);
+const INVENTION_ALTS: string[] = [
+  // Chemistry & molecules
+  "нов(?:ый|ые|ых) (?:материал|молекул|катализатор)",
+  "материаловед|ретросинтез|retrosynthesis",
+  "молекул(?:а|ы|ьное|ьный|екулярн)",
+  "кристалл(?:ограф|ическое|ический)",
+  "докинг",
+  "электронная структур",
+  "DFT|density functional|квантовая химия",
+  // Biology & proteins (both RU and EN)
+  "протеин|protein",
+  "геном(?:ик|ика)|genome",
+  "стволовые клетк",
+  "белков(?:ая|ую|ой) структур|protein structure",
+  // Protein folding only — bare "folding"/"сворачив" also matches
+  // foldable phones with AI features.
+  "фолдинг|protein folding|сворачивание белк",
+  "peptide|пептид",
+  // Gene editing & CRISPR
+  "CRISPR|crispr",
+  "base editing|редактирование (?:ген|баз|ДНК|DNA)",
+  "gene editing|генное редактирован",
+  "DNA|ДНК",
+  // Drug discovery & design (targeted, not generic clinical vocabulary)
+  "drug discover|drug design|лекарственн(?:ый|ое) дизайн",
+  // Materials & energy
+  "батаре[яйю]|аккумулятор|электрод|энергонакопит",
+  "перовскит|alloy|сплав",
+  "суперпроводник",
+  // Climate & weather
+  "климат(?:ическ|олог)|прогноз(?:ирование)? погоды",
+  "углерод(?:ный|ной)|paris climate",
+  // Quantum
+  "квантов(?:ый|ая|ом|ые) (?:вычислени|компют|алгоритм|процессор|бит)",
+  "квантовая запутанност",
+  "quantum computing|qubit|кубит",
+  // Astronomy
+  "экзопланет|телескоп|астрономическ|астрофизик|галактик",
+  "radio telescope|gravitational wav",
+  // Mathematics
+  "математическ(?:ая|ое|их)|доказательств|гипотез|теорем",
+  // AI tools for science
+  "AlphaFold|RoseTTAFold|DiffDock|ProteinMPNN|ESMFold",
+  "nanopore|нанопор",
+  // Generic discovery keywords
+  // "screening" alone also matches resume/content screening — keep the
+  // lab-specific phrasing.
+  "de novo|high-throughput screening",
+  "materials? design|materials? discovery",
+  "retrosynthesis|autonomous lab",
+];
+
+const INVENTION_TERMS = new RegExp(INVENTION_ALTS.join("|"), "i");
 
 // ── Sphere classification ───────────────────────────────────────────────────
 // Each entry: [sphereSlug, regex].  A title/summary can match multiple spheres.
@@ -106,6 +105,16 @@ export function buildInventionContext(
   if (description?.trim()) parts.push(description.trim());
   if (summary?.trim()) parts.push(summary.trim());
   return parts.join(". ");
+}
+
+/**
+ * Diagnostics: which invention alternatives fire on this text.
+ * Iterates the original alternatives array — splitting the joined regex
+ * source would shred (?:...) groups into meaningless fragments.
+ */
+export function explainInventionMatch(text: string): string[] {
+  const normalized = text.trim();
+  return INVENTION_ALTS.filter((alt) => new RegExp(alt, "i").test(normalized));
 }
 
 /**

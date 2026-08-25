@@ -55,6 +55,19 @@ describe("resolveSection", () => {
     expect(enriched.section).toBe("science");
   });
 
+  it("does not let incidental mentions in full text fake invention-tools", () => {
+    // YouTube transcripts routinely contain «ДНК», «протеин», «quantum
+    // computing» in metaphors or passing mentions (client case: a Google
+    // downfall essay retelling AlphaFold history).
+    const result = resolveSection({
+      title: "The Surprising Downfall of Google",
+      description: "Эссе о том, как компания потеряла лидерство в поиске.",
+      content: "Рассказ про историю компании: AlphaFold свернул белки, ДНК компании, квантовые вычисления и протеины упоминаются мимоходом.",
+    });
+    expect(result.section).not.toBe("invention-tools");
+    expect(result.sphereTags).toEqual([]);
+  });
+
   it("does not let incidental domain words in full text fake science", () => {
     const result = resolveSection({
       title: "Gemini 3.7 Flash: 50% Cheaper and Faster Than Claude?",

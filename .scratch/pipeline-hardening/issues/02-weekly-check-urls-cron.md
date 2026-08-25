@@ -11,8 +11,9 @@ Blocked by: —
 ## Что сделать
 
 - На сервере добавить cron (вместе с деплоем тикета):
-  `0 4 * * 1 cd /var/www/news-agent/app && set -a && . ./.env && set +a && npx tsx scripts/check-urls.ts >> /var/log/news-agent/check-urls.log 2>&1`
-  — понедельник 04:00 UTC (07:00 МСК), до утренних задач.
+  `0 4 * * 1 cd <APP_ROOT>/app && set -a && . ./.env && set +a && npx tsx scripts/check-urls.ts >> /var/log/news-agent/check-urls.log 2>&1`
+  — понедельник 04:00 UTC (07:00 МСК), до утренних задач; `<APP_ROOT>` —
+  фактический путь на сервере (в документацию не пишем, см. hygiene-тест).
 - Скрипт по умолчанию dry-run; `--apply` не включаем в cron, пока dry-run
   не покажет стабильную долю ложных «мёртвых» < 1% на двух неделях.
 - Лог ротировать через logrotate (weekly, 4 файла).
