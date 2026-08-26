@@ -506,15 +506,22 @@ async function evaluate(article: {
       breakdown.push({ criterion: "tier2-source", points: 30, evidence: `source=${article.source}` });
     }
 
-    // Explicit AI signal is the product's core criterion. The hard gate above
-    // guarantees it for non-exempt sources; scored here so AI×science items
-    // clear the gate even without social proof (Tier-1 = 65, Tier-2 = 50).
-    score += 20;
-    breakdown.push({
-      criterion: "science-ai-relevance",
-      points: 20,
-      evidence: "explicit AI/ML signal in title/content",
-    });
+    // Explicit AI signal is the product's core criterion. Scored here so
+    // AI×science items clear the gate even without social proof
+    // (Tier-1 = 65, Tier-2 = 50). Gated on resolved science relevance:
+    // otherwise every Tier-2 outlet item (mit-tech-review essays,
+    // naked-science environment pieces) auto-cleared the gate at exactly 50
+    // and flooded ai-news with non-science content (digest 26.08).
+    const scienceFloorEligible =
+      section === "science" || section === "invention-tools" || article.isScience;
+    if (scienceFloorEligible) {
+      score += 20;
+      breakdown.push({
+        criterion: "science-ai-relevance",
+        points: 20,
+        evidence: "explicit AI/ML signal in science-resolved content",
+      });
+    }
 
     // Reproducibility
     const isArxiv =

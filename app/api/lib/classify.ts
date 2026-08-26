@@ -28,6 +28,10 @@ const SCIENCE_FIELD_KEYWORDS: Record<string, string[]> = {
     "медицин", "medicine", "medical", "лекарств", "drug", "фармацевт", "pharma",
     "лечени", "treatment", "диагност", "diagnosis", "болезн", "disease",
     "клиник", "clinical", "пациент", "patient", "вакцин", "vaccine",
+    // Specific conditions RU summaries name directly («прогнозирование
+    // инсульта») — without them AI×medicine landed in ai-news.
+    "инсульт", "рак", "онколог", "опухол", "диабет", "кардио", "сердечн",
+    "невролог", "альцгеймер", "вирус", "эпидем", "иммун",
   ],
   physics: [
     "физик", "physics", "physical",

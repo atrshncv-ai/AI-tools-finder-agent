@@ -67,9 +67,7 @@ function formatSection(emoji: string, name: string, items: DigestItem[]): string
     lines.push(`▫️ [${esc(item.title)}](${item.originalUrl})${description}`);
   }
   if (items.length > MAX_ITEMS_PER_SECTION) {
-    const themes = [...new Set(items.slice(MAX_ITEMS_PER_SECTION).flatMap((item) => item.sphereTags ?? []))].slice(0, 4);
-    const themeText = themes.length > 0 ? ` про ${themes.join(", ")}` : " материалов по теме";
-    lines.push(`Ещё ${items.length - MAX_ITEMS_PER_SECTION} новостей${themeText} — в дашборде.`);
+    lines.push(`Ещё ${items.length - MAX_ITEMS_PER_SECTION} материалов — в дашборде.`);
   }
   lines.push("");
   return lines;

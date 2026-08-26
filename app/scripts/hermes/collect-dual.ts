@@ -165,6 +165,14 @@ async function collectYouTube(): Promise<Candidate[]> {
   const tabItems = Math.max(1, parseInt(process.env.YOUTUBE_TAB_ITEMS || "3", 10));
   for (const source of YOUTUBE_SOURCES) {
     const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${source.channelId}`;
+    // Health is recorded ONCE per source, combining RSS and yt-dlp tab
+    // attempts: many channels return permanent 404 on the RSS endpoint while
+    // the tab fallback keeps collecting — reporting them failing produced
+    // false ⚠️ in the digest health line (26.08).
+    let rssOk = false;
+    let rssFound = 0;
+    let rssError: string | undefined;
+    let tabFound = 0;
     try {
       const parsed = await rss.parseURL(feedUrl);
       for (const item of parsed.items.slice(0, 10)) {
@@ -179,11 +187,12 @@ async function collectYouTube(): Promise<Candidate[]> {
           byUrl.set(c.url, c);
         }
       }
+      rssOk = true;
+      rssFound = parsed.items.length;
       console.error(`[collect] ${source.name}: ${parsed.items.length} videos (rss)`);
-      void recordFeedHealth(source.name, feedUrl, true, parsed.items.length);
     } catch (err) {
-      console.error(`[collect] ${source.name}: RSS failed (${(err as Error).message})`);
-      void recordFeedHealth(source.name, feedUrl, false, 0, (err as Error).message);
+      rssError = (err as Error).message;
+      console.error(`[collect] ${source.name}: RSS failed (${rssError})`);
     }
 
     // Explicit tab collection ensures ordinary long-form videos are not
@@ -191,6 +200,7 @@ async function collectYouTube(): Promise<Candidate[]> {
     for (const tab of source.tabs) {
       const channelUrl = `https://www.youtube.com/${source.handle}/${tab}`;
       const videos = await listChannelVideos(channelUrl, tabItems);
+      tabFound += videos.length;
       for (const v of videos) {
         byUrl.set(v.url, {
           title: v.title,
@@ -205,6 +215,14 @@ async function collectYouTube(): Promise<Candidate[]> {
       }
       console.error(`[collect] ${source.name}: ${videos.length} ${tab} (yt-dlp)`);
     }
+
+    void recordFeedHealth(
+      source.name,
+      feedUrl,
+      rssOk || tabFound > 0,
+      rssFound + tabFound,
+      rssOk ? undefined : rssError,
+    );
   }
   return [...byUrl.values()];
 }
