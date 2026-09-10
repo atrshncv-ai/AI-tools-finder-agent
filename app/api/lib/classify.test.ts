@@ -275,6 +275,7 @@ describe("classifyArticle", () => {
       ["мультимодальный кодировщик"],
       ["границы ошибки для внимания трансформера"],
       ["диффузионная модель"],
+      ["Multi-Step Tool-Calling over Korean Open Public APIs"],
     ])("passes: %s", (text) => {
       expect(hasExplicitAiSignal(text)).toBe(true);
     });
@@ -282,6 +283,7 @@ describe("classifyArticle", () => {
     it.each([
       ["агентство недвижимости"],
       ["Всемирные игры человекоподобных роботов"],
+      ["телефонные занятия с репетиторами"],
     ])("fails without AI signal: %s", (text) => {
       expect(hasExplicitAiSignal(text)).toBe(false);
     });

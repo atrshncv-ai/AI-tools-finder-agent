@@ -87,6 +87,7 @@ const EXPLICIT_AI_PATTERNS: RegExp[] = [
   /latent (space|representations?|variables?)/i,
   /латентн(ое|ые|ий|их|ых)\s+(пространство|представлени)/u,
   /reasoning models?/i,
+  /\btool-?call(ing|s|ed)?\b/i,
 ];
 
 export function hasExplicitAiSignal(text: string): boolean {
