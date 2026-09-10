@@ -199,9 +199,38 @@ DATABASE_URL=postgresql://postgres:***@localhost:5432/science_agent
 ZEN_BASE_URL=https://opencode.ai/zen/v1
 ZEN_API_KEY=sk-***
 ZEN_MODEL=deepseek-v4-flash-free
+# OpenCode Go (paid): when a Go key is set, the pipeline uses the Go endpoint
+# instead of the legacy Zen pool.
+ZEN_GO_API_KEY=
+ZEN_GO_BASE_URL=https://opencode.ai/zen/go/v1
+ZEN_GO_MODEL=mimo-v2.5
 LINEAR_WORKER_INTERVAL_MS=600000   # интервал цикла Ralph Loop
 HERMES_DAILY_CAP=0                 # 0 = безлимит; N включает дневную квоту
 ```
+
+## Go endpoint и политика cheapest-модели
+
+Пайплайн ходит в Zen через `api/ai/zenClient.ts`. Если задан Go-ключ
+(`ZEN_GO_API_KEYS` — пул через запятую, либо legacy одиночный
+`ZEN_GO_API_KEY`), все chat completions идут на `ZEN_GO_BASE_URL`
+(default `https://opencode.ai/zen/go/v1`) с Go-ключом и моделью
+`ZEN_GO_MODEL` (default `mimo-v2.5`) — с той же ротацией ключей при
+quota-exhaustion, что и legacy-пул. Без Go-ключа работает legacy Zen-пул
+(`ZEN_BASE_URL` + `ZEN_API_KEYS`/`ZEN_API_KEY` + `ZEN_MODEL` +
+`ZEN_FALLBACK_MODELS`) без изменений.
+
+Политика cheapest-модели: в проде пинится самая дешёвая модель актуального
+Go-каталога (сегодня — `mimo-v2.5`). Порядок предпочтений задан в
+`api/ai/goModels.ts` (`CHEAPEST_GO_MODELS_FIRST`, резолвер
+`resolveCheapestGoModel`). Перед деплоем оператор проверяет каталог и пинит
+модель одной командой:
+
+```bash
+cd app && npx tsx scripts/hermes/cheapest-go-model.ts   # JSON {model, available, source} в stdout
+```
+
+Выведенный `model` прописывается как `ZEN_GO_MODEL` на сервере. Каталог
+моделей (без авторизации): `https://opencode.ai/zen/go/v1/models`.
 
 ## Зависимости
 

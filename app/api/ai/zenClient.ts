@@ -3,7 +3,7 @@ import { encode, decode } from "gpt-tokenizer";
 
 // ─── Configuration (all from env vars) ──────────────────────────────────────
 
-const ZEN_BASE_URL = process.env.ZEN_BASE_URL || "https://api.opencode Zen.ai/v1";
+const ZEN_BASE_URL = process.env.ZEN_BASE_URL || "https://opencode.ai/zen/v1";
 const DEFAULT_MODEL = process.env.ZEN_MODEL || "zen-default";
 
 // Model chain: primary ZEN_MODEL first, then fallbacks (comma-separated).
@@ -17,6 +17,32 @@ const MODEL_CHAIN: string[] = [
     .map((m) => m.trim())
     .filter(Boolean),
 ].filter((m, i, arr) => m && arr.indexOf(m) === i);
+
+// ─── OpenCode Go endpoint (paid subscription) ───────────────────────────────
+//
+// When a Go key is configured (ZEN_GO_API_KEYS pool or legacy single
+// ZEN_GO_API_KEY), pipeline chat completions go to the Go base URL with a Go
+// key and the Go model — the legacy Zen pool is bypassed. When no Go key is
+// set, behavior is exactly the legacy path (backward compatible).
+//
+// Go models catalog (no auth): https://opencode.ai/zen/go/v1/models
+// Pin the cheapest model: npx tsx scripts/hermes/cheapest-go-model.ts
+
+export const ZEN_GO_BASE_URL_DEFAULT = "https://opencode.ai/zen/go/v1";
+export const ZEN_GO_MODEL_DEFAULT = "mimo-v2.5";
+
+const ZEN_GO_BASE_URL = process.env.ZEN_GO_BASE_URL || ZEN_GO_BASE_URL_DEFAULT;
+const ZEN_GO_MODEL = process.env.ZEN_GO_MODEL || ZEN_GO_MODEL_DEFAULT;
+
+function parseGoKeyPool(): string[] {
+  const pooled = (process.env.ZEN_GO_API_KEYS || "")
+    .split(",")
+    .map((k) => k.trim())
+    .filter(Boolean);
+  if (pooled.length > 0) return pooled;
+  const legacy = (process.env.ZEN_GO_API_KEY || "").trim();
+  return legacy ? [legacy] : [];
+}
 
 // ─── API Key Pool (rotation / fallback) ─────────────────────────────────────
 //
@@ -37,34 +63,82 @@ function parseKeyPool(): string[] {
   return legacy ? [legacy] : [];
 }
 
-const keyPool: string[] = parseKeyPool();
-let currentKeyIndex = 0;
-/** key index → timestamp until which the key is considered exhausted */
-const keyCooldownUntil = new Map<number, number>();
+interface KeyPoolState {
+  keys: string[];
+  currentIndex: number;
+  cooldownUntil: Map<number, number>;
+}
+
+const legacyPool: KeyPoolState = {
+  keys: parseKeyPool(),
+  currentIndex: 0,
+  cooldownUntil: new Map<number, number>(),
+};
+
+const goPool: KeyPoolState = {
+  keys: parseGoKeyPool(),
+  currentIndex: 0,
+  cooldownUntil: new Map<number, number>(),
+};
+
+/**
+ * Active pool: Go takes over the pipeline when a Go key is configured,
+ * otherwise the legacy Zen pool serves requests (backward compatible).
+ */
+function activePool(): KeyPoolState {
+  return goPool.keys.length > 0 ? goPool : legacyPool;
+}
+
+/** True when a Go key is configured — pipeline uses the Go endpoint. */
+export function isGoConfigured(): boolean {
+  return goPool.keys.length > 0;
+}
+
+/** Effective chat-completions base URL for the active pool. */
+export function getEffectiveBaseUrl(): string {
+  return isGoConfigured() ? ZEN_GO_BASE_URL : ZEN_BASE_URL;
+}
+
+/** Go base URL (ZEN_GO_BASE_URL or default). Exported for tests/scripts. */
+export function getGoBaseUrl(): string {
+  return ZEN_GO_BASE_URL;
+}
+
+/** Go model id (ZEN_GO_MODEL or default). Exported for tests/scripts. */
+export function getGoModel(): string {
+  return ZEN_GO_MODEL;
+}
+
+/** Effective model chain: single Go model when Go is configured, else legacy chain. */
+function getEffectiveModelChain(): string[] {
+  return isGoConfigured() ? [ZEN_GO_MODEL] : MODEL_CHAIN;
+}
 
 function maskKey(key: string): string {
   return key.length > 10 ? `${key.slice(0, 7)}…${key.slice(-4)}` : "***";
 }
 
 function getActiveKey(): string | null {
-  if (keyPool.length === 0) return null;
-  return keyPool[currentKeyIndex % keyPool.length];
+  const pool = activePool();
+  if (pool.keys.length === 0) return null;
+  return pool.keys[pool.currentIndex % pool.keys.length];
 }
 
-function isKeyCooling(index: number): boolean {
-  return (keyCooldownUntil.get(index) ?? 0) > Date.now();
+function isKeyCooling(pool: KeyPoolState, index: number): boolean {
+  return (pool.cooldownUntil.get(index) ?? 0) > Date.now();
 }
 
 /** Rotate to the next non-cooling key. Returns false if the whole pool is exhausted. */
 function rotateKey(): boolean {
-  if (keyPool.length <= 1) return false;
-  for (let i = 1; i < keyPool.length; i++) {
-    const next = (currentKeyIndex + i) % keyPool.length;
-    if (!isKeyCooling(next)) {
+  const pool = activePool();
+  if (pool.keys.length <= 1) return false;
+  for (let i = 1; i < pool.keys.length; i++) {
+    const next = (pool.currentIndex + i) % pool.keys.length;
+    if (!isKeyCooling(pool, next)) {
       console.log(
-        `[Zen] Key rotation: #${currentKeyIndex} (${maskKey(keyPool[currentKeyIndex])}) → #${next} (${maskKey(keyPool[next])})`,
+        `[Zen] Key rotation: #${pool.currentIndex} (${maskKey(pool.keys[pool.currentIndex])}) → #${next} (${maskKey(pool.keys[next])})`,
       );
-      currentKeyIndex = next;
+      pool.currentIndex = next;
       return true;
     }
   }
@@ -82,20 +156,21 @@ function persistPoolState(): void {
 
 /** Mark a specific key as quota-exhausted and rotate away from it if it's still active. */
 function exhaustKeyAndRotate(index: number): boolean {
-  keyCooldownUntil.set(index, Date.now() + KEY_COOLDOWN_MS);
+  const pool = activePool();
+  pool.cooldownUntil.set(index, Date.now() + KEY_COOLDOWN_MS);
   persistPoolState();
   console.log(
-    `[Zen] Key #${index} (${maskKey(keyPool[index])}) marked quota-exhausted for ${KEY_COOLDOWN_MS / 60000}min`,
+    `[Zen] Key #${index} (${maskKey(pool.keys[index])}) marked quota-exhausted for ${KEY_COOLDOWN_MS / 60000}min`,
   );
   // If another request already rotated us to a different key, don't rotate again.
-  if (index !== currentKeyIndex) {
+  if (index !== pool.currentIndex) {
     return true;
   }
   return rotateKey();
 }
 
 function getCurrentKeyIndex(): number {
-  return currentKeyIndex;
+  return activePool().currentIndex;
 }
 
 export function getKeyPoolState(): {
@@ -103,10 +178,11 @@ export function getKeyPoolState(): {
   activeIndex: number;
   coolingKeys: number;
 } {
+  const pool = activePool();
   return {
-    poolSize: keyPool.length,
-    activeIndex: keyPool.length ? currentKeyIndex : -1,
-    coolingKeys: keyPool.filter((_, i) => isKeyCooling(i)).length,
+    poolSize: pool.keys.length,
+    activeIndex: pool.keys.length ? pool.currentIndex : -1,
+    coolingKeys: pool.keys.filter((_, i) => isKeyCooling(pool, i)).length,
   };
 }
 
@@ -306,12 +382,13 @@ async function rawChatCompletion(
     "Content-Type": "application/json",
   };
   const myKeyIdx = keyIndex ?? getCurrentKeyIndex();
-  const activeKey = keyPool.length > 0 ? keyPool[myKeyIdx % keyPool.length] : null;
+  const pool = activePool();
+  const activeKey = pool.keys.length > 0 ? pool.keys[myKeyIdx % pool.keys.length] : null;
   if (activeKey) {
     headers["Authorization"] = `Bearer ${activeKey}`;
   }
 
-  const response = await fetch(`${ZEN_BASE_URL}/chat/completions`, {
+  const response = await fetch(`${getEffectiveBaseUrl()}/chat/completions`, {
     method: "POST",
     headers,
     // Native abort signal cancels the in-flight request on timeout (unlike a
@@ -387,7 +464,7 @@ async function chatCompletionSingleModel(
           }
           circuitRecordFailure();
           throw new ZenPoolExhaustedError(
-            `Zen API key pool exhausted: all ${keyPool.length} key(s) hit quota/balance limits. ` +
+            `Zen API key pool exhausted: all ${activePool().keys.length} key(s) hit quota/balance limits. ` +
               `Original error: ${error.message}`,
           );
         }
@@ -424,15 +501,16 @@ export class ZenPoolExhaustedError extends Error {
 }
 
 function resetKeyCooldowns(): void {
-  keyCooldownUntil.clear();
+  activePool().cooldownUntil.clear();
 }
 
 /**
  * Main entry point for Zen API calls. Model chain: the primary ZEN_MODEL is
  * tried with the full key pool; when every key is quota-limited on it, the
  * cooldowns reset (quota is per key+model pair) and the next fallback model
- * from ZEN_FALLBACK_MODELS gets the same chance. Retries, backoff and the
- * circuit breaker live in chatCompletionSingleModel.
+ * from ZEN_FALLBACK_MODELS gets the same chance. When a Go key is configured
+ * (isGoConfigured), the chain is the single ZEN_GO_MODEL on the Go endpoint.
+ * Retries, backoff and the circuit breaker live in chatCompletionSingleModel.
  */
 export async function chatCompletion(
   messages: { role: string; content: string }[],
@@ -461,7 +539,7 @@ export async function chatCompletion(
     );
   }
 
-  const chain = rest.model ? [rest.model] : MODEL_CHAIN;
+  const chain = rest.model ? [rest.model] : getEffectiveModelChain();
   let lastError: unknown = null;
 
   for (let m = 0; m < chain.length; m++) {
@@ -685,7 +763,7 @@ export async function checkZenConnection(): Promise<boolean> {
     if (activeKey) {
       headers["Authorization"] = `Bearer ${activeKey}`;
     }
-    const response = await fetch(`${ZEN_BASE_URL}/models`, {
+    const response = await fetch(`${getEffectiveBaseUrl()}/models`, {
       headers,
       signal: AbortSignal.timeout(5000),
     });
