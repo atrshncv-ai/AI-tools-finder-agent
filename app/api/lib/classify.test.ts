@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifyArticle } from "./classify";
+import { classifyArticle, hasExplicitAiSignal } from "./classify";
 
 describe("classifyArticle", () => {
   describe("science field detection", () => {
@@ -238,6 +238,31 @@ describe("classifyArticle", () => {
       );
       expect(result.isScience).toBe(false);
       expect(result.classificationType).toBeNull();
+    });
+  });
+
+  describe("hasExplicitAiSignal prod markers (audit 2026-09-10)", () => {
+    it.each([
+      ["OpenAI прокомментировала спор"],
+      ["Qwen 3.8 Flash сравнялся"],
+      ["Grok-бот для автоматизации"],
+      ["Granite vs Qwen"],
+      ["n8n автоматизации"],
+      ["Anthropic представила новую модель"],
+      ["Cursor добавил агентный режим"],
+    ])("passes: %s", (text) => {
+      expect(hasExplicitAiSignal(text)).toBe(true);
+    });
+
+    it.each([
+      ["Дизайн спальни в бежевых тонах с декором из дерева"],
+      ["Путешествие по Италии: лучшие пляжи и отели у моря"],
+    ])("fails without AI signal: %s", (text) => {
+      expect(hasExplicitAiSignal(text)).toBe(false);
+    });
+
+    it("does not match n8n inside other words", () => {
+      expect(hasExplicitAiSignal("an8ntest")).toBe(false);
     });
   });
 });

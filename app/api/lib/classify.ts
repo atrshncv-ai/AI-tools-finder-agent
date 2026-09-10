@@ -69,6 +69,8 @@ const EXPLICIT_AI_PATTERNS: RegExp[] = [
   /\bbert\b/u, /transformer/i, /diffusion model/i, /\bdiffusion\b/i,
   /alphafold/i, /rosettafold/i, /diffdock/i, /proteinmpnn/i, /esmfold/i,
   /deepmind/i, /\bcopilot\b/i, /\bmidjourney\b/i, /\bsora\b/i, /\bdall-e\b/i,
+  /\bopenai\b/i, /\banthropic\b/i, /\bqwen\b/i, /\bgrok\b/i, /\bgranite\b/i,
+  /\bcursor\b/i, /\bn8n\b/i,
 ];
 
 export function hasExplicitAiSignal(text: string): boolean {
