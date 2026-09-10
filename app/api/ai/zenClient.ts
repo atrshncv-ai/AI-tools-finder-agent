@@ -34,6 +34,33 @@ export const ZEN_GO_MODEL_DEFAULT = "mimo-v2.5";
 const ZEN_GO_BASE_URL = process.env.ZEN_GO_BASE_URL || ZEN_GO_BASE_URL_DEFAULT;
 const ZEN_GO_MODEL = process.env.ZEN_GO_MODEL || ZEN_GO_MODEL_DEFAULT;
 
+// Client identity for the Go endpoint (per https://opencode.ai/docs/go/#where-can-i-use-it):
+// Go rejects chat completions without an `x-opencode-session` header
+// (400 MissingSessionID) and expects a client User-Agent. Both headers are
+// sent ONLY on the Go path — the legacy Zen path is unchanged.
+export const AGENT_UA = process.env.AGENT_UA || "science-agent/2.0";
+const ZEN_GO_SESSION_PREFIX = (process.env.ZEN_GO_SESSION_ID || "").trim();
+
+// Stable-enough default per process (random once at startup). Callers with a
+// natural conversation id should pass it as `sessionId` instead: a stable
+// per-conversation id (e.g. per-article `hermes-<id>`) gives better routing
+// affinity and prompt-cache reuse than this process-wide default.
+const PROCESS_SESSION_ID =
+  `science-agent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+/**
+ * Resolve the `x-opencode-session` value: an explicit per-conversation id
+ * wins (namespaced by ZEN_GO_SESSION_ID when set), otherwise the
+ * ZEN_GO_SESSION_ID override or the per-process default.
+ */
+export function resolveGoSessionId(sessionId?: string): string {
+  const clean = (sessionId ?? "").trim();
+  if (clean) {
+    return ZEN_GO_SESSION_PREFIX ? `${ZEN_GO_SESSION_PREFIX}-${clean}` : clean;
+  }
+  return ZEN_GO_SESSION_PREFIX || PROCESS_SESSION_ID;
+}
+
 function parseGoKeyPool(): string[] {
   const pooled = (process.env.ZEN_GO_API_KEYS || "")
     .split(",")
@@ -357,6 +384,7 @@ async function rawChatCompletion(
     max_tokens?: number;
     model?: string;
     extractParagraph?: boolean;
+    sessionId?: string;
   } = {},
   keyIndex?: number,
   timeoutMs?: number,
@@ -386,6 +414,10 @@ async function rawChatCompletion(
   const activeKey = pool.keys.length > 0 ? pool.keys[myKeyIdx % pool.keys.length] : null;
   if (activeKey) {
     headers["Authorization"] = `Bearer ${activeKey}`;
+  }
+  if (isGoConfigured()) {
+    headers["User-Agent"] = AGENT_UA;
+    headers["x-opencode-session"] = resolveGoSessionId(options.sessionId);
   }
 
   const response = await fetch(`${getEffectiveBaseUrl()}/chat/completions`, {
@@ -434,6 +466,7 @@ type ChatOptions = {
   max_tokens?: number;
   model?: string;
   extractParagraph?: boolean;
+  sessionId?: string;
 };
 
 /** Single-model attempt loop: key rotation + retry with backoff. */
@@ -522,6 +555,7 @@ export async function chatCompletion(
     timeoutMs?: number;
     retryDelayMs?: number;
     extractParagraph?: boolean;
+    sessionId?: string;
   } = {},
 ): Promise<string> {
   const {
@@ -586,6 +620,7 @@ export async function summarizeOneShot(
   title: string,
   content: string,
   source: string,
+  sessionId?: string,
 ): Promise<{ titleRu: string; summary: string }> {
   const truncatedContent = truncateToTokens(content, MAX_INPUT_TOKENS);
 
@@ -624,6 +659,7 @@ export async function summarizeOneShot(
         temperature: 0.2,
         max_tokens: SUMMARY_MAX_TOKENS,
         extractParagraph: false,
+        sessionId,
       },
     );
     const cleaned = raw.replace(/```json\s*|```\s*/g, "");

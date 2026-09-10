@@ -19,13 +19,15 @@ export const DEFAULT_GO_MODEL = "mimo-v2.5";
 /**
  * Cheapest-first preference order. First entry present in the live catalog
  * wins (see resolveCheapestGoModel). Keep entries in price order, cheapest
- * first; only include ids that exist in the Go catalog.
+ * first; only include ids that exist in the Go catalog on
+ * `.../go/v1/chat/completions`. kimi-k3 is deliberately excluded — at
+ * $3.00/$15.00 it is ~20x the price of the listed models.
  */
 export const CHEAPEST_GO_MODELS_FIRST: readonly string[] = [
   "mimo-v2.5",
-  "deepseek-v4-flash",
+  "hy3",
   "glm-5.3-flash",
-  "kimi-k3",
+  "deepseek-v4-flash",
 ];
 
 /**

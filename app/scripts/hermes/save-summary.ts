@@ -199,8 +199,10 @@ async function main() {
     originalContent = text;
     console.error(`[save-summary] Fetched ${text.length} chars`);
 
-    // Single Zen API call: Russian title + Russian summary (JSON)
-    const result = await summarizeOneShot(article.title, text, article.source);
+    // Single Zen API call: Russian title + Russian summary (JSON).
+    // Stable per-article Go session id → retries of the same article reuse
+    // routing/cache on the Go endpoint (x-opencode-session header).
+    const result = await summarizeOneShot(article.title, text, article.source, `hermes-${args.id}`);
     summary = result.summary;
     titleRu = result.titleRu;
     detailedSummary = "";

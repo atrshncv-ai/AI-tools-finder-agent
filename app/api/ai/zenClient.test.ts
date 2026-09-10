@@ -217,6 +217,19 @@ describe("chatCompletion", () => {
     expect(callHeaders["Authorization"]).toBe("Bearer my-secret-key");
   });
 
+  it("does not send Go session headers on legacy (non-Go) requests", async () => {
+    mockZenSuccess("OK");
+    delete process.env.ZEN_GO_API_KEY;
+    delete process.env.ZEN_GO_API_KEYS;
+    const { chatCompletion } = await importZen();
+
+    await chatCompletion([{ role: "user", content: "test" }]);
+
+    const callHeaders = mockFetch.mock.calls[0][1].headers;
+    expect(callHeaders["x-opencode-session"]).toBeUndefined();
+    expect(callHeaders["User-Agent"]).toBeUndefined();
+  });
+
   it("does not send Authorization header when ZEN_API_KEY is empty", async () => {
     mockZenSuccess("OK");
     const { chatCompletion } = await importZen({ ZEN_API_KEY: "" });

@@ -217,7 +217,7 @@ HERMES_DAILY_CAP=0                 # 0 = безлимит; N включает д
 `ZEN_GO_MODEL` (default `mimo-v2.5`) — с той же ротацией ключей при
 quota-exhaustion, что и legacy-пул. Без Go-ключа работает legacy Zen-пул
 (`ZEN_BASE_URL` + `ZEN_API_KEYS`/`ZEN_API_KEY` + `ZEN_MODEL` +
-`ZEN_FALLBACK_MODELS`) без изменений.
+`ZEN_FALLBACK_MODELS`) без изменений. Go требует заголовки `x-opencode-session` (стабильный id на разговор: save-summary передаёт `hermes-<articleId>`, иначе дефолт на процесс) и `User-Agent` (`AGENT_UA`, default `science-agent/2.0`); `ZEN_GO_SESSION_ID` — опциональный глобальный id/префикс.
 
 Политика cheapest-модели: в проде пинится самая дешёвая модель актуального
 Go-каталога (сегодня — `mimo-v2.5`). Порядок предпочтений задан в
