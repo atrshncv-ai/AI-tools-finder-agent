@@ -53,7 +53,7 @@ const SCIENCE_FIELD_KEYWORDS: Record<string, string[]> = {
 const SCIENCE_AI_PATTERNS = [
   /(^|[^\p{L}\p{N}])ии([^\p{L}\p{N}]|$)/u, /искусственн/u, /нейросет/u, /нейронн/u,
   /\bai\b/u, /artificial intelligence/u, /machine learning/u, /машинн.*обуч/u, /deep learning/u,
-  /глубок.*обуч/u, /neural network/u, /нейронная сеть/u, /\bllm\b/u,
+  /глубок.*обуч/u, /neural network/u, /нейронная сеть/u, /\bllms?\b/i,
   /large language model/u, /генеративн/u,
 ];
 
@@ -77,6 +77,16 @@ const EXPLICIT_AI_PATTERNS: RegExp[] = [
   /embodied|эмбодимент/i, /трансформер/iu, /диффузи/iu,
   /языков(ая|ой|ую|ых|их|ые)\s+модел/u, /language models?/i,
   /\bgenerative\b/i, /\bprompt\b/i, /промпт/u,
+  /\bagentic/i,
+  /\btext-to-image\b/i,
+  /\bgrounding\b/i,
+  /\bmllm\b/i,
+  /\bself-?attention\b/i,
+  /\bdistill/i,
+  /\bquantiz/i, /квантован/u,
+  /latent (space|representations?|variables?)/i,
+  /латентн(ое|ые|ий|их|ых)\s+(пространство|представлени)/u,
+  /reasoning models?/i,
 ];
 
 export function hasExplicitAiSignal(text: string): boolean {
