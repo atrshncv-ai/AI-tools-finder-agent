@@ -59,3 +59,80 @@ describe("evaluate-news relevance evidence (lead-only)", () => {
     expect(hasAiAndDomain(relevance)).toBe(true);
   });
 });
+
+// Owner mandate 2026-09-10: NO card without an explicit AI signal may ever be
+// published — no exceptions for trusted/curated sources. The hard gate is
+// EVERY non-YouTube article must show an explicit AI signal in its relevance
+// evidence (title + lead + github metadata), and every YouTube video must show
+// one in title/description. These cases mirror previously-exempt sources.
+describe("evaluate-news hard AI gate has no source exemptions", () => {
+  it("rejects a google-ai-blog item with non-AI title/lead", () => {
+    const relevance = relevanceEvidence({
+      title: "How data analytics is changing football scouting",
+      pageText:
+        "Coaches review match footage and passing statistics to plan training sessions for the upcoming season.",
+      githubDescription: null,
+      githubTopics: [],
+    });
+    // Gate fails → evaluate() early-returns score 0, below SCORE_GATE.
+    expect(hasExplicitAiSignal(relevance)).toBe(false);
+    expect(0).toBeLessThan(SCORE_GATE);
+  });
+
+  it("rejects a github-trending item with non-AI title/description/topics", () => {
+    const relevance = relevanceEvidence({
+      title: "Fast static site generator written in Rust",
+      pageText: "This release fixes several crashes reported by users last week.",
+      githubDescription: "A blazing fast static site generator with live reload and markdown support",
+      githubTopics: ["rust", "static-site", "markdown"],
+    });
+    expect(hasExplicitAiSignal(relevance)).toBe(false);
+    expect(0).toBeLessThan(SCORE_GATE);
+  });
+
+  it("rejects a hackernews non-AI story", () => {
+    const relevance = relevanceEvidence({
+      title: "Show HN: I built a mechanical keyboard from scratch",
+      pageText: "I soldered switches and programmed the firmware with QMK over the weekend.",
+      githubDescription: null,
+      githubTopics: [],
+    });
+    expect(hasExplicitAiSignal(relevance)).toBe(false);
+    expect(0).toBeLessThan(SCORE_GATE);
+  });
+
+  it("rejects a dedicated-channel YouTube video with non-AI title/description", () => {
+    // YouTube relevance evidence is title + transcript description.
+    const evidenceText =
+      "I renovated my cabin in the woods A weekend vlog about painting walls, fixing the roof and cooking dinner outside.";
+    expect(hasExplicitAiSignal(evidenceText)).toBe(false);
+    expect(0).toBeLessThan(SCORE_GATE);
+  });
+
+  it("control: the same sources WITH an AI signal still pass the gate", () => {
+    const googleAi = relevanceEvidence({
+      title: "New Gemini model sets state of the art on reasoning benchmarks",
+      pageText: "Our latest large language model improves step-by-step problem solving.",
+      githubDescription: null,
+      githubTopics: [],
+    });
+    const githubAi = relevanceEvidence({
+      title: "Lightweight LLM inference engine",
+      pageText: "Fast on-device inference for open-weight models.",
+      githubDescription: "A machine learning library for efficient inference",
+      githubTopics: ["llm", "inference"],
+    });
+    const hnAi = relevanceEvidence({
+      title: "Show HN: Open-source LLM agent framework",
+      pageText: "An agent framework for tool use and multi-step reasoning tasks.",
+      githubDescription: null,
+      githubTopics: [],
+    });
+    const youtubeAi = "How transformers work — large language models explained A deep dive into neural networks and LLM training.";
+
+    expect(hasExplicitAiSignal(googleAi)).toBe(true);
+    expect(hasExplicitAiSignal(githubAi)).toBe(true);
+    expect(hasExplicitAiSignal(hnAi)).toBe(true);
+    expect(hasExplicitAiSignal(youtubeAi)).toBe(true);
+  });
+});

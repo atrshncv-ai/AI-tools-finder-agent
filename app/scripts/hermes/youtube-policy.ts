@@ -26,6 +26,10 @@ export function isPriorityLongVideo(durationSeconds: number | null): boolean {
 /**
  * There is intentionally no Shorts quota: every useful transcribed Short may
  * pass. Ordinary 4–45 minute videos receive a ranking bonus, not a reservation.
+ *
+ * Owner mandate 2026-09-10: topic relevance (+15) requires a REAL explicit AI
+ * signal (aiRelevant). dedicatedChannel is kept in the signature for call-site
+ * stability but grants only the +45 curation/authority bonus, never relevance.
  */
 export function scoreYoutubeCandidate(
   signals: YoutubeCandidateSignals,
@@ -36,8 +40,8 @@ export function scoreYoutubeCandidate(
 
   const longFormPriority = isPriorityLongVideo(signals.durationSeconds);
   const score =
-    45 + // curated source
-    (signals.dedicatedChannel || signals.aiRelevant ? 15 : 0) +
+    45 + // curated source (authority, not relevance)
+    (signals.aiRelevant ? 15 : 0) +
     10 + // verified transcript
     (longFormPriority ? 10 : 0);
 

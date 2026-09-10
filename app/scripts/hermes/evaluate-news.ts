@@ -75,21 +75,12 @@ const TIER2_SCIENCE = new Set([
 
 const OPEN_LICENSES = new Set(["MIT", "Apache-2.0"]);
 
-/**
- * Sources whose entire stream is AI by construction (curated queries/channels
- * and vendor blogs). They skip the hard AI-relevance gate; everything else
- * must show an explicit AI signal in its own text.
- */
-const AI_BY_CONSTRUCTION_SOURCES = new Set([
-  ...DEDICATED_AI_YOUTUBE_SOURCES,
-  "openai-blog",
-  "huggingface-blog",
-  "google-ai-blog",
-  "github-trending",
-  "hackernews",
-]);
-
-/** Channels whose entire content is AI — topic bonus needs no keyword proof. */
+// NOTE (2026-09-10 owner mandate): NO card without an explicit AI signal may
+// ever be published. There is intentionally NO "AI by construction" exemption
+// set — every non-YouTube article must show an explicit AI signal in its
+// relevance evidence, and every YouTube video must show one in
+// title/description. Curated sources keep scoring bonuses (authority), but
+// never a relevance pass.
 // ─── Regex helpers for text signals ─────────────────────────────────────────
 
 const AI_TERMS =
@@ -339,7 +330,9 @@ async function evaluate(article: {
 
     const dedicatedChannel = DEDICATED_AI_YOUTUBE_SOURCES.has(article.source);
     const evidenceText = `${article.title} ${transcript.description}`;
-    const aiRelevant = dedicatedChannel || hasExplicitAiSignal(evidenceText);
+    // Owner mandate 2026-09-10: topic relevance is a REAL signal only.
+    // Curated-channel status gives the +45 authority bonus below, never a pass.
+    const aiRelevant = hasExplicitAiSignal(evidenceText);
     if (!aiRelevant) {
       metrics.youtubePreflight = {
         eligible: false,
@@ -369,9 +362,7 @@ async function evaluate(article: {
       breakdown.push({
         criterion: "youtube-ai-topic",
         points: 15,
-        evidence: dedicatedChannel
-          ? "dedicated AI channel"
-          : "AI terms in title/description",
+        evidence: "AI terms in title/description",
       });
     }
     breakdown.push({
@@ -496,9 +487,8 @@ async function evaluate(article: {
 
   // ── Hard AI-relevance gate: no explicit AI signal in the relevance
   // evidence (title + lead) → reject regardless of social/source score.
-  // Curated AI sources are exempt (AI by construction).
-  const aiSignal =
-    AI_BY_CONSTRUCTION_SOURCES.has(article.source) || hasExplicitAiSignal(relevanceText);
+  // Owner mandate 2026-09-10: NO exemptions for trusted/curated sources.
+  const aiSignal = hasExplicitAiSignal(relevanceText);
   metrics.aiSignal = aiSignal;
   if (!aiSignal) {
     breakdown.push({
