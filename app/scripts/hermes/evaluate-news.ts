@@ -110,6 +110,35 @@ function hasAiAndDomain(text: string): boolean {
   return hasAny(text, AI_TERMS) && hasAny(text, SCIENCE_DOMAIN_TERMS);
 }
 
+export { hasAiAndDomain };
+
+/** Chars of page body that count as relevance evidence (title-adjacent lead). */
+export const RELEVANCE_LEAD_CHARS = 1500;
+
+/**
+ * Relevance evidence for the hard AI gate and the ai-domain-intersection
+ * bonus: title + lead of the page text (first 1500 chars) + github
+ * description/topics as today.
+ *
+ * WHY lead-only: incidental deep-body mentions faked relevance — e.g. one
+ * "machine learning" 4000 chars deep in a Nature page body plus a medicine
+ * domain word cleared both hasExplicitAiSignal and hasAiAndDomain, so
+ * non-AI Nature news scored 60 (tier1-source 45 + bonus 15) and cleared the
+ * 50 gate (2026-09-10 cleanup of 26 Nature cards). This repeats the Aug-25
+ * backfill lesson (classifiers were restricted to title+description for the
+ * same reason). Full pageText stays available for NON-relevance signals
+ * (DOI extraction, arxiv/code links, altmetric — reproducibility evidence).
+ */
+export function relevanceEvidence(args: {
+  title: string;
+  pageText: string;
+  githubDescription?: string | null;
+  githubTopics?: string[];
+}): string {
+  const lead = (args.pageText ?? "").slice(0, RELEVANCE_LEAD_CHARS);
+  return `${args.title} ${lead} ${args.githubDescription ?? ""} ${(args.githubTopics ?? []).join(" ")}`;
+}
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 interface ScoreBreakdown {
@@ -456,12 +485,20 @@ async function evaluate(article: {
   // ── Score deterministically ──
   let score = 0;
   const evidenceText = `${article.title} ${pageText} ${githubDescription ?? ""} ${githubTopics.join(" ")}`;
+  // Lead-only relevance evidence for the AI gate + topic bonus (see
+  // relevanceEvidence: deep-body mentions must not fake AI relevance).
+  const relevanceText = relevanceEvidence({
+    title: article.title,
+    pageText,
+    githubDescription,
+    githubTopics,
+  });
 
-  // ── Hard AI-relevance gate: no explicit AI signal anywhere in the article's
-  // own text → reject regardless of social/source score. Curated AI sources
-  // are exempt (AI by construction).
+  // ── Hard AI-relevance gate: no explicit AI signal in the relevance
+  // evidence (title + lead) → reject regardless of social/source score.
+  // Curated AI sources are exempt (AI by construction).
   const aiSignal =
-    AI_BY_CONSTRUCTION_SOURCES.has(article.source) || hasExplicitAiSignal(evidenceText);
+    AI_BY_CONSTRUCTION_SOURCES.has(article.source) || hasExplicitAiSignal(relevanceText);
   metrics.aiSignal = aiSignal;
   if (!aiSignal) {
     breakdown.push({
@@ -548,8 +585,8 @@ async function evaluate(article: {
       breakdown.push({ criterion: "altmetric-buzz", points: 20, evidence: `altmetric=${altmetric}` });
     }
 
-    // Topic bonus
-    if (hasAiAndDomain(evidenceText)) {
+    // Topic bonus (lead-only relevance evidence — see relevanceEvidence)
+    if (hasAiAndDomain(relevanceText)) {
       score += 15;
       breakdown.push({
         criterion: "ai-domain-intersection",
@@ -757,7 +794,12 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((err) => {
-  console.error("[evaluate-news] Fatal error:", err);
-  process.exit(1);
-});
+// Only auto-run when executed directly (npx tsx .../evaluate-news.ts).
+// Importing this module (e.g. from vitest) must not run the pipeline.
+const invokedDirectly = (process.argv[1] ?? "").endsWith("evaluate-news.ts");
+if (invokedDirectly) {
+  main().catch((err) => {
+    console.error("[evaluate-news] Fatal error:", err);
+    process.exit(1);
+  });
+}
