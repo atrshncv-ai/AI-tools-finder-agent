@@ -265,4 +265,25 @@ describe("classifyArticle", () => {
       expect(hasExplicitAiSignal("an8ntest")).toBe(false);
     });
   });
+
+  describe("hasExplicitAiSignal agent-era markers (audit 2026-09-10)", () => {
+    it.each([
+      ["SafeEvolve: Harness-Policy Co-Evolution from Agent Experience"],
+      ["SWE-Gate for Software Engineering Agents"],
+      ["RoboSPA: Can VLA Models Go Beyond"],
+      ["CLAP: cross-embodiment video world models"],
+      ["мультимодальный кодировщик"],
+      ["границы ошибки для внимания трансформера"],
+      ["диффузионная модель"],
+    ])("passes: %s", (text) => {
+      expect(hasExplicitAiSignal(text)).toBe(true);
+    });
+
+    it.each([
+      ["агентство недвижимости"],
+      ["Всемирные игры человекоподобных роботов"],
+    ])("fails without AI signal: %s", (text) => {
+      expect(hasExplicitAiSignal(text)).toBe(false);
+    });
+  });
 });
