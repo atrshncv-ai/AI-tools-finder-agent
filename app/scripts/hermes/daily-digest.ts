@@ -149,39 +149,72 @@ export function buildEmptyDigest(): string {
   ].join("\n");
 }
 
-async function sendTelegram(text: string, chatId: string): Promise<boolean> {
-  try {
-    // Plain-text dashboard URL inside the body: inline keyboards can be
-    // missed at the bottom of long messages, but a tappable link in the text
-    // itself always works (client reported "no dashboard button").
-    const body = text.includes(DASHBOARD_URL) ? text : `${text}\n${DASHBOARD_URL}`;
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: body,
-        parse_mode: "Markdown",
-        disable_web_page_preview: true,
-        reply_markup: {
-          inline_keyboard: [[{ text: "📊 Открыть дашборд", url: DASHBOARD_URL }]],
-        },
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) {
+const SEND_MAX_ATTEMPTS = 3;
+// Backoff between attempts (after attempt 1, 2): a cold TLS connection from a
+// fresh cron process to api.telegram.org often fails once with a network-level
+// `fetch failed`/timeout while the API itself is healthy.
+const SEND_BACKOFF_MS = [2_000, 4_000];
+// Pacing between recipients/parts to avoid burst throttling (cron job, not
+// latency-sensitive).
+const SEND_PACE_MS = 500;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function causeCode(err: unknown): string | undefined {
+  const cause = (err as { cause?: unknown } | null)?.cause as { code?: unknown } | null | undefined;
+  return typeof cause?.code === "string" ? cause.code : undefined;
+}
+
+export async function sendTelegram(text: string, chatId: string): Promise<boolean> {
+  // Plain-text dashboard URL inside the body: inline keyboards can be
+  // missed at the bottom of long messages, but a tappable link in the text
+  // itself always works (client reported "no dashboard button").
+  const body = text.includes(DASHBOARD_URL) ? text : `${text}\n${DASHBOARD_URL}`;
+  const payload = JSON.stringify({
+    chat_id: chatId,
+    text: body,
+    parse_mode: "Markdown",
+    disable_web_page_preview: true,
+    reply_markup: {
+      inline_keyboard: [[{ text: "📊 Открыть дашборд", url: DASHBOARD_URL }]],
+    },
+  });
+  for (let attempt = 1; attempt <= SEND_MAX_ATTEMPTS; attempt++) {
+    const last = attempt === SEND_MAX_ATTEMPTS;
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (res.ok) return true;
+      const retryable = res.status === 429 || res.status >= 500;
+      let snippet: string;
+      try {
+        snippet = (await res.text()).slice(0, 300);
+      } catch {
+        snippet = "<unreadable body>";
+      }
       console.error(
-        `[daily-digest] Telegram API error for chat ${chatId}: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`,
+        `[daily-digest] Telegram attempt ${attempt}/${SEND_MAX_ATTEMPTS} for chat ${chatId} failed: HTTP ${res.status} ${snippet}${retryable && !last ? ` — retrying in ${SEND_BACKOFF_MS[attempt - 1]}ms` : ""}`,
       );
-      return false;
+      // Non-retryable client errors (e.g. 400 bad request) fail fast.
+      if (!retryable || last) return false;
+    } catch (err) {
+      // Network-level failure (DNS, reset, timeout) — retry with backoff.
+      const msg = (err as Error)?.message ?? String(err);
+      const code = causeCode(err);
+      console.error(
+        `[daily-digest] Telegram attempt ${attempt}/${SEND_MAX_ATTEMPTS} to chat ${chatId} failed: ${msg}${code ? ` (cause ${code})` : ""}${!last ? ` — retrying in ${SEND_BACKOFF_MS[attempt - 1]}ms` : ""}`,
+      );
+      if (last) return false;
     }
-    return true;
-  } catch (err) {
-    // Network-level failure (DNS, reset, timeout) — must not abort the
-    // fan-out to the remaining recipients.
-    console.error(`[daily-digest] Telegram send to chat ${chatId} failed: ${(err as Error).message}`);
-    return false;
+    await sleep(SEND_BACKOFF_MS[attempt - 1] ?? 0);
   }
+  return false;
 }
 
 async function main() {
@@ -223,12 +256,18 @@ async function main() {
     console.log(digestParts.join("\n---\n"));
   } else {
     // Fan-out to every recipient; one failing chat must not block the others.
+    // Small pacing between parts/recipients avoids burst throttling.
     let okCount = 0;
-    for (const chatId of CHAT_IDS) {
+    for (let ci = 0; ci < CHAT_IDS.length; ci++) {
+      const chatId = CHAT_IDS[ci];
       let ok = true;
-      for (const part of digestParts) ok = (await sendTelegram(part, chatId)) && ok;
+      for (let pi = 0; pi < digestParts.length; pi++) {
+        ok = (await sendTelegram(digestParts[pi], chatId)) && ok;
+        if (pi < digestParts.length - 1) await sleep(SEND_PACE_MS);
+      }
       console.error(`[daily-digest] → chat ${chatId}: ${ok ? "sent" : "FAILED"}`);
       if (ok) okCount++;
+      if (ci < CHAT_IDS.length - 1) await sleep(SEND_PACE_MS);
     }
     const status = okCount === CHAT_IDS.length ? "sent" : okCount > 0 ? "partial" : "failed";
     console.log(JSON.stringify({ status, items: items.length, recipients: { ok: okCount, total: CHAT_IDS.length } }));

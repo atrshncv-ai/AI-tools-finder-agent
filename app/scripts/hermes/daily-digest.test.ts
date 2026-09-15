@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { buildDigest, buildEmptyDigest, isPaymentReminderDay, paymentReminderText, splitTelegramText } from "./daily-digest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildDigest, buildEmptyDigest, isPaymentReminderDay, paymentReminderText, sendTelegram, splitTelegramText } from "./daily-digest";
 import { formatHealthLine, type PipelineStats } from "./pipeline-health";
 
 const healthyStats: PipelineStats = {
@@ -110,6 +110,31 @@ describe("digest archive handling", () => {
     expect(text).not.toContain("Архивная статья про CRISPR");
     expect(text).not.toContain("ИИ для науки — 1");
   });
+});
+
+describe("sendTelegram retry", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("returns true when a transient network failure is followed by success", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error("fetch failed"), { cause: { code: "UND_ERR_CONNECT_TIMEOUT" } }))
+      .mockResolvedValueOnce(new Response("ok", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(sendTelegram("hello", "123")).resolves.toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  }, 15_000);
+
+  it("returns false when every attempt fails at the network level", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetchMock = vi.fn().mockRejectedValue(Object.assign(new Error("fetch failed"), { cause: { code: "ECONNRESET" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(sendTelegram("hello", "123")).resolves.toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  }, 20_000);
 });
 
 describe("digest markdown safety (Telegram parse_mode=Markdown)", () => {
