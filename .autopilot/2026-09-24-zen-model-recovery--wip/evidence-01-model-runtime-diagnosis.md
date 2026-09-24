@@ -1,54 +1,45 @@
 # Evidence — 01 model runtime diagnosis
 
-checked_at: 2026-09-24T09:40:03Z
-scope: read-only; no production changes, restarts, deploys, deletes, resets, or credential output
+checked_at: 2026-09-24T09:44:14Z
+scope: read-only; second and final SSH retry; no production change, process control, deploy, restart, delete, reset, or credential output
 
-## Required safe fields
+## Safe runtime discovery
 
-- timestamp: `2026-09-24T09:40:03Z`
+| timestamp | host | path | safe result | fixed classification |
+|---|---|---|---|---|
+| 2026-09-24T09:44:14Z | `factory` | `unknown` | strict host-key verification stopped the connection before authentication; host-key policy was not bypassed | `SSH_HOST_KEY_CHANGED_STRICT_CHECK_FAILED` |
+| 2026-09-24T09:44:08Z | `cntr-mvp` | `unknown` | SSH authenticated; `node_present=false`; `pm2_present=false`; `typescript_runtime_process_count=0`; `target_runtime_process_count=0`; `project_marker_present=false` | `NOT_TARGET_TYPESCRIPT_RUNTIME` |
+| 2026-09-24T09:44:14Z | prior production host from repository context | `unknown` | direct strict `BatchMode` authentication was rejected; no configured production alias or non-guessed user was available | `SSH_AUTH_REJECTED` |
+
+- target_runtime_path: `unknown`
 - effective_endpoint_host: `unknown`
 - effective_endpoint_path: `unknown`
-- configured_model_present: `unknown`
-- catalog_model_present: `true` for `mimo-v2.5` and `mimo-v2.6-flash`
-- probe_model_present: `unknown` (probe not run)
-- classification: `BLOCKED`
+- configured_model: `unknown`
+- `ZEN_GO_API_KEYS_present`: `unknown`; `ZEN_GO_API_KEYS_length`: `unknown`
+- `ZEN_GO_API_KEY_present`: `unknown`; `ZEN_GO_API_KEY_length`: `unknown`
+- process_environment_inspected: `false`
+- environment_file_contents_inspected: `false`
+- completion_probe: `not_run_target_runtime_not_found`
+- completion_http_class: `not_applicable`
+- completion_model_id: `not_applicable`
+- runtime_error_class: `TARGET_RUNTIME_UNREACHABLE`
 
-## Access result
+## Catalog cross-check retained from the first safe check
 
-- `cntr-mvp` authenticated with SSH BatchMode, but no PM2/Node runtime was present and no target Go environment was observable. The only matching running service exposed by the host was an unrelated Uvicorn container.
-- `factory` could not be used: SSH stopped at `Host key verification failed` before authentication. The host-key check was not bypassed.
-- Actual production runtime, effective endpoint, configured model, key presence/length, PM2 state, and runtime markers therefore remain unverified.
+- checked_at: `2026-09-24T09:40:03Z`
+- endpoint host/path: `opencode.ai` / `/zen/go/v1/models`
+- HTTP class: `2xx` (`200`)
+- `mimo-v2.5`: `present`
+- `mimo-v2.6-flash`: `present`
+- `mimo-v2.6`: `absent`
+- catalog_only_evidence: `true`
+- completion_availability_proven: `false`
 
-## Safe production-surface facts
+## Classification
 
-- Effective production endpoint: **unavailable/unknown** (no target process identified).
-- `ZEN_GO_API_KEYS` / `ZEN_GO_API_KEY`: not observable in the reachable host process/container environment; no lengths recorded.
-- `ZEN_GO_MODEL`: not observable on the reachable runtime; local source default is `mimo-v2.5`.
-- PM2/log markers: unavailable (`pm2` and `node` absent on the reachable host); no runtime marker was claimed.
-- Completion probe: **not run** because the target production environment/key was not available. No POST was sent.
-
-## Catalog cross-check
-
-- Endpoint: `opencode.ai` `/zen/go/v1/models`
-- HTTP: `200` (`2xx`)
-- Catalog parsed: 42 model IDs
-- `mimo-v2.5`: present
-- `mimo-v2.6-flash`: present
-- `mimo-v2.6`: absent
-- `hy3`, `glm-5.3-flash`, `deepseek-v4-flash`: present
-- Catalog evidence does not prove that either model can complete a request with the production key/subscription.
-
-## Local implementation cross-check (read-only)
-
-- `app/api/ai/zenClient.ts:23-35,64-72,119-142` routes to the Go endpoint only when a Go key pool or legacy Go key is non-empty; the Go path uses one configured `ZEN_GO_MODEL` and does not automatically fall back to a legacy provider.
-- The default Go base is host `opencode.ai`, path `/zen/go/v1`; completion appends `/chat/completions`.
-- `app/api/ai/goModels.ts:14-45` and `app/api/ai/goModels.test.ts:102-215` agree on the local default/preference contract.
-- `app/scripts/hermes/save-summary.ts:161-164,209-224` checks connectivity before summarization and records the Go model when Go is configured.
-- Local concern (not changed): `app/api/ai/zenClient.ts:448-458,525-532` can place upstream error-body text into thrown/logged errors for non-2xx paths. No such text was read into this evidence.
-
-## Classification and next action
-
-- classification: `BLOCKED`
-- cause: target production SSH/runtime is not available; the reachable authenticated host is not a verifiable instance of this TypeScript agent.
-- confidence: high for the access blocker; none for the actual production model runtime.
-- safe next action: restore trusted SSH access to the actual production host (or provide an existing read-only host alias), then repeat the one-probe read-only check. Do not change model/provider configuration or add fallback based on this incomplete evidence.
+- status: `BLOCKED`
+- cause: `TARGET_RUNTIME_UNREACHABLE`
+- cause_confidence: `high_for_access_blocker`; `unknown_for_model_runtime_failure`
+- production_changed: `false`
+- automatic_fallback_added: `false`
+- safe_next_action: make the actual TypeScript production runtime reachable through an existing trusted host-key entry and read-only SSH alias, then repeat the single safe completion probe; do not change host-key verification, model/provider configuration, or production state.
