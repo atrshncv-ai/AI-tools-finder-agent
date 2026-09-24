@@ -19,13 +19,13 @@ window.STATE =
     { "id": "briefing", "status": "skipped", "note": "вопросов не потребовалось: задача и ограничения определены" },
     { "id": "spec", "status": "done", "finishedAt": "2026-09-24T10:42:58+04:00" },
     { "id": "plan", "status": "done", "finishedAt": "2026-09-24T10:44:28+04:00", "note": "2 таска, 2 волны" },
-    { "id": "build", "status": "active", "startedAt": "2026-09-24T10:44:28+04:00" },
-    { "id": "review", "status": "pending" },
+    { "id": "build", "status": "active", "startedAt": "2026-09-24T10:44:28+04:00", "note": "1 из 2 тасков готов" },
+    { "id": "review", "status": "active", "startedAt": "2026-09-24T11:08:53+04:00", "note": "проверен 1 из 2" },
     { "id": "final", "status": "pending" }
   ],
   "requirements": {
-    "total": 13, "done": 8, "inTicket": 5, "inSpec": 0,
-    "placeholder": 0, "deferred": 0, "dropped": 0
+    "total": 13, "done": 8, "inTicket": 4, "inSpec": 0,
+    "placeholder": 1, "deferred": 0, "dropped": 0
   },
   "tickets": [
     {
@@ -35,15 +35,16 @@ window.STATE =
       "blockedBy": [],
       "wave": 1,
       "zone": ["remote-diagnosis", "production-logs"],
-      "status": "review",
+      "status": "done",
       "startedAt": "2026-09-24T10:44:28+04:00",
-      "finishedAt": "2026-09-24T11:07:04+04:00",
+      "finishedAt": "2026-09-24T11:08:53+04:00",
       "retries": 0,
       "repairs": 1,
       "repairFindings": ["evidence.md:13-17 — нет конкретных hostname/time/deployment marker/cron", "evidence.md:11-29 — неполное покрытие журналов и URL-идентификаторов", "evidence.md:36 — не доказана связь Zen с потерей 92 кандидатов"],
       "handoffs": 0,
       "tests": { "passed": 219, "failed": 0 },
-      "files": [".autopilot/2026-09-24-diagnose-pipeline--wip/evidence.md"]
+      "files": [".autopilot/2026-09-24-diagnose-pipeline--wip/evidence.md"],
+      "commit": "37579f7"
     },
     {
       "id": "02",
@@ -59,8 +60,12 @@ window.STATE =
     }
   ],
   "singlePass": null,
-  "tests": null,
-  "debt": { "placeholders": [], "assumptions": [], "emptyEnv": [] },
+  "tests": { "passed": 219, "failed": 0 },
+  "debt": {
+    "placeholders": ["R06 — provider-level Zen limit/credential attribution"],
+    "assumptions": [],
+    "emptyEnv": ["SSH_PASSWORD"]
+  },
   "additions": [],
   "coverage": {
     "found": 18,

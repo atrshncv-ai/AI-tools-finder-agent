@@ -2,20 +2,20 @@
 
 ## Проверка и baseline
 
-Проверка выполнялась по SSH BatchMode на `root@159.194.236.68`.
+Проверка выполнялась по SSH BatchMode на `root@[REDACTED:PRODUCTION_HOST]`.
 
 hostname: ineagyvcmc.local
 checked_at: 2026-09-24T07:05:03+00:00 (UTC)
-deployment_marker: sha256 app/api/ai/zenClient.ts = 2c8f3ed834467efa80e823cc653ee5602a6041c0c9d2a71f13f1d797f7f0e4c9; mtime=2026-09-10T06:26:46Z; cwd=/var/www/news-agent/app; PM2 scripts=/var/www/news-agent/app/dist/boot.js и /var/www/news-agent/app/scripts/hermes/ralph-loop.sh
+deployment_marker: sha256 app/api/ai/zenClient.ts = 2c8f3ed834467efa80e823cc653ee5602a6041c0c9d2a71f13f1d797f7f0e4c9; mtime=2026-09-10T06:26:46Z; production_cwd=[REDACTED:PRODUCTION_ROOT]; PM2 scripts=[REDACTED:PRODUCTION_ROOT]/dist/boot.js и [REDACTED:PRODUCTION_ROOT]/scripts/hermes/ralph-loop.sh
 
 - Пользовательский baseline: `94/94/2/16`, feeds `25/27`, проблемные `science` и `lancet`, Zen `4/4`.
 - Независимый read-only SQL-агрегат за последние 24 часа: `94 collected / 94 evaluated / 92 unpublished / 2 published`; `16` processing-failure entries; `27` feed records, `2` failing (`lancet`, `science`).
 
 ## Deployment и процессы
 
-- Production cwd: `/var/www/news-agent/app`.
-- `news-agent-web`: PM2 `online`, script `/var/www/news-agent/app/dist/boot.js`, 70 restarts, logs `/var/log/news-agent/web.out.log` и `/var/log/news-agent/web.err.log`.
-- `hermes-ralph-loop`: PM2 `online`, script `/var/www/news-agent/app/scripts/hermes/ralph-loop.sh`, 43 restarts, logs `/var/log/news-agent/hermes.out.log` и `/var/log/news-agent/hermes.err.log`.
+- Production cwd: `[REDACTED:PRODUCTION_ROOT]`.
+- `news-agent-web`: PM2 `online`, script `[REDACTED:PRODUCTION_ROOT]/dist/boot.js`, 70 restarts, logs `[REDACTED:PRODUCTION_LOG_ROOT]/web.out.log` и `[REDACTED:PRODUCTION_LOG_ROOT]/web.err.log`.
+- `hermes-ralph-loop`: PM2 `online`, script `[REDACTED:PRODUCTION_ROOT]/scripts/hermes/ralph-loop.sh`, 43 restarts, logs `[REDACTED:PRODUCTION_LOG_ROOT]/hermes.out.log` и `[REDACTED:PRODUCTION_LOG_ROOT]/hermes.err.log`.
 - SHA-256/mtime deployment markers:
   - `dist/boot.js`: `2d916908e6fe30b6145fa036914db0e8249593793554749f8445e9ce89fba7cf`, mtime `2026-08-26T06:16:50Z`, 7,579,124 bytes.
   - `package.json`: `3d456e295d180cd560e322a2779a516b10c9fb6580f53e224bfd88dc81035c41`, mtime `2026-08-17T16:14:40Z`, 4,120 bytes.
@@ -27,9 +27,9 @@ deployment_marker: sha256 app/api/ai/zenClient.ts = 2c8f3ed834467efa80e823cc653e
 Read-only чтение root crontab и `/etc/cron.d/*` дало точные команды (содержимое env-файлов не читалось и не выводилось):
 
 ```text
-50 5 * * * cd /var/www/news-agent/app && /usr/bin/python3 scripts/publish_daily_batch.py >> /var/log/news-agent/publisher.log 2>&1
-0 6 * * * cd /var/www/news-agent/app && set -a && . ./.env && set +a && npx tsx scripts/hermes/daily-digest.ts >> /var/log/news-agent/daily-digest.log 2>&1
-0 4 * * 1 cd /var/www/news-agent/app && set -a && . ./.env && set +a && npx tsx scripts/check-urls.ts >> /var/log/news-agent/check-urls.log 2>&1
+50 5 * * * cd [REDACTED:PRODUCTION_ROOT] && /usr/bin/python3 scripts/publish_daily_batch.py >> [REDACTED:PRODUCTION_LOG_ROOT]/publisher.log 2>&1
+0 6 * * * cd [REDACTED:PRODUCTION_ROOT] && set -a && . ./.env && set +a && npx tsx scripts/hermes/daily-digest.ts >> [REDACTED:PRODUCTION_LOG_ROOT]/daily-digest.log 2>&1
+0 4 * * 1 cd [REDACTED:PRODUCTION_ROOT] && set -a && . ./.env && set +a && npx tsx scripts/check-urls.ts >> [REDACTED:PRODUCTION_LOG_ROOT]/check-urls.log 2>&1
 ```
 
 Publisher — ежедневно 05:50 UTC; digest — ежедневно 06:00 UTC; check-urls — по понедельникам 04:00 UTC.
