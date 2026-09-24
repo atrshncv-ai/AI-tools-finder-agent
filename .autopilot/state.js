@@ -11,7 +11,7 @@ window.STATE =
   "memoryFile": "AGENTS.md",
   "skillDir": "/Users/aleksandrtrisenkov/.claude/skills/autopilot",
   "startedAt": "2026-09-24T10:16:00+04:00",
-  "updatedAt": "2026-09-24T11:07:04+04:00",
+  "updatedAt": "2026-09-24T11:18:25+04:00",
   "finishedAt": null,
   "stages": [
     { "id": "preflight", "status": "done", "finishedAt": "2026-09-24T10:21:11+04:00" },
@@ -19,8 +19,8 @@ window.STATE =
     { "id": "briefing", "status": "skipped", "note": "вопросов не потребовалось: задача и ограничения определены" },
     { "id": "spec", "status": "done", "finishedAt": "2026-09-24T10:42:58+04:00" },
     { "id": "plan", "status": "done", "finishedAt": "2026-09-24T10:44:28+04:00", "note": "2 таска, 2 волны" },
-    { "id": "build", "status": "active", "startedAt": "2026-09-24T10:44:28+04:00", "note": "1 из 2 тасков готов" },
-    { "id": "review", "status": "active", "startedAt": "2026-09-24T11:08:53+04:00", "note": "проверен 1 из 2" },
+    { "id": "build", "status": "active", "startedAt": "2026-09-24T10:44:28+04:00", "note": "2 из 2 тасков готов; ожидается финальная приёмка" },
+    { "id": "review", "status": "done", "startedAt": "2026-09-24T11:08:53+04:00", "finishedAt": "2026-09-24T11:18:25+04:00", "note": "проверены 2 из 2" },
     { "id": "final", "status": "pending" }
   ],
   "requirements": {
@@ -53,10 +53,14 @@ window.STATE =
       "blockedBy": ["01"],
       "wave": 2,
       "zone": ["app/scripts/hermes/", "app/skills/news-processor/"],
-      "status": "pending",
+      "status": "review",
+      "startedAt": "2026-09-24T11:12:10+04:00",
+      "finishedAt": "2026-09-24T11:16:20+04:00",
       "retries": 0,
       "repairs": 0,
-      "handoffs": 0
+      "handoffs": 0,
+      "files": ["app/api/ai/zenClient.ts", "app/api/ai/goModels.test.ts", "app/scripts/hermes/save-summary.ts", "app/skills/news-processor/SKILL.md"],
+      "tests": { "passed": 221, "failed": 0 }
     }
   ],
   "singlePass": null,
@@ -78,6 +82,6 @@ window.STATE =
     "T01: science HTTP 403; lancet DNS/URL error — источники требуют отдельного endpoint/config решения",
     "PM2 env-метаданные содержат секреты; значения не записывались, но credentials следует ротировать"
   ],
-  "reviewers": { "manifestSpec": null, "craft": null },
+  "reviewers": { "manifestSpec": "t02-manifest-spec", "craft": "t02-craft" },
   "blind": null
 }

@@ -350,10 +350,21 @@ export class ZenQuotaError extends Error {
 }
 
 /**
- * 429 is always rate/quota. 402/403 treated as quota. 401 only when the body
- * indicates balance/credit exhaustion (not a plainly invalid key).
+ * The Go provider returns this as HTTP 403 when no active Go subscription is
+ * available. It is a configuration/account-state error, not key exhaustion.
+ */
+function isGoSubscriptionRequiredError(status: number, body: string): boolean {
+  return status === 403 && isGoConfigured() &&
+    /active\s+OpenCode\s+Go\s+subscription\s+is\s+required/i.test(body);
+}
+
+/**
+ * 429 is always rate/quota. 402/403 treated as quota except for the Go
+ * subscription requirement above. 401 only when the body indicates
+ * balance/credit exhaustion (not a plainly invalid key).
  */
 function isQuotaError(status: number, body: string): boolean {
+  if (isGoSubscriptionRequiredError(status, body)) return false;
   if (status === 429 || status === 402 || status === 403) return true;
   if (status === 401) {
     return /credit|balance|quota|limit|payment|billing|insufficient/i.test(body);
@@ -436,6 +447,11 @@ async function rawChatCompletion(
 
   if (!response.ok) {
     const errorBody = await response.text();
+    if (isGoSubscriptionRequiredError(response.status, errorBody)) {
+      throw new Error(
+        `OpenCode Go subscription is required (HTTP ${response.status}); Go models are unavailable`,
+      );
+    }
     if (isQuotaError(response.status, errorBody)) {
       throw new ZenQuotaError(response.status, errorBody);
     }
@@ -789,10 +805,16 @@ export async function translateArticle(
   });
 }
 
+export interface ZenConnectionStatus {
+  ok: boolean;
+  error?: string;
+}
+
 /**
- * Check if the Zen API is reachable and healthy.
+ * Check the Zen API and return a safe diagnostic. Response bodies and request
+ * headers are never returned because an upstream error may echo credentials.
  */
-export async function checkZenConnection(): Promise<boolean> {
+export async function getZenConnectionStatus(): Promise<ZenConnectionStatus> {
   try {
     const headers: Record<string, string> = {};
     const activeKey = getActiveKey();
@@ -803,10 +825,36 @@ export async function checkZenConnection(): Promise<boolean> {
       headers,
       signal: AbortSignal.timeout(5000),
     });
-    return response.ok;
+    if (response.ok) return { ok: true };
+
+    const body = await response.text();
+    if (isGoSubscriptionRequiredError(response.status, body)) {
+      return {
+        ok: false,
+        error: `OpenCode Go subscription is required (HTTP ${response.status})`,
+      };
+    }
+    if (isQuotaError(response.status, body)) {
+      return {
+        ok: false,
+        error: `Zen API quota/balance exhausted (HTTP ${response.status})`,
+      };
+    }
+    return {
+      ok: false,
+      error: `Zen API health check failed (HTTP ${response.status})`,
+    };
   } catch {
-    return false;
+    return {
+      ok: false,
+      error: "Zen API health check failed (network error)",
+    };
   }
+}
+
+/** Check if the Zen API is reachable and healthy. */
+export async function checkZenConnection(): Promise<boolean> {
+  return (await getZenConnectionStatus()).ok;
 }
 
 /**

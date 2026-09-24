@@ -16,7 +16,12 @@
 import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
 import { eq } from "drizzle-orm";
-import { summarizeOneShot, checkZenConnection } from "../../api/ai/zenClient";
+import {
+  summarizeOneShot,
+  getZenConnectionStatus,
+  isGoConfigured,
+  getGoModel,
+} from "../../api/ai/zenClient";
 import { isYoutubeUrl, fetchYoutubeTranscript } from "./youtube-transcript";
 import { ssrfCheck } from "../../api/lib/url-safety";
 import { extractArticleText } from "./article-content";
@@ -153,9 +158,11 @@ async function main() {
     console.error(`[save-summary] Auto mode: summarizing article #${args.id}...`);
     console.error(`[save-summary] Title: ${article.title.substring(0, 80)}`);
 
-    const zenOk = await checkZenConnection();
-    if (!zenOk) {
-      console.error("[save-summary] Zen API is not available");
+    const zenStatus = await getZenConnectionStatus();
+    if (!zenStatus.ok) {
+      console.error(
+        `[save-summary] Zen API is not available: ${zenStatus.error || "unknown error"}`,
+      );
       process.exit(1);
     }
 
@@ -212,7 +219,9 @@ async function main() {
       process.exit(1);
     }
 
-    modelUsed = modelUsed || process.env.ZEN_MODEL || "zen-default";
+    modelUsed = isGoConfigured()
+      ? getGoModel()
+      : modelUsed || process.env.ZEN_MODEL || "zen-default";
   } else {
     // ── Manual mode: use provided args ──
     if (!args.summary) {

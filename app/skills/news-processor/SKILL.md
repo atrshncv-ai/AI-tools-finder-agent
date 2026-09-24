@@ -219,6 +219,11 @@ quota-exhaustion, что и legacy-пул. Без Go-ключа работает
 (`ZEN_BASE_URL` + `ZEN_API_KEYS`/`ZEN_API_KEY` + `ZEN_MODEL` +
 `ZEN_FALLBACK_MODELS`) без изменений. Go требует заголовки `x-opencode-session` (стабильный id на разговор: save-summary передаёт `hermes-<articleId>`, иначе дефолт на процесс) и `User-Agent` (`AGENT_UA`, default `science-agent/2.0`); `ZEN_GO_SESSION_ID` — опциональный глобальный id/префикс.
 
+> Диагностика: HTTP 403 с сообщением об обязательной активной OpenCode Go
+> подписке не является quota-истощением. Такой ответ не переводит ключ в
+> cooling и не включает fallback на legacy-пул; `save-summary` выводит
+> безопасный диагностический HTTP-класс без ключей.
+
 Политика cheapest-модели: в проде пинится самая дешёвая модель актуального
 Go-каталога (сегодня — `mimo-v2.5`). Порядок предпочтений задан в
 `api/ai/goModels.ts` (`CHEAPEST_GO_MODELS_FIRST`, резолвер

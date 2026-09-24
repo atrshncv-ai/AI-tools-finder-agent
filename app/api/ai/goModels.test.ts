@@ -169,6 +169,49 @@ describe("Go endpoint routing", () => {
     ];
     expect(secondInit.headers["Authorization"]).toBe("Bearer go-dummy-key-2");
   });
+
+  it("does not classify a missing Go subscription as quota exhaustion", async () => {
+    const goKey = "go-dummy-single";
+    mockZenError(
+      403,
+      `An active OpenCode Go subscription is required to use Go models; key=${goKey}`,
+    );
+    const { chatCompletion, getKeyPoolState } = await importZenWithGo({
+      ZEN_GO_API_KEY: goKey,
+      ZEN_RETRIES: "0",
+    });
+
+    let error: Error | undefined;
+    try {
+      await chatCompletion([{ role: "user", content: "test" }]);
+    } catch (caught) {
+      error = caught as Error;
+    }
+
+    expect(error?.message).toContain("OpenCode Go subscription");
+    expect(error?.message).not.toContain("quota/balance limits");
+    expect(error?.message).not.toContain(goKey);
+    expect(getKeyPoolState().coolingKeys).toBe(0);
+  });
+
+  it("returns a safe diagnostic for a missing Go subscription", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      text: async () => "An active OpenCode Go subscription is required to use Go models",
+    });
+    const { getZenConnectionStatus } = await importZenWithGo({
+      ZEN_GO_API_KEY: "go-dummy-single",
+    });
+
+    const status = await getZenConnectionStatus();
+
+    expect(status).toEqual({
+      ok: false,
+      error: "OpenCode Go subscription is required (HTTP 403)",
+    });
+    expect(JSON.stringify(status)).not.toContain("go-dummy-single");
+  });
 });
 
 // ─── Go session headers (x-opencode-session + User-Agent) ────────────────────
