@@ -38,3 +38,26 @@ scoring, gate >=50 via `pipeline-config.ts`, no daily cap by default) →
 `save-summary.ts` (ONE Zen call, RU title + summary) → `deploy-ready.ts`.
 Strictly sequential, no translation step, no fan-out. Morning Telegram
 digest via cron (`daily-digest.ts`). Full reference: `ARCHITECTURE.md`.
+
+<!-- autopilot:start -->
+# Научный агент
+
+Автономный ИИ-новостной агент с последовательным конвейером сбора, оценки, суммаризации и дайджеста.
+
+## Команды
+
+| Команда | Что делает |
+|---------|------------|
+| `cd app && npm ci` | Установить зависимости приложения |
+| `cd app && npx tsc -b` | Проверить типы |
+| `cd app && npx vitest run` | Запустить тесты |
+| `node ecosystem.config.cjs` | Проверить конфигурацию PM2 (после установки зависимостей) |
+
+## Как здесь работает Autopilot
+
+Сборка и диагностика ведутся навыком `/autopilot`. Требования, спецификация и тикеты находятся в `.autopilot/`.
+Прогресс — `.autopilot/dashboard.html`. Требование из `manifest.md` может снять только пользователь.
+
+Если работа продолжается — скажи «продолжи автопилот»: состояние поднимется из `.autopilot/state.js`, переспрашивать ничего не нужно.
+- Production-инцидент 2026-09-24: при заданном `ZEN_GO_API_KEY` пайплайн всегда выбирает Go endpoint и не использует legacy `ZEN_API_KEYS`; Go требует активной подписки, а HTTP 403 с этим сообщением не является обычным quota-истощением ключа.
+<!-- autopilot:end -->
