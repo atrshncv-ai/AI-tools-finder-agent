@@ -59,5 +59,10 @@ digest via cron (`daily-digest.ts`). Full reference: `ARCHITECTURE.md`.
 Прогресс — `.autopilot/dashboard.html`. Требование из `manifest.md` может снять только пользователь.
 
 Если работа продолжается — скажи «продолжи автопилот»: состояние поднимется из `.autopilot/state.js`, переспрашивать ничего не нужно.
-- Production-инцидент 2026-09-24: при заданном `ZEN_GO_API_KEY` пайплайн всегда выбирает Go endpoint и не использует legacy `ZEN_API_KEYS`; Go требует активной подписки, а HTTP 403 с этим сообщением не является обычным quota-истощением ключа.
+
+## Проверенные факты
+
+- Источники поведения и тестов: `app/api/ai/zenClient.ts`, `app/api/ai/goModels.test.ts`, `app/scripts/hermes/save-summary.ts`, `app/skills/news-processor/SKILL.md`.
+- Go-first: непустой `ZEN_GO_API_KEYS` или `ZEN_GO_API_KEY` переключает chat completions на Go endpoint/model и обходит legacy `ZEN_API_KEYS`/`ZEN_API_KEY`. Go требует активной подписки; HTTP 403 с сообщением `active OpenCode Go subscription is required` — ошибка account/config, не quota и не повод переводить ключ в cooldown или делать legacy fallback.
+- Redaction gotcha: upstream error body может содержать credential. Безопасная диагностика не возвращает сырые response body/headers; `getZenConnectionStatus()` сообщает только фиксированный класс ошибки.
 <!-- autopilot:end -->
