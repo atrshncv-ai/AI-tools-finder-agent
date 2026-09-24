@@ -21,3 +21,5 @@
 |---|---|---|---|
 | 2026-08-14 | `ai-inventions` | сдан | AI inventions feature |
 | 2026-09-24 | `2026-09-24-diagnose-pipeline` | сдан | Диагностика Zen/feed-инцидента и локальное исправление классификации Go subscription 403; production rollout не выполнялся |
+
+| 2026-09-24 | `2026-09-24-zen-model-recovery` | сдан | read-only диагностика Go: каталог проверен, production completion заблокирован строгим SSH-доступом; код и production не менялись |

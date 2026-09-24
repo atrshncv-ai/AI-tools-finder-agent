@@ -51,6 +51,7 @@ digest via cron (`daily-digest.ts`). Full reference: `ARCHITECTURE.md`.
 | `cd app && npm ci` | Установить зависимости приложения |
 | `cd app && npx tsc -b` | Проверить типы |
 | `cd app && npx vitest run` | Запустить тесты |
+| `cd app && npx tsx scripts/hermes/cheapest-go-model.ts` | Read-only получить id модели из Go `/models` (JSON в stdout; не проверяет completion) |
 | `node ecosystem.config.cjs` | Проверить конфигурацию PM2 (после установки зависимостей) |
 
 ## Как здесь работает Autopilot
@@ -65,4 +66,5 @@ digest via cron (`daily-digest.ts`). Full reference: `ARCHITECTURE.md`.
 - Источники поведения и тестов: `app/api/ai/zenClient.ts`, `app/api/ai/goModels.test.ts`, `app/scripts/hermes/save-summary.ts`, `app/skills/news-processor/SKILL.md`.
 - Go-first: непустой `ZEN_GO_API_KEYS` или `ZEN_GO_API_KEY` переключает chat completions на Go endpoint/model и обходит legacy `ZEN_API_KEYS`/`ZEN_API_KEY`. Go требует активной подписки; HTTP 403 с сообщением `active OpenCode Go subscription is required` — ошибка account/config, не quota и не повод переводить ключ в cooldown или делать legacy fallback.
 - Redaction gotcha: upstream error body может содержать credential. Безопасная диагностика не возвращает сырые response body/headers; `getZenConnectionStatus()` сообщает только фиксированный класс ошибки.
+- Каталог не равен completion: наличие model id в Go `/models` доказывает только запись каталога, но не доступность `/chat/completions` для фактического ключа/подписки. По каталогу нельзя автоматически менять модель, провайдера или добавлять fallback.
 <!-- autopilot:end -->
