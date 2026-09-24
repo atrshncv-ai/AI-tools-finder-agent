@@ -6,12 +6,12 @@ window.STATE =
   "mode": "semi",
   "depth": "normal",
   "polish": null,
-  "tier": null,
+  "tier": "T1",
   "briefFile": "2026-09-24-diagnose-pipeline--wip/2026-09-24-brief.md",
   "memoryFile": "AGENTS.md",
   "skillDir": "/Users/aleksandrtrisenkov/.claude/skills/autopilot",
   "startedAt": "2026-09-24T10:16:00+04:00",
-  "updatedAt": "2026-09-24T11:18:25+04:00",
+  "updatedAt": "2026-09-24T11:19:58+04:00",
   "finishedAt": null,
   "stages": [
     { "id": "preflight", "status": "done", "finishedAt": "2026-09-24T10:21:11+04:00" },
@@ -19,13 +19,13 @@ window.STATE =
     { "id": "briefing", "status": "skipped", "note": "вопросов не потребовалось: задача и ограничения определены" },
     { "id": "spec", "status": "done", "finishedAt": "2026-09-24T10:42:58+04:00" },
     { "id": "plan", "status": "done", "finishedAt": "2026-09-24T10:44:28+04:00", "note": "2 таска, 2 волны" },
-    { "id": "build", "status": "active", "startedAt": "2026-09-24T10:44:28+04:00", "note": "2 из 2 тасков готов; ожидается финальная приёмка" },
+    { "id": "build", "status": "done", "startedAt": "2026-09-24T10:44:28+04:00", "finishedAt": "2026-09-24T11:19:58+04:00", "note": "2 из 2 тасков готов" },
     { "id": "review", "status": "done", "startedAt": "2026-09-24T11:08:53+04:00", "finishedAt": "2026-09-24T11:18:25+04:00", "note": "проверены 2 из 2" },
     { "id": "final", "status": "pending" }
   ],
   "requirements": {
-    "total": 13, "done": 8, "inTicket": 4, "inSpec": 0,
-    "placeholder": 1, "deferred": 0, "dropped": 0
+    "total": 13, "done": 11, "inTicket": 0, "inSpec": 0,
+    "placeholder": 0, "deferred": 0, "dropped": 0
   },
   "tickets": [
     {
@@ -53,20 +53,21 @@ window.STATE =
       "blockedBy": ["01"],
       "wave": 2,
       "zone": ["app/scripts/hermes/", "app/skills/news-processor/"],
-      "status": "review",
+      "status": "done",
       "startedAt": "2026-09-24T11:12:10+04:00",
-      "finishedAt": "2026-09-24T11:16:20+04:00",
+      "finishedAt": "2026-09-24T11:19:58+04:00",
       "retries": 0,
       "repairs": 0,
       "handoffs": 0,
       "files": ["app/api/ai/zenClient.ts", "app/api/ai/goModels.test.ts", "app/scripts/hermes/save-summary.ts", "app/skills/news-processor/SKILL.md"],
-      "tests": { "passed": 221, "failed": 0 }
+      "tests": { "passed": 221, "failed": 0 },
+      "commit": "a57dc52"
     }
   ],
   "singlePass": null,
   "tests": { "passed": 219, "failed": 0 },
   "debt": {
-    "placeholders": ["R06 — provider-level Zen limit/credential attribution"],
+    "placeholders": ["R06 — provider-level Zen limit/credential attribution (не требуется для operational разбора)"],
     "assumptions": [],
     "emptyEnv": ["SSH_PASSWORD"]
   },
@@ -80,7 +81,8 @@ window.STATE =
   "concerns": [
     "T01: точный Zen provider response не доказан; подтверждены zen/unavailable и pool-exhaustion/quota rotation",
     "T01: science HTTP 403; lancet DNS/URL error — источники требуют отдельного endpoint/config решения",
-    "PM2 env-метаданные содержат секреты; значения не записывались, но credentials следует ротировать"
+    "PM2 env-метаданные содержат секреты; значения не записывались, но credentials следует ротировать",
+    "T02 craft: redaction regression fixture не проверяет эхо ключа в error body; modelUsed fix требует отдельного regression coverage"
   ],
   "reviewers": { "manifestSpec": "t02-manifest-spec", "craft": "t02-craft" },
   "blind": null
