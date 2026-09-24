@@ -20,4 +20,4 @@
 | Начат | Папка | Статус | Итог |
 |---|---|---|---|
 | 2026-08-14 | `ai-inventions` | сдан | AI inventions feature |
-| 2026-09-24 | `2026-09-24-diagnose-pipeline--wip` | в работе | — |
+| 2026-09-24 | `2026-09-24-diagnose-pipeline` | сдан | Диагностика Zen/feed-инцидента и локальное исправление классификации Go subscription 403; production rollout не выполнялся |

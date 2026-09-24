@@ -57,7 +57,8 @@ Production source rows и одинаковая read-only GET-проверка (p
 
 - Persisted health state: `poolSize=4`, `coolingKeys=0`, `updatedAt=2026-09-10T05:57:32.657Z`; это stale snapshot, а не доказательство успешных запросов 24 сентября.
 - Безопасный probe существующего production-кода под тем же application environment: effective pool `1`, `goConfigured=true`, Go base URL; значения ключей не выводились.
-- В логах есть quota/rotation и pool-exhaustion markers. Поэтому подтверждён непосредственный сбой summaries на Zen-этапе, но не подтверждён точный HTTP-ответ провайдера или конкретный лимит/credential.
+- В production `hermes.err.log` безопасно зафиксирован точный upstream error body без ключей: `Upstream request failed: An active OpenCode Go subscription is required to use Go models.` (HTTP 403). Это подтверждает account/config причину Zen-сбоя: активной Go-подписки нет; это не quota-истощение ключа.
+- В логах также есть quota/rotation и pool-exhaustion markers, но применительно к этому конкретному 403 они были вторичным эффектом прежней классификации, а не доказанной причиной.
 
 ## Причинность 92 неопубликованных кандидатов
 
