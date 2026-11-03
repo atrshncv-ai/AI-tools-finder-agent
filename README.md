@@ -159,3 +159,8 @@ docker compose -p scienceagent exec app npm run db:seed
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — полный технический паспорт системы (конвейер, скоринг, безопасность, развёртывание).
 - [`AGENTS.md`](AGENTS.md) — workflow репозитория для AI-агентов разработки.
 - `docs/` — руководства по развёртыванию, администрированию и использованию; отчёт о техническом аудите.
+
+## License / Лицензия
+
+Released under the MIT License. See [LICENSE](LICENSE).
+Проект распространяется по лицензии MIT. См. [LICENSE](LICENSE).
