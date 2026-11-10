@@ -11,7 +11,7 @@ import "dotenv/config";
 import { pathToFileURL } from "url";
 import { getDb } from "../api/queries/connection";
 import { news, categories } from "@db/schema";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 const SCIENCE_CATEGORIES = [
   { name: "Химия", slug: "chemistry", type: "science" },

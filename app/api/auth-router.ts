@@ -11,7 +11,8 @@ const COOKIE_MAX_AGE_SECONDS = JWT_EXPIRY_HOURS * 3600;
 
 /** Never leak the bcrypt hash (or other internals) to the client. */
 function sanitizeUser<T extends { password?: string | null }>(user: T): Omit<T, "password"> {
-  const { password: _pw, ...safe } = user;
+  const safe = { ...user };
+  delete safe.password;
   return safe;
 }
 

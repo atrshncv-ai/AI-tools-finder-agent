@@ -4,8 +4,10 @@ import { trpc } from "@/providers/trpc";
 import { useAuth } from "@/hooks/useAuth";
 import type { News } from "@db/schema";
 
+type NewsCardArticle = News & { categoryName?: string | null };
+
 interface NewsCardProps {
-  article: News;
+  article: NewsCardArticle;
   isRead?: boolean;
 
   showFavorite?: boolean;
@@ -74,7 +76,7 @@ export default function NewsCard({ article, isRead = false, showFavorite = true,
         <div className="flex-1 p-5">
           <div className="flex items-start justify-between gap-3">
             <div className="flex flex-wrap gap-1.5">
-              {((article as any).categoryName || article.categorySlug) && (
+              {(article.categoryName || article.categorySlug) && (
                 <span
                   className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium uppercase tracking-wider"
                   style={{
@@ -82,7 +84,7 @@ export default function NewsCard({ article, isRead = false, showFavorite = true,
                     color: "var(--color-tag-text)",
                   }}
                 >
-                  {(article as any).categoryName || article.categorySlug}
+                  {article.categoryName || article.categorySlug}
                 </span>
               )}
               {tags.slice(0, 2).map((tag) => {

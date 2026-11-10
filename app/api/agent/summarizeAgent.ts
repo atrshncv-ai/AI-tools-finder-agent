@@ -73,7 +73,7 @@ const CONTENT_SELECTORS = [
   ".entry",
   ".abstract",
   ".ltx_document",
-];
+] as const;
 
 function normalizeSpace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
@@ -149,7 +149,7 @@ async function fetchAndCleanArticle(url: string): Promise<string | null> {
       }
     });
 
-    let container: any = $("body");
+    let container = $("body");
     for (const selector of CONTENT_SELECTORS) {
       const el = $(selector).first();
       if (el.length && el.text().trim().length > 200) {

@@ -244,8 +244,8 @@ describe("Go session headers", () => {
     await chatCompletion([{ role: "user", content: "test" }]);
     await chatCompletion([{ role: "user", content: "test" }]);
 
-    const first = (mockFetch.mock.calls[0] as unknown as [{}, { headers: Record<string, string> }])[1].headers;
-    const second = (mockFetch.mock.calls[1] as unknown as [{}, { headers: Record<string, string> }])[1].headers;
+    const first = (mockFetch.mock.calls[0] as unknown as [unknown, { headers: Record<string, string> }])[1].headers;
+    const second = (mockFetch.mock.calls[1] as unknown as [unknown, { headers: Record<string, string> }])[1].headers;
     expect(first["x-opencode-session"]).toBeTruthy();
     expect(second["x-opencode-session"]).toBe(first["x-opencode-session"]);
   });
@@ -261,8 +261,8 @@ describe("Go session headers", () => {
     await chatCompletion([{ role: "user", content: "test" }], { sessionId: "hermes-7" });
     await chatCompletion([{ role: "user", content: "test" }]);
 
-    const withId = (mockFetch.mock.calls[0] as unknown as [{}, { headers: Record<string, string> }])[1].headers;
-    const fallback = (mockFetch.mock.calls[1] as unknown as [{}, { headers: Record<string, string> }])[1].headers;
+    const withId = (mockFetch.mock.calls[0] as unknown as [unknown, { headers: Record<string, string> }])[1].headers;
+    const fallback = (mockFetch.mock.calls[1] as unknown as [unknown, { headers: Record<string, string> }])[1].headers;
     expect(withId["x-opencode-session"]).toBe("prod-hermes-7");
     expect(fallback["x-opencode-session"]).toBe("prod");
   });
