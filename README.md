@@ -26,7 +26,8 @@ collect-dual → prefilter → judge → дневной бюджет → выж�
   только потому, что рядом стоит слово «ИИ».
 - **Бюджет дня** `DAILY_BUDGET` (5..10, по умолчанию 8) проверяется и при
   отборе, и на публикации: обойти его манифестом или ручным вызовом нельзя.
-- **Два провайдера:** GigaChat основной, OpenCode Go — фолбэк только на
+- **Две LLM-операции, одна цепочка:** и судья, и выжимки идут через
+  `createProviderChain` — GigaChat основной, OpenCode Go — фолбэк только на
   quota/transient; 401/403 — ошибка конфигурации, фолбэка нет.
 - **Клиент и владелец получают разное:** клиент — чистый выпуск, владелец —
   копию и служебный отчёт со счётчиками и причинами отказов.
@@ -43,7 +44,7 @@ collect-dual → prefilter → judge → дневной бюджет → выж�
 | LLM | GigaChat → OpenCode Go (цепочка в `app/api/ai/providers/chain.ts`) |
 | Медиа | yt-dlp, ffmpeg, Whisper API для видео без субтитров |
 | Эксплуатация | Ubuntu 24.04, PM2 (`ecosystem.config.cjs`), nginx + certbot, cron, rclone |
-| Качество | Vitest (354 теста), `tsc -b`, ESLint, Prettier |
+| Качество | Vitest (369 тестов, 35 файлов), `tsc -b`, ESLint, Prettier |
 
 ## Быстрый старт (локально)
 
@@ -55,8 +56,12 @@ npm run db:migrate
 npm run db:seed
 npx tsx scripts/seed-ai-science-tools.ts
 npx tsx scripts/seed-invention-tools.ts
+npx tsx scripts/create-user.ts --email owner@example.com --role admin  # вход в дашборд
 npm run dev                   # vite на http://localhost:3000
 ```
+
+Публичной регистрации нет: учётные записи создаёт только `app/scripts/create-user.ts`
+(подробно — `docs/DEPLOY.md` §16).
 
 Один шаг конвейера вручную:
 
@@ -69,7 +74,8 @@ cd app && npx tsx scripts/hermes/manifest-gen.ts --limit 50
 ## Продакшен
 
 Пошаговый runbook для чистого Ubuntu 24.04 (пакеты, база, миграции, сиды, PM2,
-cron, домен и HTTPS, GigaChat-сертификаты, харденинг) — `docs/DEPLOY.md`.
+cron, домен и HTTPS, пара GigaChat и сертификаты, пользователи дашборда,
+харденинг) — `docs/DEPLOY.md`.
 Установка одной командой после клонирования:
 
 ```bash
@@ -121,8 +127,6 @@ cd app && npx tsx ../scripts/check-docs.ts          # факты в доках, 
 - Развёртывание не выполнено: ждёт G02.
 - GigaChat проверен на моках; живой вызов с российского сервера — после ключа и
   сертификатов (`scripts/deploy/check-gigachat.sh`).
-- Выжимки пока идут через `app/api/ai/zenClient.ts`, а не через цепочку
-  провайдеров; судья — через цепочку.
 - Хранилище бэкапов не настроено; путь отказа проверен, восстановление — после G02.
 - `science.org` / `nature.com` блокируют IP дата-центров — ссылки проверяются
   через doi.org-резолвер.
