@@ -203,8 +203,12 @@ export function createProviderChain(deps: ProviderChainDeps = {}): ProviderChain
         );
 
         const isLastProvider = index === providers.length - 1;
-        // A config failure is terminal: the next provider cannot repair bad credentials.
-        if (errorClass === "config" || isLastProvider) {
+        // Only quota (429/402) and transient (5xx/timeout/network) failures move
+        // the call to the next provider. A config failure cannot be repaired by
+        // another provider, and a content failure (400/404/422, unusable answer)
+        // would be repeated there — both surface to the caller instead (§5).
+        const canFallback = errorClass === "quota" || errorClass === "transient";
+        if (!canFallback || isLastProvider) {
           throw failureError(error, attempts);
         }
 

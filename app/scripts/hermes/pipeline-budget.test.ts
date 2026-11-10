@@ -16,7 +16,8 @@ import {
   type Candidate,
 } from "./publish-budget";
 import { planPublication, type ReadyArticle } from "./deploy-ready";
-import { runEvaluationCycle, type EvaluationCandidate } from "./evaluate-news";
+import { runEvaluationCycle, updateForOutcome, type EvaluationCandidate } from "./evaluate-news";
+import { ProviderError } from "../../api/ai/providers/types";
 import { buildNewsRow } from "./collect-dual";
 import { applyDailyBudget } from "./manifest-gen";
 
@@ -515,37 +516,32 @@ describe("evaluate-news cycle: judge only after the prefilter, verdict in metric
 });
 
 describe("evaluate-news cycle: provider failure", () => {
-  it("publishes nothing and keeps the reason in the counters", async () => {
+  it("keeps the candidates pending and counts the provider class, not a verdict", async () => {
     const result = await runEvaluationCycle({
       candidates: [newsCandidate(1), newsCandidate(2), newsCandidate(3)],
       budget: 8,
       deps: {
         now: CYCLE_NOW,
         completeJson: (async () => {
-          throw new Error("gigachat failed: config");
+          throw new ProviderError("gigachat", "config", "invalid key", { status: 401 });
         }) as never,
       },
     });
     expect(result.scored).toBe(0);
     expect(result.counters.approved).toBe(0);
     expect(result.counters.judged).toBe(0);
-    expect(result.counters.rejectedByReason["judge:invalid-judgement"]).toBe(3);
-    // Fail-closed verdict is persisted, so the owner sees why nothing happened.
-    expect(result.outcomes[0].metrics.judge).toMatchObject({
-      onTopic: false,
-      confidence: 0,
-      reason: "invalid-judgement",
-    });
-
-    // With nothing approved there is nothing to publish.
-    const plan = planPublication({
-      ready: [],
-      budget: 8,
-      publishedToday: 0,
-      releaseCommitted: false,
-    });
-    expect(plan.allowed).toBe(false);
-    expect(plan.reason).toBe("no-ready-articles");
+    // The material was never judged: the cause is the provider, not the topic.
+    expect(result.counters.rejectedByReason["provider:config"]).toBe(3);
+    expect(result.counters.rejectedByReason["judge:invalid-judgement"]).toBeUndefined();
+    expect(result.providerErrors).toEqual(["config"]);
+    for (const outcome of result.outcomes) {
+      expect(outcome.decision).toBe("provider-error");
+      expect(outcome.metrics).not.toHaveProperty("judge");
+      // No verdict was paid for or persisted, so the row stays pending.
+      const update = updateForOutcome(outcome);
+      expect(update).not.toHaveProperty("status");
+      expect(update).not.toHaveProperty("score");
+    }
   });
 });
 

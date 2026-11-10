@@ -42,6 +42,13 @@ import {
 import { news } from "@db/schema";
 import { and, desc, eq, gte, isNotNull, ne, sql } from "drizzle-orm";
 import { pathToFileURL } from "node:url";
+import {
+  cycleIdFor,
+  emptyCycleMetrics,
+  readCycle,
+  type CycleMetrics,
+  type UsageTotals,
+} from "./publish-budget";
 
 const DASHBOARD_URL = (process.env.DIGEST_DASHBOARD_URL || "http://localhost:3000").replace(/\/+$/, "");
 const nonEmptySummary = and(isNotNull(news.summary), ne(news.summary, ""));
@@ -124,6 +131,42 @@ async function collectRejectionStats(
     if (reason) reasons[reason] = (reasons[reason] ?? 0) + 1;
   }
   return { rejected: rows.length, reasons };
+}
+
+/**
+ * Funnel, rejection split, token spend and provider errors of the day's cycle,
+ * read from `pipeline_state.metrics` (R13, R18). This is the ledger the cycle
+ * itself wrote, so the report never invents numbers: the dead
+ * `rejectedByPrefilter` / `rejectedByJudge` fields get real values, and every
+ * `provider:<class>` counter becomes a named provider error for the owner.
+ */
+export interface OwnerCycleFields {
+  collected: number;
+  rejectedByPrefilter: number;
+  rejectedByJudge: number;
+  usage: UsageTotals;
+  providerErrors: string[];
+}
+
+export function ownerStatsFromCycle(metrics: CycleMetrics): OwnerCycleFields {
+  let rejectedByPrefilter = 0;
+  let rejectedByJudge = 0;
+  const providerErrors: string[] = [];
+  for (const [reason, count] of Object.entries(metrics.rejectedByReason)) {
+    if (reason.startsWith("prefilter:")) rejectedByPrefilter += count;
+    else if (reason.startsWith("judge:")) rejectedByJudge += count;
+    else if (reason.startsWith("provider:")) {
+      const errorClass = reason.slice("provider:".length);
+      if (!providerErrors.includes(errorClass)) providerErrors.push(errorClass);
+    }
+  }
+  return {
+    collected: metrics.collected,
+    rejectedByPrefilter,
+    rejectedByJudge,
+    usage: metrics.usage,
+    providerErrors: providerErrors.sort(),
+  };
 }
 
 const SEND_MAX_ATTEMPTS = 3;
@@ -264,16 +307,36 @@ async function main() {
     envErrors.push("причины отказа недоступны");
   }
 
+  // The day's ledger written by the cycle (evaluate-news / save-summary): the
+  // funnel, the prefilter/judge split and the token spend come from here, not
+  // from a second, differently-derived count (R13, R18).
+  let cycleMetrics: CycleMetrics = emptyCycleMetrics();
+  try {
+    cycleMetrics = (await readCycle(cycleIdFor(now)))?.metrics ?? emptyCycleMetrics();
+  } catch (err) {
+    console.error(`[daily-digest] cycle metrics skipped: ${(err as Error).message.slice(0, 120)}`);
+    envErrors.push("счётчики цикла недоступны");
+  }
+  const cycleFields = ownerStatsFromCycle(cycleMetrics);
+
   if (recipients.client.length === 0) {
     envErrors.push("нет клиентских chat_id — клиентский дайджест некому отправить");
   }
 
   const stats: CycleStats = {
-    collected: healthStats?.collected ?? items.length,
+    collected: cycleFields.collected > 0 ? cycleFields.collected : (healthStats?.collected ?? items.length),
     rejected,
     published: items.length,
+    rejectedByPrefilter: cycleFields.rejectedByPrefilter,
+    rejectedByJudge: cycleFields.rejectedByJudge,
     rejectedByReason,
-    errors: envErrors,
+    usage: cycleFields.usage,
+    errors: [
+      ...envErrors,
+      ...cycleFields.providerErrors.map(
+        (errorClass) => `ошибка провайдера: ${errorClass} — кандидаты остались pending`,
+      ),
+    ],
   };
   const report = buildOwnerReport(stats, { date: now, dashboardUrl: DASHBOARD_URL, healthLine });
   const clientParts = splitTelegramText(

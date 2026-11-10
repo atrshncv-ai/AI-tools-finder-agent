@@ -59,6 +59,8 @@ export interface CycleStats {
   rejectedByJudge?: number;
   /** Rejection reason (machine code or judge reason) → count. */
   rejectedByReason?: Record<string, number>;
+  /** Token spend of the day's cycle (`pipeline_state.metrics.usage`, R13). */
+  usage?: { calls: number; inputTokens: number; outputTokens: number } | null;
   /** Errors that happened during the cycle, one line each. */
   errors?: readonly string[];
 }
@@ -168,6 +170,15 @@ export function buildEmptyClientDigest(opts: DigestOptions): string {
   ].join("\n");
 }
 
+/** Russian plural for the "N вызовов" counter in the owner report. */
+function callWord(count: number): string {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return "вызов";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "вызова";
+  return "вызовов";
+}
+
 function formatReasons(reasons: Record<string, number> | undefined): string {
   const entries = Object.entries(reasons ?? {})
     .filter(([, count]) => Number.isFinite(count) && count > 0)
@@ -192,6 +203,13 @@ export function buildOwnerReport(stats: CycleStats, opts: OwnerReportOptions): s
   if (stats.rejectedByPrefilter != null || stats.rejectedByJudge != null) {
     lines.push(
       `Отсеяно префильтром: ${stats.rejectedByPrefilter ?? "—"} · судьёй: ${stats.rejectedByJudge ?? "—"}`,
+    );
+  }
+  if (stats.usage) {
+    // R13: "хз на сколько хватит" is answered by a number, not by a feeling.
+    lines.push(
+      `Токены за сутки: ${stats.usage.calls} ${callWord(stats.usage.calls)} · ` +
+        `вход ${stats.usage.inputTokens} · выход ${stats.usage.outputTokens}`,
     );
   }
   lines.push(`Причины отказа: ${formatReasons(stats.rejectedByReason)}`);

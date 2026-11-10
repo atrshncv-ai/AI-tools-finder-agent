@@ -30,7 +30,11 @@ import {
   type DirectionId,
   type SectionId,
 } from "./topics";
-import type { ChatMessage, CompleteJson } from "../../api/ai/providers/types";
+import {
+  isProviderError,
+  type ChatMessage,
+  type CompleteJson,
+} from "../../api/ai/providers/types";
 
 export const JUDGE_CONFIDENCE_THRESHOLD = 0.7;
 
@@ -249,7 +253,11 @@ async function reviewVerdict(
       temperature: JUDGE_TEMPERATURE,
     });
     replyText = typeof result?.text === "string" ? result.text : "";
-  } catch {
+  } catch (error) {
+    // A malformed *answer* is a fail-closed verdict; a provider failure is not
+    // a verdict at all. It travels up with its class so the cycle can keep the
+    // candidate pending and tell the owner what actually broke (R14/R17).
+    if (isProviderError(error)) throw error;
     return { ok: false, reason: INVALID_REVIEW_REASON };
   }
 
@@ -277,9 +285,11 @@ export async function judgeRelevance(input: JudgeInput, deps: JudgeDeps = {}): P
       temperature: JUDGE_TEMPERATURE,
     });
     replyText = typeof result?.text === "string" ? result.text : "";
-  } catch {
-    // Provider failures are the chain's business (retries, alerts); the judge
-    // itself never propagates them: a missing verdict means "do not publish".
+  } catch (error) {
+    // A provider failure is the chain's business (retries, alerts) and is not
+    // a judgement: it is rethrown with its class, so `evaluate-news` keeps the
+    // candidate pending instead of rejecting it forever (R14, R17).
+    if (isProviderError(error)) throw error;
     return invalidJudgement();
   }
 

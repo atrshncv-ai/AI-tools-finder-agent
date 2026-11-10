@@ -63,7 +63,11 @@ import {
   type CycleMetrics,
   type UsageTotals,
 } from "./publish-budget";
-import type { CompleteJson } from "../../api/ai/providers/types";
+import {
+  isProviderError,
+  type CompleteJson,
+  type ProviderErrorClass,
+} from "../../api/ai/providers/types";
 
 const FETCH_TIMEOUT_MS = 20_000;
 const UA = process.env.AGENT_UA || "science-agent/2.0";
@@ -199,7 +203,9 @@ export type EvaluationDecision =
   | "rejected-prefilter"
   | "rejected-judge"
   | "deferred-budget"
-  | "rejected-low-score";
+  | "rejected-low-score"
+  /** The provider failed: no verdict, the candidate stays pending for a retry. */
+  | "provider-error";
 
 export interface EvaluationOutcome {
   candidate: EvaluationCandidate;
@@ -218,6 +224,12 @@ export interface EvaluationCycleResult {
   scored: number;
   /** Judge LLM calls actually made (reused verdicts cost nothing). */
   judgeCalls: number;
+  /**
+   * Error classes of provider calls that failed during this run. Non-empty
+   * means the cycle cannot be trusted as a material decision and must exit
+   * non-zero (R14/R17) — the candidates are left pending, not rejected.
+   */
+  providerErrors: ProviderErrorClass[];
 }
 
 export interface EvaluationDeps {
@@ -851,24 +863,70 @@ export async function runEvaluationCycle(input: {
     : null;
 
   let judgeCalls = 0;
+  const providerErrors: ProviderErrorClass[] = [];
+  const noteProviderFailure = (errorClass: ProviderErrorClass): void => {
+    if (!providerErrors.includes(errorClass)) providerErrors.push(errorClass);
+  };
+  /**
+   * A provider failure is not a judgement: the row keeps no `judge` block and
+   * no decision other than the cause, so it stays `pending` and is retried by
+   * the next cycle. Reusing a stored verdict stays free, so it is still done.
+   */
+  const providerErrorOutcome = (
+    item: { candidate: EvaluationCandidate; prefilter: PrefilterResult },
+    errorClass: ProviderErrorClass,
+  ): EvaluationOutcome => {
+    bump(`provider:${errorClass}`);
+    return {
+      candidate: item.candidate,
+      decision: "provider-error",
+      prefilter: item.prefilter,
+      verdict: null,
+      result: null,
+      metrics: {
+        ...baseMetrics(item.candidate),
+        prefilter: item.prefilter,
+        evaluatedAt,
+        decision: "provider-error",
+        providerError: { class: errorClass },
+      },
+    };
+  };
+
   const onTopic: { candidate: EvaluationCandidate; prefilter: PrefilterResult; verdict: JudgeVerdict }[] = [];
+  let failedClass: ProviderErrorClass | null = null;
   for (const item of passed) {
     const stored = readStoredVerdict(item.candidate.metrics);
     let verdict: JudgeVerdict;
     if (stored) {
       // The verdict was already paid for by a previous cycle: reuse it.
       verdict = stored;
+    } else if (failedClass) {
+      // The provider is already known to be down: do not hammer it once per
+      // candidate, but leave every affected row pending with the cause.
+      outcomes.push(providerErrorOutcome(item, failedClass));
+      continue;
     } else {
       judgeCalls++;
-      const judgement = await judgeRelevance(
-        {
-          title: item.candidate.title,
-          lead: item.candidate.lead,
-          language: item.candidate.language ?? null,
-        },
-        tracked ? { completeJson: tracked } : {},
-      );
-      verdict = { ...judgement, provider: meta.provider, model: meta.model };
+      try {
+        const judgement = await judgeRelevance(
+          {
+            title: item.candidate.title,
+            lead: item.candidate.lead,
+            language: item.candidate.language ?? null,
+          },
+          tracked ? { completeJson: tracked } : {},
+        );
+        verdict = { ...judgement, provider: meta.provider, model: meta.model };
+      } catch (error) {
+        // Only a classified provider failure is "not our material's fault"; a
+        // programming error must crash loudly instead of hiding in a counter.
+        if (!isProviderError(error)) throw error;
+        failedClass = error.errorClass;
+        noteProviderFailure(error.errorClass);
+        outcomes.push(providerErrorOutcome(item, error.errorClass));
+        continue;
+      }
     }
 
     if (!verdict.onTopic) {
@@ -978,7 +1036,7 @@ export async function runEvaluationCycle(input: {
     }
   }
 
-  return { outcomes, counters, scored, judgeCalls };
+  return { outcomes, counters, scored, judgeCalls, providerErrors };
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -1013,15 +1071,51 @@ function scoreCandidate(candidate: EvaluationCandidate): Promise<EvalResult> {
   });
 }
 
+/** The card's fields the judge owns, derived from its verdict alone (R07.1). */
+export type CardPlacement = {
+  section: SectionId;
+  scienceField: DirectionId | null;
+  sphereTags: string[];
+  isScience: boolean;
+};
+
+/**
+ * Placement comes from `metrics.judge`, not from a word match over the Russian
+ * summary: the section is the verdict's section, the science direction is its
+ * direction, and the invention spheres are derived from that same direction.
+ * A word-matching router (`resolveSection`) may disagree; the judge wins.
+ */
+export function placementFromVerdict(verdict: JudgeVerdict | null): CardPlacement | null {
+  if (!verdict || !verdict.onTopic) return null;
+  return {
+    section: verdict.section,
+    scienceField: verdict.section === "science" ? verdict.direction : null,
+    sphereTags:
+      verdict.section === "invention-tools" && verdict.direction ? [verdict.direction] : [],
+    isScience: verdict.section === "science",
+  };
+}
+
 /** How one outcome lands in the `news` row (score, status, section). */
-function updateForOutcome(outcome: EvaluationOutcome): Record<string, unknown> {
+export function updateForOutcome(outcome: EvaluationOutcome): Record<string, unknown> {
   const set: Record<string, unknown> = { metrics: outcome.metrics, updatedAt: new Date() };
   if (outcome.decision === "approved" && outcome.result) {
     set.score = outcome.result.score;
-    if (outcome.result.section) set.section = outcome.result.section;
-    set.sphereTags = outcome.result.sphereTags ?? [];
-    if (outcome.result.isScience !== undefined) set.isScience = outcome.result.isScience;
-    if (outcome.result.scienceField !== undefined) set.scienceField = outcome.result.scienceField;
+    // One trusted decision: the judge's verdict decides where the card lands.
+    const placement = placementFromVerdict(outcome.verdict);
+    if (placement) {
+      set.section = placement.section;
+      set.sphereTags = placement.sphereTags;
+      set.isScience = placement.isScience;
+      set.scienceField = placement.scienceField;
+    } else if (outcome.result.section) {
+      // Unreachable for a real approved outcome (it is always judged); kept so
+      // an injected score-only path still writes a section.
+      set.section = outcome.result.section;
+      set.sphereTags = outcome.result.sphereTags ?? [];
+      if (outcome.result.isScience !== undefined) set.isScience = outcome.result.isScience;
+      if (outcome.result.scienceField !== undefined) set.scienceField = outcome.result.scienceField;
+    }
     if (outcome.result.originalContent) set.originalContent = outcome.result.originalContent;
     return set;
   }
@@ -1033,6 +1127,11 @@ function updateForOutcome(outcome: EvaluationOutcome): Record<string, unknown> {
   if (outcome.decision === "deferred-budget") {
     // Passed the judge, lost the download budget: stays pending (score NULL) so
     // a later cycle can score it without paying the judge twice.
+    return set;
+  }
+  if (outcome.decision === "provider-error") {
+    // The provider failed, the material was never judged: no score, no status.
+    // The row stays pending and the cause lives in `metrics.providerError`.
     return set;
   }
   set.score = 0;
@@ -1128,8 +1227,9 @@ async function main() {
   );
 
   const deferred = cycle.outcomes.filter((o) => o.decision === "deferred-budget").length;
+  const providerFailed = cycle.outcomes.filter((o) => o.decision === "provider-error").length;
   const output = {
-    status: "ok",
+    status: cycle.providerErrors.length > 0 ? "provider-error" : "ok",
     cycleId,
     budget,
     downloadBudget,
@@ -1139,9 +1239,11 @@ async function main() {
     judged: counters.judged,
     approved: counters.approved,
     deferred,
-    rejected: cycle.outcomes.length - counters.approved - deferred,
+    rejected: cycle.outcomes.filter((o) => o.decision.startsWith("rejected")).length,
     judgeCalls: cycle.judgeCalls,
     scored: cycle.scored,
+    providerErrors: cycle.providerErrors,
+    providerFailed,
     top: cycle.outcomes
       .filter((o) => o.decision === "approved" && o.result)
       .sort((a, b) => (b.result?.score ?? 0) - (a.result?.score ?? 0))
@@ -1154,6 +1256,15 @@ async function main() {
       `judged=${counters.judged} approved=${counters.approved} deferred=${deferred} ` +
       `scored=${cycle.scored} judgeCalls=${cycle.judgeCalls}`,
   );
+  if (cycle.providerErrors.length > 0) {
+    // The cycle did not decide about these materials: the loop must retry, and
+    // the owner report names the provider class, not "material rejected" (R14).
+    console.error(
+      `[evaluate-news] PROVIDER FAILURE (${cycle.providerErrors.join(", ")}): ` +
+        `${providerFailed} candidates left pending — exiting non-zero`,
+    );
+    process.exit(1);
+  }
   process.exit(0);
 }
 
