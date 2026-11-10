@@ -1,11 +1,63 @@
-# Progress: dashboard-dates-classification
+# PROGRESS.md — что сделано и что осталось
+
+Обновлено 2026-11-10. Прогон: `.autopilot/2026-11-10-news-agent-v2--wip/`
+(требования — `manifest.md`, решения — `spec.md`, границы — `interfaces.md`).
+
+## news-agent-v2 — новый сервер, GigaChat, честный отбор
+
+| # | Что | Состояние |
+|---|---|---|
+| 01 | Реестр тем (`app/scripts/hermes/topics.ts`), LLM-судья (`judge.ts`) с fail-closed, дешёвый префильтр (`prefilter.ts`), набор 60 размеченных примеров | done |
+| 02 | Провайдеры: GigaChat (основной), OpenCode Go (фолбэк), цепочка и классы ошибок `config/quota/transient/content`, `scripts/update-key.sh` без эха значения | done |
+| 03 | Двухступенчатый отбор, бюджет дня `DAILY_BUDGET` (5..10, по умолчанию 8), проверка бюджета на публикации (`planPublication`), счётчики в `pipeline_state.metrics`, миграция `0011` | done |
+| 04 | Формат дайджеста (`digest-format.ts`), клиентский и служебный выпуски, раздельные получатели `TELEGRAM_CLIENT_CHAT_IDS` / `TELEGRAM_OWNER_CHAT_IDS` | done |
+| 05 | Runbook `docs/DEPLOY.md` под фактический стек, `scripts/deploy/` (install, cron, harden, GigaChat-сертификаты и проверка вызова), `scripts/backup-offsite.sh`, `scripts/check-env-example.ts`, `scripts/check-docs.ts`, `ARCHITECTURE.md`, `CONTEXT.md`, `docs/adr/`, синхронизация `app/skills/news-processor/SKILL.md` и `README.md` | done |
+
+Проверки на момент сдачи: `cd app && npx tsc -b` — чисто; `npx vitest run` — 354
+теста в 34 файлах, все зелёные; `bash -n` для всех скриптов; `check-env-example.ts`
+и `check-docs.ts` — зелёные.
+
+### Открыто
+
+- **G02 — сервер, домен, доступы.** Развёртывание не выполнено: runbook и скрипты
+  готовы, ожидание данных от владельца. Снять ограничение может только владелец.
+- **G01 — срок «эта неделя».** Работа укладывается в неделю только при получении
+  доступов; без G02 деплой не начинается.
+- **Живой ключ GigaChat.** Адаптер и цепочка проверены на моках. Нужны
+  `GIGACHAT_CLIENT_ID` / `GIGACHAT_CLIENT_SECRET`, установка российских корневых
+  сертификатов и прогон `scripts/deploy/check-gigachat.sh` на сервере
+  (R12.2 — после G02).
+- **Хранилище бэкапов.** Нужен аккаунт S3-совместимого хранилища; имена
+  переменных в `app/.env.example`, значения — от владельца. Загрузка и проверка
+  восстановления на чистой базе ждут G02; отказ без настроек и сухой прогон
+  проверены локально.
+- **Telegram.** `TELEGRAM_BOT_TOKEN` перевыпускается в BotFather, `chat_id`
+  клиента и владельца приходят от владельца.
+- **Выжимки не в цепочке провайдеров.** Судья идёт через
+  `app/api/ai/providers/chain.ts`, а `save-summary.ts` пока вызывает
+  `zenClient.summarizeOneShot()` (OpenCode). Перенос — следующий шаг.
+- **Дата последнего бэкапа в служебном отчёте.** Сейчас она в
+  `~/.news-agent/last-backup.json` и в логе; встраивание в отчёт владельцу не
+  сделано.
+
+### Известные упрощения (приняты)
+
+- Второй короткий вызов судьи на кандидата с `onTopic=true` — цена точности.
+- Кандидаты, не попавшие в бюджет, остаются `pending` с вердиктом и копятся до
+  `purge-stale`.
+- `zenClient.ts` читает конфигурацию при импорте; текущая схема «шаг = отдельный
+  процесс» это компенсирует.
+
+## Прошлые прогоны
+
+### dashboard-dates-classification
 
 - 01 — Единое правило даты, фильтра и сортировки — done
 - 02 — Строгая классификация «ИИ для науки» — done
 - 03 — Только ИИ-инструменты в каталоге — done
 - 04 — Надёжная отметка прочитанного и регрессии — done
 
-# Progress: science-relevance-fixes
+### science-relevance-fixes
 
 Спека: `.scratch/science-relevance-fixes/spec.md` (код-ревью конвейера по
 обратной связи клиента от 25.08.2026).
@@ -22,7 +74,7 @@
 
 Бэкфилл на проде и деплой — по отдельному подтверждению (см. spec.md, «Не входит в объём»).
 
-# Progress: pipeline-hardening
+### pipeline-hardening
 
 Спека: `.scratch/pipeline-hardening/spec.md` (слабые места после деплоя
 science-relevance-fixes; факты — из цикла и бэкфилла 25.08.2026).
@@ -33,4 +85,5 @@ science-relevance-fixes; факты — из цикла и бэкфилла 25.0
 - 04 — Fetch-fallback цепочка и аудит Whisper-ключа — done
 - 05 — Финальная чистка INVENTION_TERMS по фактам бэкфилла — done
 - 06 — LLM-второе-мнение для пограничных статей — cancelled (закрыто владельцем 26.08)
-- 07 — SSH-харденинг сервера — cancelled (закрыто владельцем 26.08)
+- 07 — SSH-харденинг сервера — cancelled (закрыто владельцем 26.08); возвращён как
+  `scripts/deploy/harden.sh` в прогоне news-agent-v2

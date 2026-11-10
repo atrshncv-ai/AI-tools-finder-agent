@@ -1,93 +1,502 @@
-# Руководство по развёртыванию
+# Развёртывание: чистый Ubuntu 24.04 → работающий выпуск
 
-## Требования
+Этот документ описывает **фактический стек** проекта, а не желаемый: Node.js 20,
+PostgreSQL 16, PM2, nginx + Let's Encrypt, cron и rclone для бэкапа вне сервера.
+Docker остался в репозитории как legacy-путь (`docker-compose.yml`, `Dockerfile`) и
+описан в §13: в нём нет конвейера, `yt-dlp` и `ffmpeg`, поэтому прод так не
+поднимается.
 
-- Docker и Docker Compose
-- Сервер с Ubuntu 22.04 LTS (рекомендуется)
-- RAM: минимум 8 ГБ (для LM Studio / Gemma 4)
-- CPU: 4+ ядра
-- Диск: 50+ ГБ SSD
-- Домен и DNS-записи, указывающие на сервер
+> **Статус развёртывания: заглушка (G02).** Адрес сервера, домен и доступы
+> придут от владельца после покупки. Всё, что можно проверить без сервера,
+> проверено: скрипты проходят `bash -n`, `scripts/check-env-example.ts` и
+> `scripts/check-docs.ts` зелёные, `scripts/backup-offsite.sh` без переменных
+> хранилища падает с кодом 78, а не «успехом». Шаги, которые требуют живой
+> машины (§2–§12), помечены как **ждёт G02** и выполняются после получения
+> доступов.
 
-## Переменные окружения
+Документ рассчитан на человека, который видит проект впервые. Каждая команда
+выполнима; пути — от корня репозитория, если не сказано иное.
 
-Скопируйте `.env.example` в `.env` и заполните:
+---
 
-```bash
-# Обязательные
-DATABASE_URL=postgresql://postgres:<password>@postgres:5432/science_agent
-POSTGRES_PASSWORD=<сложный_пароль>
-APP_ID=<kimi_app_id>
-APP_SECRET=<kimi_app_secret>
-KIMI_AUTH_URL=https://<kimi-auth-host>
-KIMI_OPEN_URL=https://<kimi-open-host>
-OWNER_UNION_ID=<your_union_id>
+## 1. Что именно запускается
 
-# CORS (в продакшене не оставляйте *)
-CORS_ORIGIN=https://your-domain.com
+| Компонент | Что это | Кто запускает |
+|---|---|---|
+| `news-agent-web` | Hono + tRPC + собранный дашборд, `dist/boot.js`, порт 3000 | PM2 |
+| `hermes-ralph-loop` | конвейер: сбор → префильтр → судья → бюджет → выжимки → публикация, **один выпуск в сутки** | PM2 |
+| `daily-digest.ts` | утренний дайджест: клиентский и служебный выпуски | cron, 06:00 UTC |
+| `backup-offsite.sh` | дамп БД и выгрузка в S3-совместимое хранилище | cron, 03:30 UTC |
+| PostgreSQL 16 | база `science_agent` | systemd |
+| nginx + certbot | HTTPS-вход на дашборд, редирект http→https | systemd |
 
-# AI (параметры для текущей модели; при смене модели достаточно изменить LM_STUDIO_MODEL)
-LM_STUDIO_URL=http://host.docker.internal:1234
-LM_STUDIO_MODEL=google/gemma-4-e4b
-LM_STUDIO_TIMEOUT_MS=60000
-LM_STUDIO_MAX_INPUT_TOKENS=6000
-LM_STUDIO_SUMMARY_MAX_TOKENS=1024
-LM_STUDIO_DETAILED_MAX_TOKENS=2048
-LM_STUDIO_TRANSLATION_MAX_TOKENS=4096
-LM_STUDIO_RETRIES=3
-LM_STUDIO_RETRY_DELAY_MS=5000
-LM_STUDIO_CONCURRENCY=3
+Один цикл в сутки — это не настройка, а инвариант: `cycle-YYYY-MM-DD` в
+`pipeline_state`, после опубликованного выпуска второй запуск спит до следующих
+UTC-суток. Пауза `LINEAR_WORKER_INTERVAL_MS` — только задержка повтора после
+сбоя, а не интервал выпусков (см. `docs/adr/0004-one-release-per-day.md`).
 
-# Локальный перевод (Transformers.js / ONNX)
-LOCAL_TRANSLATE_MODEL=Xenova/opus-mt-en-ru
-LOCAL_TRANSLATE_MAX_CHUNK_CHARS=400
-LOCAL_TRANSLATE_DEVICE=cpu
-```
+---
 
-## Запуск
+## 2. Сервер
 
-```bash
-# 1. Билд и запуск
- docker compose -p scienceagent up --build -d
+**Ждёт G02.**
 
-# 2. Применение миграций (первый запуск)
- docker compose -p scienceagent exec app npm run db:migrate
+Минимальная конфигурация под этот стек (LM Studio и локальные модели больше не
+используются, 8 ГБ RAM не нужны):
 
-# 3. Сид категорий и источников (первый запуск)
- docker compose -p scienceagent exec app npm run db:seed
-```
+- 2 vCPU, 2–4 ГБ RAM, 40 ГБ SSD;
+- Ubuntu 24.04 LTS, root или sudo-пользователь;
+- публичный IPv4 и DNS-запись `A` домена на этот адрес;
+- исходящий доступ в интернет (RSS, GitHub, arXiv, GigaChat, Telegram);
+- для GigaChat — **российский IP** и корневые сертификаты (§5), иначе вызов не
+  пройдёт независимо от ключа.
 
-## SSL (Let's Encrypt)
+Проверка перед началом:
 
 ```bash
-./scripts/setup-ssl.sh
+lsb_release -ds                  # Ubuntu 24.04.x LTS
+getent hosts news.example.com    # должен вернуть адрес этого сервера
 ```
 
-Или вручную:
+DNS должен указывать на сервер **до** выпуска сертификата: Let's Encrypt
+проверяет домен снаружи.
+
+---
+
+## 3. Установка
+
+**Ждёт G02.**
 
 ```bash
-docker run -it --rm \
-  -v scienceagent_certbot_conf:/etc/letsencrypt \
-  -v scienceagent_certbot_www:/var/www/certbot \
-  -p 80:80 \
-  certbot/certbot certonly --standalone -d your-domain.com
+# 1. Забрать репозиторий на сервер (адрес remote — у владельца).
+sudo git clone <remote-url> /srv/news-agent
+cd /srv/news-agent
+
+# 2. Установка одной командой: пакеты, Node 20, PM2, пользователь, база,
+#    миграции, сиды, сертификаты GigaChat, cron, nginx, проверка /health.
+sudo env APP_DIR=/srv/news-agent APP_USER=deploy \
+     DOMAIN=news.example.com TLS_EMAIL=admin@example.com \
+     bash scripts/deploy/install.sh
 ```
 
-## Обновление
+Скрипт идемпотентен: повторный запуск не пересоздаёт базу, не перезаписывает
+`app/.env` и не теряет существующие данные. Он делает то же, что описано в §3–§7
+вручную, в том же порядке.
+
+Ручной эквивалент первого шага (если скрипт недоступен):
 
 ```bash
-git pull
- docker compose -p scienceagent up --build -d
- docker compose -p scienceagent exec app npm run db:migrate
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg git build-essential python3 \
+  postgresql postgresql-contrib nginx certbot python3-certbot-nginx \
+  ffmpeg fail2ban ufw rclone unzip openssl sudo gettext-base
+curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+  | sudo gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
+echo 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main' \
+  | sudo tee /etc/apt/sources.list.d/nodesource.list
+sudo apt-get update && sudo apt-get install -y nodejs
+sudo npm install -g pm2
+sudo timedatectl set-timezone UTC
 ```
 
-## Проверка состояния
-
-- API health: `https://your-domain.com/health`
-- Admin panel: `https://your-domain.com/admin`
-
-## Бэкап БД
+Пользователь приложения и каталоги логов:
 
 ```bash
-./scripts/backup.sh
+sudo useradd --create-home --shell /bin/bash deploy
+sudo usermod -aG sudo deploy
+sudo install -d -o deploy -g deploy -m 0755 /var/log/news-agent
+sudo chown -R deploy:deploy /srv/news-agent
 ```
+
+---
+
+## 4. База, переменные, миграции, сиды
+
+**Ждёт G02.**
+
+Роль и база (пароль — только в `app/.env`; в примере его нет):
+
+```bash
+sudo -u postgres psql -c "CREATE ROLE science_agent LOGIN PASSWORD '<пароль>'"
+sudo -u postgres createdb --owner science_agent science_agent
+```
+
+Переменные. Единственный контракт — `app/.env.example`; `app/.env` создаётся из
+него и в git не попадает:
+
+```bash
+cd /srv/news-agent
+sudo -u deploy install -m 600 app/.env.example app/.env
+sudo -u deploy nano app/.env      # DATABASE_URL, GIGACHAT_*, TELEGRAM_*, BACKUP_S3_*
+```
+
+Обязательный минимум, без которого ничего не работает:
+
+- `DATABASE_URL` — `postgresql://science_agent:<пароль>@localhost:5432/science_agent`;
+- `JWT_SECRET` (или legacy `APP_SECRET`) — иначе веб не стартует. Значение
+  `APP_SECRET` в примере — заглушка, задайте настоящий `JWT_SECRET`;
+- `GIGACHAT_CLIENT_ID`, `GIGACHAT_CLIENT_SECRET` — иначе судья fail-closed
+  отклонит всё и выпуска не будет (выжимки идут через OpenCode, но до них дело
+  не доходит);
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CLIENT_CHAT_IDS`, `TELEGRAM_OWNER_CHAT_IDS` —
+  иначе дайджест печатается в лог вместо отправки;
+- `BACKUP_S3_*` — иначе ночной бэкап честно падает (§9).
+
+`DAILY_BUDGET` — 5..10, по умолчанию 8. Значение вне диапазона останавливает
+конвейер на старте, а не подменяется молча.
+
+Сборка, миграции и сиды (миграции — `app/db/migrations`, актуально `0011`):
+
+```bash
+cd /srv/news-agent/app
+sudo -u deploy npm ci
+sudo -u deploy npm run check          # tsc -b
+sudo -u deploy npm run build          # dist/boot.js + dist/public
+sudo -u deploy npm run db:migrate
+sudo -u deploy npm run db:seed        # 6 научных направлений + источники
+sudo -u deploy npx tsx scripts/seed-ai-science-tools.ts   # каталог инструментов
+sudo -u deploy npx tsx scripts/seed-invention-tools.ts    # расширение каталога
+```
+
+После сидов дашборд не пустой: заполнены категории (включая шесть научных
+направлений) и каталог инструментов (`invention_tools`).
+
+Проверка:
+
+```bash
+sudo -u postgres psql science_agent -c "select count(*) from categories"
+sudo -u postgres psql science_agent -c "select count(*) from invention_tools"
+```
+
+---
+
+## 5. GigaChat: сертификаты и проверка вызова
+
+**Ждёт G02 (выполняется на сервере).**
+
+GigaChat (`gigachat.devices.sberbank.ru`, `ngw.devices.sberbank.ru`) выписан
+российским доверенным центром. Без этих сертификатов TLS-рукопожатие падает до
+авторизации. Node.js **не использует** системное хранилище — ему нужен
+`NODE_EXTRA_CA_CERTS`.
+
+```bash
+sudo bash scripts/deploy/gigachat-certs.sh
+```
+
+Скрипт скачивает Russian Trusted Root CA и Sub CA, ставит их в системное
+хранилище (`update-ca-certificates`), собирает bundle
+`/etc/ssl/certs/news-agent-russian-trusted.pem` и проверяет TLS до
+`gigachat.devices.sberbank.ru:443`. В конце он печатает строку для `app/.env`:
+
+```ini
+NODE_EXTRA_CA_CERTS=/etc/ssl/certs/news-agent-russian-trusted.pem
+```
+
+`scripts/deploy/install.sh` прописывает её сам, если сертификаты установились;
+cron получает ту же переменную в расписании. После ручной правки `app/.env`
+перезапустить процессы:
+
+```bash
+sudo -u deploy pm2 restart news-agent-web --update-env
+sudo -u deploy pm2 restart hermes-ralph-loop --update-env
+```
+
+Проверка «вызов проходит **с этого сервера**» — отдельный скрипт, он делает те же
+два запроса, что и провайдер (OAuth → `/chat/completions`), и печатает только
+HTTP-код и имя модели, без токена и без тела ответа:
+
+```bash
+bash scripts/deploy/check-gigachat.sh
+```
+
+Ожидаемый результат: `GigaChat OK: HTTP 200 on /chat/completions (model GigaChat)`.
+Коды ошибок читаются так: 401/403 — конфигурация (ключ, scope), фолбэк не
+поможет и не должен включаться; 402/429 — квота/лимит, сработает OpenCode Go как
+фолбэк.
+
+Интерактивная диагностика, если что-то не сходится:
+
+```bash
+sudo bash scripts/deploy/gigachat-certs.sh --check   # сертификаты и TLS
+openssl s_client -connect gigachat.devices.sberbank.ru:443 \
+  -servername gigachat.devices.sberbank.ru \
+  -CAfile /etc/ssl/certs/news-agent-russian-trusted.pem </dev/null | tail -3
+```
+
+---
+
+## 6. PM2
+
+**Ждёт G02.**
+
+Конфигурация — `ecosystem.config.cjs`, два процесса. Она читает `app/.env` сама
+(PM2 не умеет dotenv), пустые значения отбрасываются, секреты не печатаются.
+
+```bash
+cd /srv/news-agent
+sudo -u deploy pm2 start ecosystem.config.cjs
+sudo -u deploy pm2 save
+# один раз, чтобы процессы пережили ребут; если PM2 напечатает команду — выполнить её
+sudo pm2 startup systemd -u deploy --hp /home/deploy
+```
+
+Проверка:
+
+```bash
+sudo -u deploy pm2 status
+curl -fsS http://127.0.0.1:3000/health && echo
+sudo -u deploy pm2 logs news-agent-web --lines 50
+sudo -u deploy pm2 logs hermes-ralph-loop --lines 50
+```
+
+`/health` отвечает 200; статус `degraded` означает недоступность LLM, а 503 —
+недоступность базы.
+
+---
+
+## 7. Домен и HTTPS
+
+**Ждёт G02.**
+
+Шаблон сайта — `scripts/deploy/nginx-site.conf.template`; `install.sh` подставляет
+`DOMAIN` и `PROXY_PORT` и кладёт файл в `/etc/nginx/sites-available/news-agent`.
+Сертификат выпускает certbot, он же добавляет HTTPS-сервер и редирект http→https:
+
+```bash
+sudo certbot --nginx --non-interactive --agree-tos --no-eff-email --redirect \
+  -m admin@example.com -d news.example.com
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Проверка (R01.1): адрес без IP и порта, валидный сертификат, редирект.
+
+```bash
+curl -sSI http://news.example.com | head -3      # 301 → https
+curl -sSI https://news.example.com | head -3     # 200
+echo | openssl s_client -connect news.example.com:443 -servername news.example.com 2>/dev/null \
+  | grep 'Verify return code'                     # 0 (ok)
+```
+
+В `app/.env` адрес дашборда задаёт `DIGEST_DASHBOARD_URL=https://news.example.com`
+— он попадает в футер клиентского дайджеста.
+
+---
+
+## 8. Cron
+
+**Ждёт G02.**
+
+```bash
+sudo env APP_DIR=/srv/news-agent APP_USER=deploy bash scripts/deploy/cron.sh
+```
+
+Ставится `/etc/cron.d/news-agent` — два задания и `NODE_EXTRA_CA_CERTS`, если
+сертификаты установлены:
+
+| Время (UTC) | Команда | Лог |
+|---|---|---|
+| 06:00 | `npx tsx scripts/hermes/daily-digest.ts` | `/var/log/news-agent/digest.log` |
+| 03:30 | `bash scripts/backup-offsite.sh` | `/var/log/news-agent/backup.log` |
+
+Сервер живёт в UTC (§3), поэтому 06:00 UTC = 09:00 МСК. Удалить расписание:
+`sudo bash scripts/deploy/cron.sh --remove`.
+
+Проверка дайджеста без отправки (stub-режим включается сам, когда нет токена или
+получателей):
+
+```bash
+cd /srv/news-agent/app && sudo -u deploy npx tsx scripts/hermes/daily-digest.ts
+```
+
+---
+
+## 9. Бэкап вне сервера и проверка восстановления
+
+**Загрузка и восстановление ждут G02 (нужны аккаунт хранилища и сервер);
+локально проверен отказ без настроек.**
+
+Прошлый сервер потерял данные вместе с собой, потому что копия лежала на нём же.
+Поэтому дамп уезжает в S3-совместимое хранилище, и скрипт **не сообщает успех**,
+если хранилище не настроено (код возврата 78).
+
+```bash
+# Сухой прогон: проверка конфигурации без дампа и загрузки.
+sudo -u deploy bash scripts/backup-offsite.sh --dry-run
+
+# Настоящий бэкап (cron делает это каждую ночь).
+sudo -u deploy bash scripts/backup-offsite.sh
+```
+
+Проверка ночного задания утром:
+
+```bash
+cat /var/log/news-agent/backup.log | tail -20
+sudo -u deploy cat /home/deploy/.news-agent/last-backup.json   # дата, размер, sha256, объект
+```
+
+Переменные (`app/.env`): `BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`,
+`BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY`, опционально
+`BACKUP_S3_REGION`, `BACKUP_S3_PREFIX`, `BACKUP_STATUS_FILE`. Имена — в
+`app/.env.example`, значения пишет владелец.
+
+### Процедура восстановления (выполняется и проверяется после G02)
+
+```bash
+cd /srv/news-agent
+
+# 1. Посмотреть, что лежит в хранилище (тот же доступ, что у бэкапа).
+sudo -u deploy bash scripts/backup-offsite.sh --list
+
+# 2. Скачать нужный дамп в /srv/restore и проверить архив.
+sudo bash scripts/backup-offsite.sh --fetch <файл из списка>
+gunzip -t /srv/restore/<файл из списка>
+
+# 3. Восстановить в ЧИСТУЮ базу, а не поверх рабочей.
+sudo -u postgres createdb --owner science_agent news_agent_restore_check
+gunzip -c /srv/restore/<файл из списка> \
+  | sudo -u postgres psql news_agent_restore_check
+
+# 4. Сверить объёмы с рабочей базой.
+sudo -u postgres psql news_agent_restore_check -c \
+  "select count(*) from news; select count(*) from pipeline_state;"
+
+# 5. Только после сверки — переключение (остановить цикл, переименовать базы).
+```
+
+`--list` и `--fetch` читают те же `BACKUP_S3_*` из `app/.env`, что и загрузка:
+отдельный профиль rclone на сервере заводить не нужно.
+
+Проверка считается пройденной, когда шаги 1–4 выполнены на чистой базе и числа
+совпали. До G02 эта строка — открытый пункт, а не «сделано».
+
+---
+
+## 10. Закрытие сервера
+
+**Ждёт G02.**
+
+```bash
+sudo bash scripts/deploy/harden.sh --user deploy
+```
+
+Скрипт делает пять вещей: вход по SSH только ключом, `ufw` (22/80/443, остальное
+закрыто), `fail2ban` для sshd, блокировка root-пароля, автообновления
+безопасности. Он **отказывается** выключать парольный вход, если у выбранного
+sudo-пользователя нет непустого `~/.ssh/authorized_keys`, — иначе сервер остался
+бы без входа.
+
+Чек-лист (R03.1), проверять из **второго** терминала, не закрывая первый:
+
+```bash
+ssh -p 22 deploy@news.example.com                                   # ключ работает
+ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no deploy@news.example.com  # должен отказать
+sudo sshd -T | grep -E 'passwordauthentication|permitrootlogin'     # no / prohibit-password
+sudo ufw status verbose                                             # 22, 80, 443
+sudo fail2ban-client status sshd
+sudo passwd -S root                                                 # L (locked)
+sudo ss -tlnp | grep -E ':(3000|5432)'                              # 3000/5432 — только 127.0.0.1
+```
+
+---
+
+## 11. Первый выпуск: что проверить
+
+**Ждёт G02.**
+
+1. `/health` — 200; `pm2 status` — оба процесса `online`.
+2. Один цикл вручную. Сначала остановить PM2-цикл, чтобы не запустить два
+   параллельно (`pm2 stop hermes-ralph-loop`), затем в отдельном терминале:
+   `cd /srv/news-agent/app && bash scripts/hermes/ralph-loop.sh`, после проверки
+   — `pm2 start hermes-ralph-loop`.
+   В логе: `Configuration OK`, `Cycle #1 started`, `Manifest: N articles within
+   the day budget`, `deploy-ready: published=N/8 today`.
+3. Счётчики цикла: `select cycle_id, stage, metrics from pipeline_state order by created_at desc limit 1;`
+   В `metrics` — `collected / prefiltered / judged / approved / published` и
+   `rejectedByReason`, `usage`.
+4. Дашборд: вход по выданному паролю, карточки с разделами и направлениями.
+5. Дайджест: `cd /srv/news-agent/app && sudo -u deploy npx tsx scripts/hermes/daily-digest.ts`.
+   Владелец получает служебный отчёт и копию; клиент — только чистый выпуск.
+
+---
+
+## 12. Обновление
+
+```bash
+cd /srv/news-agent
+sudo -u deploy git pull --ff-only
+cd app
+sudo -u deploy npm ci
+sudo -u deploy npm run check && sudo -u deploy npx vitest run
+sudo -u deploy npm run build
+sudo -u deploy npm run db:migrate
+sudo -u deploy pm2 restart /srv/news-agent/ecosystem.config.cjs --update-env
+```
+
+Перед обновлением — бэкап (`sudo -u deploy bash /srv/news-agent/scripts/backup-offsite.sh`).
+Проверки документации: `cd app && npx tsx ../scripts/check-docs.ts` и
+`npx tsx ../scripts/check-env-example.ts` (§14).
+
+---
+
+## 13. Legacy: Docker и корневой `.env.example`
+
+`docker-compose.yml` и `Dockerfile` остались от прежней схемы. В контейнере
+поднимается только веб (`node dist/boot.js`); конвейер `hermes-ralph-loop` в
+compose отсутствует, `yt-dlp`, `ffmpeg` и `deno` в образ не ставятся, а `cron`
+для дайджеста и бэкапа не настраивается. Прод так не поднимается.
+
+Корневой `.env.example` относится к той же legacy-схеме (MCP-ключи, docker-
+переменные `POSTGRES_PASSWORD`, `DOMAIN`). Контракт приложения — `app/.env.example`;
+`scripts/check-env-example.ts` сверяет код именно с ним.
+
+Переменные `APP_ID`, `KIMI_AUTH_URL`, `KIMI_OPEN_URL` — остатки Kimi OAuth,
+который удалён из кода: вход теперь email + пароль, JWT. Эти имена ничего не
+включают и оставлены только для совместимости со старым `.env`; новые
+развёртывания их не заполняют. `OWNER_UNION_ID` — не остаток: по нему
+`api/queries/users.ts` выдаёт роль `admin` владельцу, без него владелец войдёт
+как обычный пользователь.
+
+---
+
+## 14. Проверки, которые обязаны быть зелёными
+
+```bash
+cd app && npx tsc -b && npx vitest run          # типы и тесты (354 теста)
+cd /srv/news-agent
+bash -n scripts/deploy/install.sh && bash -n scripts/deploy/cron.sh \
+  && bash -n scripts/deploy/harden.sh && bash -n scripts/deploy/gigachat-certs.sh \
+  && bash -n scripts/deploy/check-gigachat.sh && bash -n scripts/backup-offsite.sh
+cd app && npx tsx ../scripts/check-env-example.ts   # код ↔ app/.env.example
+cd app && npx tsx ../scripts/check-docs.ts          # факты, пути, bash -n
+```
+
+`check-env-example.ts` падает, если код читает переменную, которой нет в
+`app/.env.example`, или пример объявляет переменную, которую никто не читает и
+которая не описана как исключение с причиной. `check-docs.ts` сверяет с кодом
+порог гейта, бюджет дня, id моделей по умолчанию, число разделов и направлений,
+порог уверенности судьи и лимиты дайджеста, проверяет существование каждого
+`scripts/…`, `app/…`, `docs/…` пути в документах и `bash -n` всех shell-скриптов.
+Таблица фактов живёт в `ARCHITECTURE.md` между маркерами `checked-facts`.
+
+---
+
+## 15. Точки отказа и что смотреть
+
+| Симптом | Где смотреть | Вероятная причина |
+|---|---|---|
+| `/health` 503 | `pm2 logs news-agent-web`, `systemctl status postgresql` | база недоступна, неверный `DATABASE_URL` |
+| `/health` `degraded` | `pm2 logs` | LLM-провайдер недоступен или ключ не принят |
+| Нет выпуска | `/var/log/news-agent/hermes.err.log`, `pipeline_state.metrics` | судья всё отклонил, пустой сбор, бюджет исчерпан |
+| Дайджест не пришёл | `/var/log/news-agent/digest.log` | нет `TELEGRAM_BOT_TOKEN`/chat_id, 403 от бота |
+| Нет бэкапа | `/var/log/news-agent/backup.log`, `/home/deploy/.news-agent/last-backup.json` | хранилище не настроено, нет `rclone`, истёк ключ |
+| GigaChat 401/403 | `scripts/deploy/check-gigachat.sh` | ключ/scope; фолбэк не поможет, это не квота |
+| Карточки не видны | логи web, `/health` | не применены сиды или миграции |
+
+---
+
+## 16. Что осталось за G02
+
+Выполнение §2–§12 на живом сервере. До получения адреса, домена, ключей GigaChat,
+Telegram-получателей и аккаунта хранилища проект остаётся с **готовым runbook и
+проверенными скриптами без выполнения**. Это записано манифестом как G02, и
+снимает ограничение только владелец.

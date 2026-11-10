@@ -1,244 +1,208 @@
-# News Processor — Ralph Loop (v3: Single Agent, No Translation)
+# News Processor — Ralph Loop (v2: один выпуск в сутки)
 
-Этот файл описывает алгоритм обработки новостей для Hermes Agent.
-Hermes выполняет **Ralph Loop** — автономный цикл сбора, оценки и обработки
-3–5 лучших новостей в день в двух потоках: **ИИ-инструменты (Tech)** и
-**научные открытия с применением ИИ (Science)**.
+Алгоритм конвейера для Hermes Agent. Один запуск в UTC-сутки: собрать,
+отфильтровать дешёвым префильтром, проверить LLM-судьёй, уложиться в дневной
+бюджет, сделать русские выжимки и опубликовать **один** выпуск. Утром — дайджест
+клиенту и служебный отчёт владельцу.
 
-> Ключевые принципы v3:
-> - **Token-optimized:** ОДИН вызов Zen API на статью — one-shot саммари
->   возвращает сразу русский заголовок + русскую выжимку (JSON).
->   Шаг перевода (translate-title, полный перевод) **упразднён**.
-> - **Single Agent:** строгая последовательная обработка — одна статья за раз,
->   никакого fan-out/параллелизма агентов.
-> - Оценка строго **data-driven** (v2): LLM не оценивает «научную ценность».
+> Принципы v2:
+> - **Один выпуск в сутки.** `pipeline_state.cycleId = cycle-YYYY-MM-DD`; после
+>   `stage=published` цикл спит до следующих UTC-суток. Повтор — только после сбоя.
+> - **Две ступени отбора.** Префильтр (без сети и токенов) отсеивает мусор,
+>   затем судья (LLM) решает тему и направление по заголовку и лиду. Судья
+>   fail-closed: невалидный JSON или `confidence < 0.7` = отказ.
+> - **Бюджет дня — жёсткий.** `DAILY_BUDGET` (5..10, по умолчанию 8) проверяется
+>   и при отборе, и при публикации.
+> - **Два провайдера.** GigaChat основной, OpenCode Go — фолбэк только на
+>   quota/transient; при 401/403 фолбэка нет, это ошибка конфигурации.
+> - **Клиент не видит служебку.** Клиентский выпуск и служебный отчёт — разные
+>   функции и разные получатели.
 
-## Архитектура конвейера
-
-```
-collect-dual.ts → evaluate-news.ts → manifest-gen.ts → fetch → save-summary (1 Zen call) → deploy-ready
-  Dual pipeline     Data-driven +      approved           per-article, SEQUENTIAL, no translation
-  + Dedup Guard     AI-gate (≥50)      pending only
-```
-
-Все скрипты расположены в `scripts/hermes/`.
-Подключение к БД: `api/queries/connection.ts`. AI-вызовы: `api/ai/zenClient.ts`.
+Разделы и направления — данные, а не код отбора:
+`app/scripts/hermes/topics.ts` (3 раздела, 6 направлений). Словарь —
+`CONTEXT.md`, архитектура — `ARCHITECTURE.md`.
 
 ---
 
-## Шаг 0a: Dual Pipeline Collection (`collect-dual.ts`)
+## Конвейер
+
+```
+collect-dual.ts → evaluate-news.ts → manifest-gen.ts → fetch-article.ts
+                → save-summary.ts (1 вызов LLM) → deploy-ready.ts (1 публикация/сутки)
+                → daily-digest.ts (cron 06:00 UTC)
+```
+
+Каждый шаг — отдельный процесс `npx tsx`, строго последовательно, без fan-out.
+Оркестратор — `app/scripts/hermes/ralph-loop.sh`.
+
+### Шаг 0: состояние дня (`publish-budget.ts --status`)
+
+```bash
+cd app && npx tsx scripts/hermes/publish-budget.ts --status
+```
+
+JSON: `cycleId`, `stage`, `released`, `published`, `budget`, `metrics`. Если
+`released=true`, цикл спит до полуночи UTC. Битый `DAILY_BUDGET` или недоступная
+БД — выход на старте (`exit 1`), а не работа на молчаливом дефолте.
+
+### Шаг 1: сбор (`collect-dual.ts`)
 
 ```bash
 cd app && npx tsx scripts/hermes/collect-dual.ts --stream both   # tech|science|both
 ```
 
-**Tech-поток (ИИ-инструменты):**
-- Официальные блоги (RSS): OpenAI, Anthropic, Hugging Face, Google AI
-- Тренды через лёгкие JSON-API (без браузера, без скриншотов, без токенов):
-  - **Hacker News** — Algolia API (`hn.algolia.com`), посты >100 points за 48ч
-  - **GitHub Trending** — REST search API: новые AI/LLM-репозитории >300 звёзд за 3 дня
-  - **Reddit** — отключён по политике (429 и шумные голоса); discovery через HN/GitHub
-- **YouTube:** смешанный RSS + явный обход настроенных вкладок `/videos` и
-  `/shorts`. Обычные ролики не вытесняются всплеском Shorts.
+- **Текст:** RSS-блоги (OpenAI, Hugging Face, Google AI, MIT TR, Naked Science),
+  GitHub, Hacker News (Algolia), arXiv, журналы. **Reddit отключён** (429 и шум).
+- **YouTube:** 13 курируемых каналов, RSS + обход `/videos` и `/shorts`
+  (`YOUTUBE_TAB_ITEMS`, по умолчанию 3 на вкладку).
+- **Time Guard fail-closed:** нет даты или старше 72 часов → не вставляется.
+- **Дедуп:** URL + семантическая схожесть заголовков (`dedup.ts`, 0.85).
+- **Лид сохраняется** в `news.summary` (RSS-описание) — по нему работают
+  префильтр и судья.
 
-**Science-поток (лёгкий RSS/HTTP-парсинг):**
-- Tier-1 журналы: Nature, Science, Lancet, Cell
-- MIT Technology Review, arXiv API, Naked Science (ru)
-
-**Semantic Deduplication Guard** (модуль `dedup.ts`) — строго ДО вставки:
-1. Проверка по URL — есть в БД → skip.
-2. Levenshtein-схожесть заголовка (нормализация: lowercase, без стоп-слов)
-   с последними 20 статьями в БД; порог **0.85** → skip.
-   Один инфоповод из разных СМИ = одна новость.
-
-Кандидаты вставляются со `status='pending'`, `score=NULL`, предсобранными
-метриками источника в `metrics` (githubStars, hnPoints, redditUps).
-
-**Routing при вставке:** единый резолвер `api/lib/section-resolve.ts`
-(invention ∧ ИИ > science ∧ ИИ > ai-news), затем переоценивается на этапах
-evaluate-news и save-summary по мере появления полного текста — перенос
-двунаправленный. `isScience=true`, `scienceField` и `section='science'` выставляются
-только при одновременном наличии явного AI/ML-сигнала (ИИ, AI, machine/deep
-learning, neural network, LLM и т.п.) и научного домена. Источник научного RSS
-сам по себе больше не достаточен; tech-поток и общенаучные материалы без AI
-получают `isScience=false`, `section='ai-news'`. Для прошедших gate сохраняются
-научные поля и тип классификации.
-
-**STRICT Time Guard (fail-closed):** абсолютно ВСЕ кандидаты (RSS, GitHub, HN,
-Reddit, PubMed) обязаны иметь валидную дату публикации/создания **не старше
-72 часов**. Кандидаты без даты или с невалидной датой отбраковываются ДО
-дедупа и скоринга — старый контент физически не может попасть в БД.
-
-## Шаг 0b: Data-Driven Scoring (`evaluate-news.ts`)
+### Шаг 2: отбор и оценка (`evaluate-news.ts`)
 
 ```bash
-cd app && npx tsx scripts/hermes/evaluate-news.ts --batch --daily-cap 5
+cd app && npx tsx scripts/hermes/evaluate-news.ts --batch
+cd app && npx tsx scripts/hermes/evaluate-news.ts --id 123     # одна статья вручную
 ```
 
-LLM **не участвует** в оценке. Скрипт собирает конкретные цифры через
-HTTP/JSON-API (GitHub REST, HN Algolia, Altmetric API, DOI из
-контента) и детерминированно суммирует баллы.
+Порядок внутри (нарушать нельзя — он же контракт тестов):
 
-**Критерии Tech (ИИ-инструменты) — многоуровневая матрица:**
-| Метрика | Баллы |
-|---|---|
-| GitHub Trending Top-10 | +40 |
-| GitHub Trending Top-50 | +25 |
-| GitHub stars > 10 000 | +30 |
-| GitHub stars > 1 000 | +20 |
-| GitHub stars > 500 и возраст репо < 1 месяца | +25 |
-| HN > 100 апвоутов | +30 |
-| HN > 30 апвоутов | +15 |
-| Трендовый бонус: MCP / AI Agent / RAG | +15 |
-| Открытая лицензия MIT / Apache-2.0 | +10 |
+1. **Префильтр** (`prefilter.ts`) по заголовку и лиду: `keep` или причина
+   `empty-title | unknown-date | stale | no-ai-signal`.
+2. **Судья** (`judge.ts`) по заголовку и лиду: JSON
+   `{onTopic, section, direction, confidence, reason}`; вердикт пишется в
+   `news.metrics.judge`. Второй контрольный вопрос — только для `onTopic=true` и
+   `confidence >= 0.7`.
+3. **Бюджет скачиваний:** остаток `DAILY_BUDGET` на сегодня; страница качается
+   только для прошедших шаги 1–2. Лишние остаются `pending` с вердиктом
+   (`deferred-budget`) — судья за них повторно не платит.
+4. **Скоринг** без LLM (источник, GitHub/HN, arXiv, altmetric, YouTube) и решение
+   по гейту `SCORE_GATE` (50): `approved` или `rejected-low-score`.
 
-> Баллы суммируются — один проект может получить и trending-баллы, и баллы
-> за звёзды, и трендовый бонус. Главное — не абсолютные цифры, а скорость
-> роста и актуальность темы.
+Итог шага — счётчики в `pipeline_state.metrics`: `collected`, `prefiltered`,
+`judged`, `approved`, `published`, `rejectedByReason` (`prefilter:*`, `judge:*`,
+`score:*`, `publish:*`, `provider:*`), `usage` (токены).
 
-**Критерии Science:**
-| Метрика | Баллы |
-|---|---|
-| Tier-1 источник (Nature, Science, Lancet, Cell, OpenAI/Anthropic/Google/DeepMind блог) | +45 |
-| Tier-2 источник (MIT Tech Review, HF Blog, arXiv*, Naked Science, NeurIPS/CVPR/ICLR) | +30 |
-| Явный ИИ/ML-сигнал в научной ветке | +20 |
-| arXiv-препринт + открытый код/модель/датасет | +35 |
-| arXiv-препринт без открытого кода | +10 |
-| Altmetric score ≥ 50 | +20 |
-| Тематический бонус: ИИ × химия/материалы/биология/медицина/физика | +15 |
-
-**Жёсткий ИИ-гейт:** статья без явного ИИ/ML-сигнала в собственном тексте
-отклоняется (`no-ai-signal`) независимо от баллов; curated AI-источники
-(блоги OpenAI/HF/Google, GitHub trending, HN, dedicated AI YouTube-каналы)
-освобождены как «AI by construction».
-
-**Gate:** в дашборд проходят только статьи с баллом **>= 50**
-(единая константа `SCORE_GATE` в `scripts/hermes/pipeline-config.ts`, общий
-источник правды для evaluate-news и manifest-gen). Релевантность обеспечивают
-ИИ-гейты классификации, а не порог баллов.
-**Daily cap:** по умолчанию отключён (`HERMES_DAILY_CAP=0` = безлимит); положительное значение включает квоту N одобренных в сутки (UTC).
-Решение и доказательная база (`scoreBreakdown`, метрики) сохраняются в
-`news.score` / `news.metrics`; отбракованные → `status='rejected'`.
-
-Для YouTube действует transcript-first gate: до одобрения проверяется реально
-доступный native/auto transcript, затем Whisper fallback при наличии ключа.
-Без транскрипта видео получает score 0 и сразу отклоняется. Ролики длиной
-4–45 минут получают +10 к рангу. У Shorts нет искусственного дневного лимита:
-каждый полезный Short с транскриптом может пройти gate. Результат preflight
-сохраняется в `originalContent`, поэтому Whisper не вызывается повторно.
-Проверенный транскрипт не пропускается через HTML-антиспам-фильтр повторов:
-естественные речевые рефрены не считаются мусорной веб-разметкой.
-
-## Шаги 1–3: Обработка одобренных статей (строго последовательно)
+### Шаг 3: манифест (`manifest-gen.ts`)
 
 ```bash
-# Манифест одобренных (pending + score >= SCORE_GATE + content IS NULL)
-npx tsx scripts/hermes/manifest-gen.ts --output /tmp/hermes-manifest.json --limit 50
-
-# По каждой статье из манифеста — ОДНА за раз, без параллелизма:
-npx tsx scripts/hermes/fetch-article.ts --url "$URL"       # 3a: fetch+clean (probe)
-npx tsx scripts/hermes/save-summary.ts --id "$ID" --auto   # 3b: ONE Zen call → RU title + RU summary
-npx tsx scripts/hermes/deploy-ready.ts --batch-size 1      # 3c: публикация (summarized → published)
+cd app && npx tsx scripts/hermes/manifest-gen.ts --output /tmp/hermes-manifest.json --limit 50
 ```
 
-**save-summary.ts (auto)** вызывает `summarizeOneShot()` из `zenClient.ts`:
-единственный chatCompletion с JSON-ответом `{"title_ru", "summary"}`.
-Сохраняет: `title` (RU), `summary` (RU), `originalContent`, `status='summarized'`,
-`modelUsed`. Перевод заголовка и полный перевод статей больше НЕ выполняются —
-в UI вместо этого кнопка «Перейти к источнику» (открывает `originalUrl`).
+Только `status='pending'`, `content IS NULL`, `score >= SCORE_GATE`; берутся
+лучшие в пределах `DAILY_BUDGET` (балл → уверенность судьи → свежесть). Платить за
+выжимки того, что не опубликуется, — та самая работа впустую.
 
-Если манифест пуст — цикл завершается, ожидание следующего запуска.
+### Шаги 4–6: по статье, строго по одной
+
+```bash
+cd app && npx tsx scripts/hermes/fetch-article.ts --url "$URL"
+cd app && npx tsx scripts/hermes/save-summary.ts --id "$ID" --auto
+# публикация одна на весь цикл:
+cd app && npx tsx scripts/hermes/deploy-ready.ts
+```
+
+- `fetch-article.ts` — текст статьи (cheerio) или транскрипт YouTube; меньше 100
+  символов → код 1 и запись сбоя.
+- `save-summary.ts` — **один** вызов LLM: русский заголовок + выжимка (JSON),
+  `status='summarized'`, `modelUsed`; без шага перевода.
+- `deploy-ready.ts` — единственная публикация: `planPublication()` проверяет
+  зафиксированный выпуск дня и остаток бюджета, пишет `status='published'`,
+  `platformPublishedAt` и счётчики. Отказ — с причиной
+  (`already-published-today`, `daily-budget-exhausted`, `no-ready-articles`).
+
+### Шаг 7: дайджест (`daily-digest.ts`, cron 06:00 UTC)
+
+```bash
+cd app && npx tsx scripts/hermes/daily-digest.ts
+```
+
+Выборка — опубликованное за 24 часа. Клиент (`TELEGRAM_CLIENT_CHAT_IDS`) получает
+только чистый выпуск; владелец (`TELEGRAM_OWNER_CHAT_IDS`) — копию и служебный
+отчёт; служебный уходит первым. Без токена/получателей — stub-режим с печатью в
+лог, а не «отправлено».
+
+---
 
 ## Запуск всего цикла
 
 ```bash
 cd app && bash scripts/hermes/ralph-loop.sh
-# Под PM2: процесс hermes-ralph-loop (см. ecosystem.config.cjs)
-# Интервал между циклами: LINEAR_WORKER_INTERVAL_MS (default 600000 = 10 мин)
-# Дневной лимит: HERMES_DAILY_CAP (default 0 = безлимит)
+# PM2: процесс hermes-ralph-loop (ecosystem.config.cjs)
+# Пауза повтора после сбоя: LINEAR_WORKER_INTERVAL_MS (в примере окружения 600000 = 10 мин;
+#   без переменной loop берёт 900000 = 15 мин). Это НЕ интервал выпусков.
 ```
 
-## Статусы статей в БД
+`HERMES_DAILY_CAP` удалён: бюджет дня задаётся только `DAILY_BUDGET`.
+
+## Статусы статей
 
 ```
-(pending, score=NULL)  →  evaluate: ИИ-гейт & score≥50 & slot → pending (approved)
-                      ↘  нет ИИ-сигнала / score<50 / нет слота → rejected
-approved pending → summarized (RU title+summary, 1 Zen call) → published
-                 ↘ fetch/transcript failure → retry (до 3 раз) → rejected
+pending (score NULL) → префильтр → судья → бюджет → балл
+                     ↘ отказ (rejected) с причиной в metrics
+approved pending → summarized (RU заголовок + выжимка) → published
+                 ↘ сбой fetch/транскрипта → повтор (до 3) → rejected
 ```
 
 | Статус | Описание |
-|--------|----------|
-| `pending` + score NULL | Собран коллектором, ждёт оценки |
-| `pending` + score ≥ 50 | Одобрен скорингом (+ИИ-гейт), ждёт обработки |
-| `rejected` | Нет ИИ-сигнала, не прошёл gate 50 или дневной лимит |
-| `summarized` | RU заголовок + RU саммари получены за 1 вызов Zen |
-| `published` | Видна пользователям в дашборде |
-
-> Статус `translated` упразднён (v3): шаг перевода удалён из конвейера.
+|---|---|
+| `pending` + `score=NULL` | Собран, ждёт оценки |
+| `pending` + `score >= 50` | Одобрен, ждёт выжимки |
+| `pending` + вердикт, `deferred-budget` | Одобрен судьёй, но не влез в бюджет скачиваний |
+| `rejected` | Отказ префильтра/судьи/гейта/лимита; причина в `metrics` |
+| `summarized` | Русский заголовок и выжимка готовы |
+| `published` | Виден клиенту, попадает в дайджест |
 
 ## Обработка ошибок
 
-| Скрипт | Тип ошибки | Действие |
-|--------|-----------|----------|
-| collect-dual | RSS/API недоступен | Пропустить источник, продолжить |
-| collect-dual | Дубликат (URL/semantic) | Skip, счётчик duplicates |
-| evaluate-news | Метрика недоступна | Метрика = null, 0 баллов за критерий |
-| evaluate-news | Нет ИИ-сигнала / score < 50 / нет слота | status='rejected' |
-| manifest-gen | Пустой манифест | Завершить цикл (success) |
-| fetch-article | YouTube без транскрипта | Сразу `rejected`, без вызова Zen |
-| fetch-article | HTTP/extract error / < 100 chars | Счётчик в `metrics.processingFailures`; после 3 попыток → `rejected` |
-| fetch-article | Nature с закрытым body | Селекторы article-body; fallback на meta description |
-| save-summary | Zen unavailable / no JSON | Оставить `pending`, повторить позже; не смешивать с ошибками контента |
-| deploy-ready | DB error | Залогировать, продолжить |
+| Шаг | Ошибка | Действие |
+|---|---|---|
+| collect-dual | фид/API недоступен | пропустить источник, писать `source_health`, продолжить |
+| collect-dual | дубликат | skip, счётчик |
+| prefilter | пустой заголовок, нет даты, старше 72 ч | отказ с причиной |
+| judge | невалидный JSON / `confidence < 0.7` | отказ (fail-closed), `metrics.judge.reason` |
+| провайдер | 429/5xx/timeout | переход на OpenCode Go (тот же формат ответа) |
+| провайдер | 401/403 | ошибка конфигурации, фолбэка нет, алерт владельцу |
+| evaluate-news | метрика недоступна | критерий = 0, остальное считается |
+| manifest-gen | пустой манифест | цикл завершается без выпуска |
+| fetch-article | нет текста/транскрипта | `metrics.processingFailures`, после 3 попыток `rejected` |
+| save-summary | провайдер отказал | повтор позже, счётчик `provider:unavailable` |
+| deploy-ready | бюджет или выпуск дня | отказ с причиной, без публикации |
 
-## Конфигурация (env)
+## Конфигурация (имена; значения — только в `app/.env`)
 
-```env
-DATABASE_URL=postgresql://postgres:***@localhost:5432/science_agent
-ZEN_BASE_URL=https://opencode.ai/zen/v1
-ZEN_API_KEY=sk-***
-ZEN_MODEL=deepseek-v4-flash-free
-# OpenCode Go (paid): when a Go key is set, the pipeline uses the Go endpoint
-# instead of the legacy Zen pool.
-ZEN_GO_API_KEY=
-ZEN_GO_BASE_URL=https://opencode.ai/zen/go/v1
-ZEN_GO_MODEL=mimo-v2.5
-LINEAR_WORKER_INTERVAL_MS=600000   # интервал цикла Ralph Loop
-HERMES_DAILY_CAP=0                 # 0 = безлимит; N включает дневную квоту
+```ini
+DATABASE_URL=postgresql://…
+JWT_SECRET=                      # или legacy APP_SECRET
+DAILY_BUDGET=                    # 5..10, пусто = 8
+GIGACHAT_CLIENT_ID=
+GIGACHAT_CLIENT_SECRET=
+GIGACHAT_SCOPE=                  # GIGACHAT_API_PERS
+GIGACHAT_MODEL=                  # GigaChat
+NODE_EXTRA_CA_CERTS=             # российские корневые сертификаты для Node
+ZEN_GO_API_KEYS=                 # фолбэк: OpenCode Go
+ZEN_GO_MODEL=                    # mimo-v2.5
+LINEAR_WORKER_INTERVAL_MS=       # пауза повтора после сбоя
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CLIENT_CHAT_IDS=
+TELEGRAM_OWNER_CHAT_IDS=
+DIGEST_DASHBOARD_URL=
 ```
 
-## Go endpoint и политика cheapest-модели
+Полный контракт — `app/.env.example`, его сверяет с кодом
+`scripts/check-env-example.ts`. Замена ключа без рестарта:
+`scripts/update-key.sh GIGACHAT_CLIENT_SECRET` (значение только из stdin).
 
-Пайплайн ходит в Zen через `api/ai/zenClient.ts`. Если задан Go-ключ
-(`ZEN_GO_API_KEYS` — пул через запятую, либо legacy одиночный
-`ZEN_GO_API_KEY`), все chat completions идут на `ZEN_GO_BASE_URL`
-(default `https://opencode.ai/zen/go/v1`) с Go-ключом и моделью
-`ZEN_GO_MODEL` (default `mimo-v2.5`) — с той же ротацией ключей при
-quota-exhaustion, что и legacy-пул. Без Go-ключа работает legacy Zen-пул
-(`ZEN_BASE_URL` + `ZEN_API_KEYS`/`ZEN_API_KEY` + `ZEN_MODEL` +
-`ZEN_FALLBACK_MODELS`) без изменений. Go требует заголовки `x-opencode-session` (стабильный id на разговор: save-summary передаёт `hermes-<articleId>`, иначе дефолт на процесс) и `User-Agent` (`AGENT_UA`, default `science-agent/2.0`); `ZEN_GO_SESSION_ID` — опциональный глобальный id/префикс.
-
-> Диагностика: HTTP 403 с сообщением об обязательной активной OpenCode Go
-> подписке не является quota-истощением. Такой ответ не переводит ключ в
-> cooling и не включает fallback на legacy-пул; `save-summary` выводит
-> безопасный диагностический HTTP-класс без ключей.
-
-Политика cheapest-модели: в проде пинится самая дешёвая модель актуального
-Go-каталога (сегодня — `mimo-v2.5`). Порядок предпочтений задан в
-`api/ai/goModels.ts` (`CHEAPEST_GO_MODELS_FIRST`, резолвер
-`resolveCheapestGoModel`). Перед деплоем оператор проверяет каталог и пинит
-модель одной командой:
+## Проверки
 
 ```bash
-cd app && npx tsx scripts/hermes/cheapest-go-model.ts   # JSON {model, available, source} в stdout
+cd app && npx tsc -b && npx vitest run
+cd app && npx tsx ../scripts/check-env-example.ts
+cd app && npx tsx ../scripts/check-docs.ts
 ```
 
-Выведенный `model` прописывается как `ZEN_GO_MODEL` на сервере. Каталог
-моделей (без авторизации): `https://opencode.ai/zen/go/v1/models`.
-
-## Зависимости
-
-- Node.js + tsx, PostgreSQL, Zen API (OpenAI-compatible)
-- `rss-parser` (RSS/Atom), `cheerio` (извлечение ссылок/DOI), `drizzle-orm`
-- Внешние read-only API: GitHub REST, HN Algolia, Altmetric
+Сквозной сценарий на живом сервере и порядок развёртывания — `docs/DEPLOY.md`.
+Тесты конвейера — `app/scripts/hermes/*.test.ts` (`pipeline-budget`, `judge`,
+`prefilter`, `relevance-set`, `digest-format`, `chain`).

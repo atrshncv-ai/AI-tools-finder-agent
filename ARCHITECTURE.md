@@ -1,287 +1,361 @@
-# ARCHITECTURE.md — Технический паспорт продукта
+# ARCHITECTURE.md — технический паспорт системы
 
-> **Продукт:** ИИ-новостной агент «Hermes» — автономная система сбора, оценки и публикации новостей об ИИ-инструментах и научных открытиях с закрытым доступом.
-> **Статус:** Production (финальная форма). Документ актуализирован после эпика мультимодального конвейера и замены авторизации.
-> **Последнее обновление:** 2026-07-15.
+> **Продукт:** «Научный агент» — закрытый дашборд и ежедневный Telegram-выпуск
+> ИИ-новостей для одного заказчика.
+> **Состояние:** v2 на новом стеке, код и документы готовы, развёртывание ждёт G02
+> (адрес сервера и доступы). Актуально на 2026-11-10.
+> **Проверено:** 354 теста в 34 файлах, `tsc -b` без ошибок, `scripts/check-docs.ts`
+> и `scripts/check-env-example.ts` зелёные.
 
----
-
-## 1. Обзор системы
-
-Сервис непрерывно собирает новости из текстовых источников (RSS-блоги, GitHub, HackerNews, Reddit, arXiv, научные журналы) и видео-источников (курируемые YouTube-каналы, включая Shorts), оценивает их детерминированным скорингом, суммаризирует через LLM на русском языке и публикует в закрытом веб-дашборде. Каждое утро администратор получает Telegram-дайджест свежих публикаций.
-
-Ключевые свойства production-системы:
-
-- **Полная автономность** — цикл работает 24/7 под PM2 без участия оператора.
-- **Мультимодальность** — единый конвейер обрабатывает и тексты, и видео (субтитры → аудио → Whisper).
-- **Нулевой дневной лимит** — публикуются **все** материалы с баллом >= 50 и явным ИИ-сигналом.
-- **Анти-галлюцинационная защита** — жёсткая привязка URL к первоисточнику, LLM никогда не генерирует ссылки.
-- **Закрытый доступ** — Login/Password, JWT в httpOnly-куки, публичной регистрации нет.
+Этот документ описывает **то, что запускается**, а не то, что когда-то
+планировалось. Если цифра в тексте расходится с кодом — дефект; цифры из
+таблицы «Паспорт фактов» сверяются автоматически.
 
 ---
 
-## 2. Стек технологий
+## 1. Что делает система
+
+Раз в сутки агент собирает материалы из RSS, GitHub, Hacker News, arXiv, журналов и
+курируемых YouTube-каналов, дешёвым детерминированным префильтром отбрасывает
+заведомый мусор, дорогим LLM-судьёй проверяет, что материал действительно про тему
+раздела и направления, оставляет лучшие по баллу в пределах дневного бюджета,
+делает русские выжимки и публикует **один выпуск**. Утром клиент получает чистый
+дайджест, владелец — его копию и отдельный служебный отчёт.
+
+Три раздела и шесть направлений науки — данные, а не код отбора: они живут в
+`app/scripts/hermes/topics.ts` (см. `docs/adr/0001-sections-and-directions.md`).
+
+---
+
+## 2. Стек
 
 | Слой | Технологии |
 |---|---|
-| **Frontend** | React 19, Vite, TypeScript, Tailwind CSS 4, Radix UI, TanStack Query, tRPC client, wouter |
-| **Backend** | Node.js 20, Hono (HTTP-сервер), tRPC 11 (типизированный API), jose (JWT), bcryptjs |
-| **База данных** | PostgreSQL 16 (Docker `science_agent_db`), Drizzle ORM, миграции `db/migrations` (актуально: 0007) |
-| **LLM** | Opencode Zen API (`opencode.ai/zen/v1`, OpenAI-compatible), модель `deepseek-v4-flash-free`, пул из 3 ключей с race-safe ротацией (`api/ai/zenClient.ts`) |
-| **Медиа-конвейер** | yt-dlp 2026.07.04 (+ Deno JS-runtime), ffmpeg 6.1.1, Whisper API (Groq `whisper-large-v3-turbo` / OpenAI-compatible) |
-| **Уведомления** | Telegram Bot API (`@instrument_assistant_bot`) |
-| **Инфраструктура** | Ubuntu 24.04, PM2 (`news-agent-web`, `hermes-ralph-loop`), cron, nginx, Docker |
-| **Качество** | Vitest (82 теста), `tsc -b`, ESLint, Prettier |
+| Frontend | React 19, Vite, TypeScript 5.9, Tailwind CSS 3.4, Radix UI, TanStack Query, tRPC client, react-router 7 |
+| Backend | Node.js 20, Hono, tRPC 11, jose (JWT HS256), bcryptjs |
+| База | PostgreSQL 16, Drizzle ORM, миграции `app/db/migrations` (0000–0011) |
+| LLM | цепочка провайдеров: GigaChat (основной) → OpenCode Go (фолбэк только на quota/transient) |
+| Медиа | yt-dlp, ffmpeg, Whisper API (Groq `whisper-large-v3-turbo`) для видео без субтитров |
+| Эксплуатация | Ubuntu 24.04, PM2 (`news-agent-web`, `hermes-ralph-loop`), nginx + certbot, cron, rclone |
+| Качество | Vitest (354 теста, 34 файла), `tsc -b`, ESLint, Prettier |
+
+Docker (`docker-compose.yml`, `Dockerfile`) — legacy-путь без конвейера и без
+`yt-dlp`/`ffmpeg`; прод так не поднимается (`docs/DEPLOY.md` §13).
 
 ---
 
-## 3. Высокоуровневая архитектура
+## 3. Паспорт фактов (сверяется `scripts/check-docs.ts`)
 
-```
-┌─────────────────────────── СБОР (collect-dual) ───────────────────────────┐
-│  Текст: RSS-блоги (OpenAI, HF, Google) · GitHub trending · HackerNews ·   │
-│  Reddit · arXiv · Nature/Science/Cell/MIT TR · Naked Science              │
-│  Видео: 13 курируемых YouTube-каналов (RSS + /videos + /shorts)           │
-└──────────────────────────────────┬────────────────────────────────────────┘
-                                   ▼
-┌────────────────── ОЦЕНКА (evaluate-news) ───────────────────┐
-│  Детерминированный скоринг: источник + AI-релевантность +    │
-│  свежесть + формат. Жёсткий ИИ-гейт. Гейт: score >= 50.       │
-└──────────────────────────────────┬───────────────────────────┘
-                                   ▼
-┌───────────────── ОБОГАЩЕНИЕ (manifest-gen → save-summary) ──┐
-│  Текст: fetch-article (cheerio) ─┐                           │
-│  Видео: субтитры yt-dlp → (нет субтитров) → ffmpeg → Whisper │
-│  ──► ОДИН вызов Zen LLM: RU title + summary (one-shot)       │
-└──────────────────────────────────┬───────────────────────────┘
-                                   ▼
-        ┌──────────────┬─────────────────────┬────────────────┐
-        ▼              ▼                     ▼                ▼
-   PostgreSQL     Web-дашборд        Telegram-дайджест    check-urls
-   (Drizzle)      (React+tRPC,       (cron 09:00 MSK)     (GC + DOI-проверка)
-                  JWT-защита)
-```
-
-**Оркестратор:** `scripts/hermes/ralph-loop.sh` (PM2 `hermes-ralph-loop`), строго последовательный цикл: collect → evaluate → manifest → (fetch → save-summary → deploy-ready), интервал `LINEAR_WORKER_INTERVAL_MS` (по умолчанию 10 мин).
-
----
-
-## 4. Мультимодальный конвейер (Dual Pipeline)
-
-Файл: `app/scripts/hermes/collect-dual.ts`. Два параллельных потока (`--stream both`), единая вставка в `news` с дедупликацией по `originalUrl` (unique index + 72h Time Guard + семантическая дедупликация `dedup.ts`).
-
-### 4.1. Текстовый поток
-
-- **RSS/Atom-блоги:** OpenAI, Hugging Face, Google AI, MIT Tech Review, Naked Science.
-- **GitHub:** trending-репозитории через API (`full_name`, `html_url`, description).
-- **HackerNews:** topstories через Algolia API.
-- **Reddit:** AI-сабреддиты (с обработкой 429).
-- **Наука:** Nature, Science, Cell, arXiv (AI-подборка, `max_results=25`).
-
-### 4.2. Видео-поток (YouTube)
-
-9 курируемых каналов (`YOUTUBE_CHANNELS`): 3 англоязычных (Two Minute Papers, Yannic Kilcher, Matthew Berman) + 6 русскоязычных (Vladimir AI Dev, Rinat Suleymanov, Duncan Rogoff, McDenil, Artemii Miller, DIY Smart Code).
-
-Двухуровневый сбор:
-
-1. **RSS** `youtube.com/feeds/videos.xml?channel_id=…` — быстрый путь.
-2. **Явный обход вкладок** (`youtube-transcript.ts: listChannelVideos()`):
-   смешанный RSS дополняется `yt-dlp --print id|title|upload_date` по
-   настроенным `/videos` и `/shorts`. Так длинные ролики не теряются при серии
-   Shorts. yt-dlp возвращает реальные даты загрузки для Time Guard.
-
-Каждое видео вставляется как статья: `originalUrl = https://www.youtube.com/watch?v=…` (всегда!), `source = youtube-<handle>`, язык — из конфигурации канала.
-
----
-
-## 5. Smart Fallback: Whisper-транскрибация
-
-Файл: `app/scripts/hermes/youtube-transcript.ts` (`fetchYoutubeTranscript()`).
-
-Каскад извлечения текста из видео:
-
-```
-yt-dlp --dump-json --js-runtimes deno
-  ├─ 1. Нативные субтитры (en → any-lang)
-  ├─ 2. Auto-generated captions
-  └─ 3. Нет субтитров или текст < 200 символов → WHISPER FALLBACK:
-        yt-dlp: скачать аудиодорожку
-        ffmpeg: конвертация → 16 kHz mono 32 kbps (оптимально для ASR)
-        POST ${WHISPER_API_BASE}/audio/transcriptions  (multipart)
-```
-
-- **Провайдеры:** `WHISPER_API_KEY` → `GROQ_API_KEY` → `OPENAI_API_KEY` (по приоритету); `WHISPER_API_BASE` по умолчанию — Groq `whisper-large-v3-turbo`.
-- **Graceful degradation:** без API-ключа fallback отключён, видео без субтитров получает `status='rejected'` (без бесконечных ретраев).
-- **Безопасность:** `execFile` без shell (нет command injection), таймаут 90 с, транскрипт помечается как untrusted-данные перед передачей в LLM.
-- **Требование среды:** yt-dlp требует `--js-runtimes deno` (установлен на сервере).
-- **Transcript-first gate:** видео без реально полученного transcript не
-  одобряется. Обычные ролики 4–45 минут получают приоритетный бонус, но Shorts
-  не имеют дневной квоты. Preflight transcript переиспользуется при summary.
-
----
-
-## 6. Скоринг и гейт публикации
-
-Файл: `app/scripts/hermes/evaluate-news.ts`. Полностью детерминированный (data-driven) скоринг — LLM на этом этапе не участвует.
-
-**Текстовые источники:** очки за авторитетность источника + AI-релевантность (ключевые термины EN/RU) + свежесть.
-
-**YouTube-источники:**
-| Бонус | Условие |
+<!-- checked-facts:start -->
+| Факт | Значение |
 |---|---|
-| +45 | Канал ∈ `DEDICATED_AI_CHANNELS` |
-| +15 | AI-тематика в заголовке/описании (`YOUTUBE_AI_TERMS`: Codex, Claude, GPT, DeepSeek, нейросеть, ИИ…); evidence = title + описание, полученное через yt-dlp metadata |
-| +10 | Формат видео |
-| **= 70** | >= гейта 50 → гарантированный проход для курируемых AI-каналов |
+| `SCORE_GATE` | 50 |
+| `DAILY_BUDGET` | 5..10, default 8 |
+| `GIGACHAT_MODEL` | GigaChat |
+| `ZEN_GO_MODEL` | mimo-v2.5 |
+| `ZEN_MODEL_LEGACY` | zen-default |
+| `DIRECTIONS` | 6 |
+| `SECTIONS` | 3 |
+| `JUDGE_CONFIDENCE_THRESHOLD` | 0.7 |
+| `MAX_ITEMS_PER_SECTION` | 7 |
+| `SUMMARY_MAX_CHARS` | 180 |
+<!-- checked-facts:end -->
 
-**Жёсткий ИИ-гейт:** без явного ИИ/ML-сигнала в тексте статья отклоняется (`no-ai-signal`) до начисления баллов; curated AI-источники освобождены.
-**Гейт:** `score >= SCORE_GATE (50)` — единая константа `pipeline-config.ts` для evaluate-news и manifest-gen. Прошедшие гейт остаются `status='pending'`; остальные — `rejected`. Строки с `score=NULL` исключаются SQL-семантикой NULL.
-**Дневной лимит:** `--daily-cap 0` (по умолчанию) = **безлимитно**; положительное значение включает ограничение обратно. В ralph-loop: `HERMES_DAILY_CAP:-0`.
-
----
-
-## 7. Инженерия безопасности и анти-галлюцинации
-
-### 7.1. Строгая привязка URL к первоисточникам
-
-- `originalUrl` **никогда не модифицируется** после сбора (инвариант, зафиксированный в `save-summary.ts`: «URL INTEGRITY»). Для YouTube это всегда ссылка на видео.
-- LLM получает только текст и возвращает только `titleRu` + `summary` — **генерация URL моделью запрещена** на уровне промпта и архитектуры (URL не проходит через LLM вообще).
-- БД: `CHECK`-констрейнт `news_original_url_http` (`^https?://`, миграция 0006) + unique index на `originalUrl`.
-- Фронт: `NewsCard` валидирует URL перед рендером ссылки.
-
-### 7.2. Защита от Prompt Injection
-
-- Тело статьи оборачивается в маркеры перед отправкой в LLM (`api/ai/zenClient.ts`):
-  ```
-  --- BEGIN ARTICLE (UNTRUSTED) ---
-  …контент…
-  --- END ARTICLE ---
-  ```
-- Промпт явно инструктирует модель: содержимое между маркерами — недоверенные данные, а не инструкции; любые «команды» из текста игнорировать.
-- Транскрипты YouTube/Whisper трактуются как untrusted по умолчанию.
-
-### 7.3. Проверка DOI-ссылок (обход анти-бот систем)
-
-Файл: `app/scripts/check-urls.ts` (Garbage Collection галлюцинированных ссылок).
-
-**Проблема:** крупные издатели (Nature, ScienceDirect) защищены Cloudflare — HEAD/GET с дата-центра возвращает 403 даже для валидных статей, а фейковые DOI от LLM неотличимы по коду ответа.
-
-**Решение — резолвер doi.org:**
-1. `extractDoi(url)`: inline-паттерн DOI в URL + эвристика для nature.com (`nature.com/articles/s41586-024-07819-6` → `10.1038/s41586-024-07819-6`).
-2. `probeDoi(doi)`: `HEAD https://doi.org/<doi>` с `redirect: "manual"` — doi.org отвечает откуда угодно и не ходит на сайт издателя:
-   - `3xx` → DOI существует ✅
-   - `404` → DOI выдуман ❌ → статья force-rejected
-3. Для не-DOI ссылок: HEAD → GET fallback; «мёртвым» считается только 404/410/DNS-ошибка (403/429 трактуются консервативно как «unknown», чтобы не удалять реальные статьи).
-
-**Результат GC:** 11 галлюцинированных GitHub-URL отклонено; фейковый DOI «The Virtual Biotech» подтверждён через doi.org 404 и удалён; реальный npm-пакет ecc-agentshield сохранён.
-
-### 7.4. Прочие меры
-
-- **SSRF-гард** (`api/lib/url-safety.ts`): каждый внешний URL перед `fetch()` проверяется на приватные/loopback/link-local диапазоны (10/8, 127/8, 172.16/12, 192.168/16, 169.254/16 — включая cloud metadata, 100.64/10, IPv6 ULA; WHATWG-нормализация десятичных/hex-IPv4). Применяется в `collect-dual.ts`, `fetch-article.ts`, `save-summary.ts`.
-- Rate limit: 100 req/min на `/api/trpc/*` и 30 req/min на публичный `/health` (per-IP, `api/lib/rateLimit.ts`); 429 возвращается в формате tRPC-конверта.
-- `/health`: внешняя проба Zen закэширована на 30 с — флуд эндпоинта не бьёт по Zen API.
-- Все внешние fetch — с таймаутами (`AbortSignal.timeout`), `!res.ok` guard'ы.
-- Zen key-pool: race-safe ротация 3 ключей, нативные таймауты.
-- Фейковые seed-данные удалены из репозитория и БД.
+Источники этих чисел: `app/scripts/hermes/pipeline-config.ts` (`SCORE_GATE`),
+`app/scripts/hermes/publish-budget.ts` (`DAILY_BUDGET_*`),
+`app/api/ai/providers/gigachat.ts` (`DEFAULT_GIGACHAT_MODEL`),
+`app/api/ai/zenClient.ts` (`ZEN_GO_MODEL_DEFAULT`),
+`app/api/ai/providers/zen.ts` (legacy-модель),
+`app/scripts/hermes/topics.ts` (`SECTIONS`, `DIRECTIONS`),
+`app/scripts/hermes/judge.ts` (`JUDGE_CONFIDENCE_THRESHOLD`),
+`app/scripts/hermes/digest-format.ts` (`MAX_ITEMS_PER_SECTION`, `SUMMARY_MAX_CHARS`).
 
 ---
 
-## 8. Оркестрация: Hermes Ralph Loop
-
-Файл: `app/scripts/hermes/ralph-loop.sh` (PM2-процесс `hermes-ralph-loop`).
+## 4. Поток новости: от источника до Telegram
 
 ```
-while true:
-  collect-dual.ts --stream both          # сбор (текст + YouTube)
-  evaluate-news.ts --batch --daily-cap 0 # ИИ-гейт + скоринг >=50, безлимит
-  manifest-gen.ts --limit 50             # манифест: pending + score≥66
-  for each article in manifest:          # СТРОГО последовательно
-    fetch-article.ts   → save-summary.ts → deploy-ready.ts
-    # ОДИН Zen-вызов на статью: one-shot RU title + summary, без шага перевода
-  sleep LINEAR_WORKER_INTERVAL_MS        # по умолчанию 10 минут
+ collect-dual.ts            evaluate-news.ts                        deploy-ready.ts
+ ┌───────────────┐   ┌──────────────────────────────────────┐   ┌───────────────────┐
+ │ RSS, GitHub,  │   │ A. префильтр (без сети)              │   │ последняя проверка│
+ │ HN, arXiv,    │──▶│ B. судья: title + лид (LLM, JSON)    │──▶│ бюджета дня       │
+ │ журналы,      │   │ C. дневной бюджет скачиваний         │   │ + «один выпуск»   │
+ │ YouTube       │   │ D. скачивание страницы и скоринг     │   │ → published       │
+ └───────┬───────┘   └──────────────────┬───────────────────┘   └─────────┬─────────┘
+         │ 72h Time Guard, дедуп        │ счётчики в pipeline_state.metrics │
+         ▼                              ▼                                    ▼
+      news (pending)               news.metrics.judge                 daily-digest.ts
+                                                                      06:00 UTC
+                                                          ┌────────────┴────────────┐
+                                                          ▼                         ▼
+                                                   клиентский выпуск        служебный отчёт
+                                                   (чистый текст)           (владельцу)
 ```
 
-Принципы: строгая последовательность (одна статья за раз), один LLM-вызов на статью, отсутствие fan-out; сбой шага логируется и не останавливает цикл.
+Отдельные шаги внутри цикла (порядок строгий, последовательный, без fan-out):
+`collect-dual.ts` → `evaluate-news.ts` → `manifest-gen.ts` → на каждую статью
+`fetch-article.ts` → `save-summary.ts` → одна публикация `deploy-ready.ts`.
+Оркестратор — `app/scripts/hermes/ralph-loop.sh`.
 
-### Утренний Telegram-дайджест
-
-- `scripts/hermes/daily-digest.ts`: выборка опубликованного за 24 часа (по `coalesce(platformPublishedAt, updatedAt)`), секции **🛠 ИИ-новости / 🔬 ИИ для науки / 🧪 Инструменты для изобретений**, экранирование Markdown, лимит 4000 символов, stub-режим без ключей. Пустой день НЕ молчит: отправляется явное «новых публикаций нет»; полный сбой доставки даёт exit 1 (видно в cron-логе).
-- **Cron (сервер):** `0 6 * * *` (06:00 UTC = 09:00 МСК) → `npx tsx scripts/hermes/daily-digest.ts`, лог `/var/log/news-agent/digest.log`.
-- Отправка через Telegram Bot API (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_IDS` в `.env`) — fan-out на нескольких получателей (владелец + клиент), список chat_id через запятую; legacy `TELEGRAM_CHAT_ID` поддерживается как fallback. Сбой одного получателя не блокирует остальных (статусы `sent`/`partial`/`failed`). Проверено в бою: `{"status":"sent","items":46}`.
-
-### Backfill-харнесс
-
-`scripts/run-yesterday-test.ts` + флаг `--min-age-hours` в collect/evaluate — восстановление статей, отклонённых старым daily-cap, и дооценка необработанных записей.
+**Точки отказа** (подробнее — `docs/DEPLOY.md` §15): недоступный фид (пропуск
+источника, счётчик в `source_health`), пустой сбор (цикл завершается, повтор по
+таймеру), LLM-сбой (судья fail-closed, выжимка → повтор), превышение бюджета
+(публикация отклоняется с причиной), Telegram (ретраи, статус `sent|partial|failed`),
+база (health 503, цикл ждёт).
 
 ---
 
-## 9. Приватная авторизация (Login/Password)
+## 5. Сбор (`collect-dual.ts`)
 
-OAuth полностью удалён (директория `api/kimi/` со всеми роутами `/api/oauth/*` уничтожена). Замена — строгая закрытая система.
+Два потока (`--stream both`), одна вставка в `news`:
 
-### 9.1. Поток аутентификации
+- **Текст:** RSS-блоги (OpenAI, Hugging Face, Google AI, MIT Technology Review,
+  Naked Science), GitHub (trending/search API), Hacker News (Algolia), arXiv,
+  Nature/Science/Cell/Lancet. **Reddit отключён** по политике: 429 и шум.
+- **YouTube:** 13 курируемых каналов (`YOUTUBE_SOURCES`,
+  `DEDICATED_AI_YOUTUBE_SOURCES`), RSS + явный обход `/videos` и `/shorts`
+  (`YOUTUBE_TAB_ITEMS`, по умолчанию 3 на вкладку).
 
-```
-POST auth.login (email + password)
-  → findUserByEmail → bcrypt.compare (bcryptjs, cost 12)
-  → signSessionToken: JWT HS256 { unionId, clientId, tokenVersion }
-      secret = SESSION_SECRET || APP_SECRET, expiry = JWT_EXPIRY_HOURS (24ч)
-  → Set-Cookie: kimi_sid=<jwt>; HttpOnly; SameSite=Lax (dev) / None+Secure (prod)
-      Max-Age = 24ч (синхронизировано с JWT expiry)
-```
+Инварианты сбора:
 
-- `auth.me` — возвращает санитизированного пользователя (хэш пароля **никогда** не покидает сервер — `sanitizeUser()`).
-- `auth.logout` — инкремент `tokenVersion` в БД → **все** выданные JWT мгновенно инвалидируются + очистка куки.
-- **Публичной регистрации нет.** Аккаунты создаются только CLI:
-  ```bash
-  npx tsx scripts/create-user.ts --email client@x.com --name "Client" --role user
-  # → генерирует пароль XXXX-XXXX-XXXX-XXXX, bcrypt-хэш, synthetic unionId
-  ```
-  Повторный запуск для существующего email = сброс пароля + ревокация сессий.
+- **Time Guard fail-closed:** кандидат без валидной даты или старше 72 часов не
+  попадает в базу.
+- **Дедуп:** unique index по `originalUrl` + семантическая схожесть заголовков
+  (`dedup.ts`, порог 0.85, последние 20 записей).
+- **Лид сохраняется:** RSS-описание пишется в `news.summary` при сборе — по нему
+  работают префильтр и судья. Это исправление D01: раньше текстовый поток писал
+  `summary: ""` и судья видел только заголовок.
+- Маршрутизация раздела при вставке — `app/api/lib/section-resolve.ts`
+  (invention-tools > science > ai-news), затем уточняется на оценке и выжимке.
 
-### 9.2. Защита API и фронта
+---
 
-- **Backend** (`api/lib/auth.ts` → `authenticateRequest`): парсинг куки → verify JWT (включая сверку `tokenVersion`) → загрузка пользователя из БД → иначе `UNAUTHORIZED`.
-- Все контентные процедуры — `authedQuery`: `news.list/byId/categories/translate`, `parser.logs/sources/status`. Мутации парсера — `adminQuery` (роль admin).
-- **Frontend** (`src/App.tsx`): все контентные роуты обёрнуты в `<RequireAuth>` (нет сессии → редирект на `/login`); `/login` обёрнут в обратный гард (авторизован → `/`).
-- Страница входа — минималистичная: Email + Пароль, подпись «Закрытый сервис. Доступ выдаётся администратором.»
+## 6. Отбор: префильтр, судья, бюджет, скоринг
+
+### 6.1. Ступень A — префильтр (`prefilter.ts`)
+
+Детерминированный, без сети: AI-сигнал в заголовке и лиде, свежесть, пустой
+заголовок, неизвестная дата. Возвращает `{ keep, score, reason, evidence }`,
+`reason ∈ empty-title | unknown-date | stale | no-ai-signal | keep`. Словари и веса
+не покидают модуль.
+
+### 6.2. Ступень B — LLM-судья (`judge.ts`)
+
+Один короткий вызов на кандидата по **заголовку и лиду** (не по странице).
+Строгий JSON `{onTopic, section, direction, confidence, reason}`; рубрика — из
+`topics.ts` (`TOPIC_PROMPT_RU`).
+
+**Fail-closed:** невалидный JSON, `onTopic=false` или `confidence < 0.7` —
+отклонение с машинной причиной (`invalid-judgement`, `low-confidence`,
+`rejected-by-review`, `invalid-review`). Для вердиктов `onTopic=true` и
+`confidence >= 0.7` задаётся независимый контрольный вопрос — второй короткий
+вызов, принятая цена точности (`docs/adr/0002-judge-fail-closed.md`). Вердикт
+пишется в `news.metrics.judge` (`onTopic/section/direction/confidence/reason/
+provider/model`); повторно за того же кандидата судья не платит.
+
+### 6.3. Бюджет скачиваний и балл
+
+Страница скачивается только для кандидатов, прошедших префильтр, судью и дневной
+бюджет скачиваний (число = остаток `DAILY_BUDGET` на сегодня). Скоринг —
+детерминированный, без LLM: авторитет источника, arXiv + открытый артефакт,
+altmetric, GitHub/HN-цифры, YouTube-бонусы. Прошедшие `SCORE_GATE` (50) остаются
+`pending` с баллом, остальные — `rejected`. `metrics.decision` фиксирует
+`approved | rejected-low-score | rejected-judge | deferred-budget`.
+
+### 6.4. Бюджет дня и выпуск (`publish-budget.ts`, `manifest-gen.ts`, `deploy-ready.ts`)
+
+`DAILY_BUDGET` (5..10, по умолчанию 8) — **жёсткий** предел публикаций за UTC-сутки.
+Порядок отбора: балл desc → уверенность судьи desc → свежесть desc → id.
+Бюджет проверяется дважды: `manifest-gen.ts` берёт лучшие в пределах бюджета,
+`deploy-ready.ts` через `planPublication()` отказывает, если публикация превысила
+бы бюджет или выпуск дня уже зафиксирован (`reason ∈ already-published-today |
+daily-budget-exhausted | no-ready-articles`). Поэтому ручная правка манифеста или
+прямой вызов публикации не может выпустить лишнее (`docs/adr/0004-one-release-per-day.md`).
+
+### 6.5. Счётчики цикла
+
+`pipeline_state.metrics` (jsonb, миграция `0011`) — дневной журнал:
+`collected`, `prefiltered`, `judged`, `approved`, `published`,
+`rejectedByReason` (`prefilter:…`, `judge:…`, `score:…`, `publish:…`,
+`provider:…`), `usage` (`calls`, `inputTokens`, `outputTokens`). Одна строка на
+UTC-день, `cycle-YYYY-MM-DD`; повтор после сбоя продолжает тот же цикл, второй
+запуск после выпуска видит `stage=published` и спит до следующих суток.
+
+---
+
+## 7. Провайдеры LLM
+
+Контракт — `app/api/ai/providers/types.ts` (`ProviderId`, `ChatMessage`,
+`ChatResult`, `CompleteJson`, `ProviderErrorClass = config | quota | transient |
+content`, `ProviderError`).
+
+| Провайдер | Файл | Авторизация | Модель по умолчанию |
+|---|---|---|---|
+| GigaChat | `app/api/ai/providers/gigachat.ts` | OAuth `client_credentials`, токен кешируется с запасом 60 с | `GigaChat` |
+| OpenCode Go | `app/api/ai/providers/zen.ts` | пул Go-ключей через `zenClient.ts` | `mimo-v2.5` |
+| OpenCode legacy | тот же адаптер, без Go-ключа | пул `ZEN_API_KEYS` | `zen-default` |
+
+`zen-default` — метка модели для legacy-пути, когда `ZEN_MODEL` не задан: сам
+запрос идёт цепочкой `app/api/ai/zenClient.ts` (`ZEN_MODEL` → `ZEN_FALLBACK_MODELS`),
+а `app/.env.example` задаёт `ZEN_MODEL=deepseek-v4-flash-free`. Метка попадает в
+`news.metrics.judge.model` и в учёт расхода; она описывает, кто ответил, а не
+выбирает модель за клиента.
+
+Цепочка — `app/api/ai/providers/chain.ts`: GigaChat → OpenCode. **Правило
+перехода:** `quota` (402/429) и `transient` (5xx, таймаут, сеть) переключают на
+следующего; `config` (401/403, нет ключа, нет подписки Go) — не переключают, а
+поднимают ошибку наверх: другой провайдер скрыл бы причину
+(`docs/adr/0003-provider-chain.md`). Каждый успешный вызов возвращает `usage`,
+расход пишется в счётчики цикла.
+
+Снимок `.env` читается на каждый вызов (`app/api/ai/providers/env.ts`), файл важнее
+`process.env`: замена ключа через `scripts/update-key.sh` подхватывается следующим
+шагом цикла без рестарта.
+
+**Известное ограничение:** цепочка сейчас подключена к судье
+(`app/scripts/hermes/evaluate-news.ts`); выжимки (`save-summary.ts`) по-прежнему
+идут через `summarizeOneShot()` из `app/api/ai/zenClient.ts`, то есть через
+OpenCode, без GigaChat. Перенос выжимок в цепочку — следующий шаг, в этом прогоне
+не делался.
+
+---
+
+## 8. Выжимка и формат выпуска
+
+- `save-summary.ts` — **один** вызов LLM на статью: русский заголовок + выжимка
+  (JSON), без отдельного шага перевода; `status='summarized'`, `modelUsed`.
+- `digest-format.ts` — формат сообщений: `buildClientDigest()` (ровно согласованный
+  вид, без служебных строк), `buildEmptyClientDigest()`, `buildOwnerReport()`
+  (служебный отчёт), `formatItem()`, `fitSummary(text, 180)` (обрезка по границе
+  слова), `splitTelegramText(text, 4000)`.
+- Лимиты: 7 карточек на раздел, остаток — строкой «Ещё N материалов», выжимка
+  ≤ 180 знаков, сообщение ≤ 4000 знаков.
+- **Три раздела, фиксированный порядок:** 🛠 «ИИ-новости» → 🔬 «ИИ для науки» →
+  🧪 «Инструменты для изобретений». Совпадают в дашборде и Telegram.
+
+---
+
+## 9. Дайджест: клиент и владелец
+
+`daily-digest.ts` (`cron 06:00 UTC`):
+
+| Получатели | Переменная | Что получают |
+|---|---|---|
+| Клиент | `TELEGRAM_CLIENT_CHAT_IDS` | только `buildClientDigest()` — ни ошибок, ни счётчиков, ни строки здоровья |
+| Владелец | `TELEGRAM_OWNER_CHAT_IDS` | копию того же чистого выпуска + отдельный служебный отчёт |
+
+Служебный отчёт уходит **первым**, чтобы сбой выпуска дошёл до владельца раньше
+клиента. Legacy `TELEGRAM_CHAT_IDS` / `TELEGRAM_CHAT_ID` остаются клиентским
+фолбэком. Пустой день не молчит: отправляется явное «новых публикаций нет».
+Без токена или получателей дайджест печатается в лог (stub-режим) и не притворяется
+отправленным. Статус доставки — `sent | partial | failed`, код выхода 1, если не
+доставлено никому.
 
 ---
 
 ## 10. База данных
 
-PostgreSQL 16 в Docker-контейнере `science_agent_db` (БД `science_agent`). Drizzle ORM, миграции `app/db/migrations` (0000–0007).
+PostgreSQL 16, база `science_agent`, Drizzle ORM, миграции `app/db/migrations`
+(актуально `0011`).
 
-**Таблицы:** `users` (email, password-hash, role, tokenVersion), `categories`, `news` (ядро: `originalUrl` UNIQUE + CHECK, `originalTitle` для дедупа после перевода заголовка, `score`, `status`, `metrics` jsonb, GIN FTS-индекс по RU-текстам), `favorites`, `readStatus`, `sources`, `parsingLogs`, `agentState`, `sourceHealth`, `pipelineState`.
+- `news` — ядро: `originalUrl` UNIQUE + CHECK `http(s)`, `originalTitle` для
+  дедупа, `summary` (лид, затем русская выжимка), `score`, `status`, `section`,
+  `sphereTags`, `scienceField`, `metrics` (jsonb), `modelUsed`, даты.
+- `pipeline_state` — журнал цикла: `cycleId` UNIQUE (`cycle-YYYY-MM-DD`), `stage`
+  (`idle | evaluated | published`), `metrics` jsonb (миграция 0011), `totalArticles`,
+  `processedArticles`, `startedAt`, `completedAt`.
+- `categories` — 6 научных направлений (`type='science'`), сид `db/seed.ts`.
+- `invention_tools` — каталог инструментов, сиды `scripts/seed-ai-science-tools.ts`
+  и `scripts/seed-invention-tools.ts`.
+- `sources`, `source_health`, `agent_state` (состояние пула ключей
+  `zen-key-pool`), `users`, `favorites`, `read_status`.
 
-Ключевые статусы `news`: `pending` → (скоринг: прошёл гейт — остаётся `pending` + score; не прошёл — `rejected`) → `summarized` → `published`. Видео без транскрипта — `rejected` (без ретраев).
-
----
-
-## 11. Развёртывание и эксплуатация
-
-**Сервер:** Ubuntu 24.04; путь приложения задаётся через `APP_ROOT`, env хранится вне Git.
-
-| Компонент | Команда/конфиг |
-|---|---|
-| Web (Hono+tRPC, статика Vite) | PM2 `news-agent-web` — `npm run build` → `NODE_ENV=production node dist/boot.js` |
-| Конвейер | PM2 `hermes-ralph-loop` — `bash scripts/hermes/ralph-loop.sh` |
-| Дайджест | cron `0 6 * * *` (09:00 МСК) |
-| БД | Docker `science_agent_db` (PostgreSQL 16) |
-
-**Deploy-flow:** локальные правки → `npm run check` (tsc) + `npx vitest run` → conventional commit + push → tar+scp на сервер → `npm run build` → `pm2 restart --update-env`.
-
-**Quality gates (обязательны перед каждым коммитом):** `cd app && npx tsc -b` и `npx vitest run` (82/82 зелёные).
+Статусы `news`: `pending` (собран; после одобрения остаётся `pending` с баллом) →
+`summarized` → `published`; отказ — `rejected` с причиной в `metrics`. Статус
+`translated` остался от legacy-агентов и конвейером не ставится.
 
 ---
 
-## 12. Известные ограничения
+## 11. Оркестрация и расписание
 
-- **science.org / nature.com** блокируют дата-центр IP (403) — для проверки ссылок используется doi.org-резолвер (см. §7.3).
-- **Reddit** — периодические 429 (обрабатываются как transient).
-- **YouTube RSS** иногда 404 для отдельных каналов — покрыто yt-dlp fallback.
-- **Shorts без субтитров** — отклоняются, пока не задан `GROQ_API_KEY` (Whisper fallback активируется добавлением ключа, код уже готов).
+`app/scripts/hermes/ralph-loop.sh` (PM2 `hermes-ralph-loop`):
+
+1. читает состояние дня (`publish-budget.ts --status`); битый `DAILY_BUDGET` или
+   недоступная БД — выход на старте, а не тихий дефолт;
+2. если выпуск дня уже опубликован — спит до следующих UTC-суток;
+3. иначе: сбор → префильтр/судья/бюджет/скоринг → манифест → по статьям
+   (fetch → save-summary) → **одна** публикация;
+4. после выпуска спит до полуночи, после сбоя повторяет через
+   `LINEAR_WORKER_INTERVAL_MS` (в примере окружения 600000 = 10 мин, без
+   переменной loop берёт 900000 = 15 мин). Это пауза **повтора**, а не интервал
+   выпусков: `HERMES_DAILY_CAP` удалён, второго выпуска за сутки не бывает.
+
+Утренний дайджест и ночной бэкап — cron (`docs/DEPLOY.md` §8); PM2 владеет
+процессами, cron — часами.
 
 ---
 
-*Документ отражает production-состояние на коммите `a7c851c`. Сопутствующие документы: `AGENTS.md` (workflow для AI-агентов), `docs/TECHNICAL_AUDIT_REPORT_RU.md` (аудит безопасности), `docs/ADMIN_GUIDE.md`, `docs/DEPLOY.md`, `docs/USER_GUIDE.md`.*
+## 12. Безопасность
+
+- **Целостность URL:** `originalUrl` не меняется после сбора, LLM не генерирует
+  ссылки, БД запрещает не-http(s) URL; в дайджесте ссылка берётся из БД.
+- **Prompt injection:** тело статьи и транскрипт обёрнуты маркерами
+  `--- BEGIN ARTICLE (UNTRUSTED) ---` / `--- END ARTICLE ---`; модели сказано, что
+  это данные, а не инструкции.
+- **SSRF-гард:** `app/api/lib/url-safety.ts` отсекает приватные, loopback,
+  link-local и metadata-адреса до `fetch()`.
+- **Закрытый доступ:** email + пароль, bcrypt (cost 12), JWT HS256 в httpOnly-куке,
+  отзыв сессий через `tokenVersion`, публичной регистрации нет; rate limit на API
+  и на `/health`.
+- **Секреты только в `.env`:** в коде, тестах, `.env.example` и документации —
+  только имена переменных.
+- **Сервер:** вход по SSH только ключом, `ufw`, `fail2ban`, заблокированный
+  root-пароль — `scripts/deploy/harden.sh` и чек-лист в `docs/DEPLOY.md` §10.
+
+---
+
+## 13. Развёртывание и проверки
+
+Native-стек: Ubuntu 24.04, Node 20, PostgreSQL 16, PM2, nginx + certbot, cron,
+rclone для бэкапа вне сервера. Пошаговый runbook — `docs/DEPLOY.md`; скрипты —
+`scripts/deploy/install.sh`, `scripts/deploy/cron.sh`, `scripts/deploy/harden.sh`,
+`scripts/deploy/gigachat-certs.sh`, `scripts/deploy/check-gigachat.sh`,
+`scripts/backup-offsite.sh`.
+
+Обязательные проверки перед каждым коммитом:
+
+```bash
+cd app && npx tsc -b && npx vitest run
+cd app && npx tsx ../scripts/check-env-example.ts
+cd app && npx tsx ../scripts/check-docs.ts
+```
+
+---
+
+## 14. Известные ограничения
+
+1. **Развёртывание не выполнено** — ждёт G02 (адрес, домен, доступы).
+2. **GigaChat не проверен живым ключом** — адаптер и цепочка проверены на моках;
+   вызов с российского сервера проверяется `scripts/deploy/check-gigachat.sh`
+   после получения ключа и сертификатов.
+3. **Выжимки идут не через цепочку**, а через `zenClient` (см. §7).
+4. **Хранилище бэкапов** не настроено (нет аккаунта) — путь отказа проверен,
+   загрузка и восстановление проверяются после G02.
+5. **Дата последнего бэкапа** пишется в `~/.news-agent/last-backup.json` и в лог;
+   в служебный отчёт владельца она пока не встроена.
+6. **Каталог инструментов** наполняется сидами; ручная верификация URL карточек —
+   на владельце.
+7. **`zenClient.ts` читает конфигурацию при импорте**: долгоживущий процесс держит
+   старый пул ключей. В текущей схеме каждый шаг — отдельный `npx tsx`, поэтому
+   новый ключ видит следующий шаг; переписывание клиента отложено.
+8. **science.org / nature.com** блокируют IP дата-центров — ссылки проверяются
+   через doi.org-резолвер (`app/scripts/check-urls.ts`).
+9. **Reddit** отключён; возврат потребует отдельного решения по 429 и шуму.
+10. **Первый выпуск** после развёртывания может быть короче бюджета: за первые
+    сутки база пустая, а Time Guard отсекает старые материалы.
+
+---
+
+*Сопутствующие документы: `CONTEXT.md` (словарь), `PROGRESS.md` (сделано и
+открыто), `docs/DEPLOY.md` (runbook), `docs/adr/` (почему так решено),
+`AGENTS.md` (workflow для AI-агентов).*

@@ -1,0 +1,39 @@
+# nginx site for the news agent dashboard.
+#
+# Rendered by scripts/deploy/install.sh with
+#   envsubst '${DOMAIN} ${PROXY_PORT}' < scripts/deploy/nginx-site.conf.template
+# into /etc/nginx/sites-available/news-agent. Only ${DOMAIN} and ${PROXY_PORT}
+# are substituted; nginx variables ($host, $remote_addr, …) stay as written.
+#
+# The file starts as HTTP-only on purpose: certbot --nginx issues the
+# certificate and then rewrites this file, adding the HTTPS server and the
+# http→https redirect (docs/DEPLOY.md §7). Editing TLS blocks in by hand before
+# the certificate exists makes `nginx -t` fail.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+
+    # ACME webroot for certbot.
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    client_max_body_size 8m;
+
+    location / {
+        proxy_pass http://127.0.0.1:${PROXY_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 120s;
+    }
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+}
