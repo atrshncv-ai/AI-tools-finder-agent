@@ -2,16 +2,25 @@
  * judge.ts — the ONE place where "is this material about our topic?" is
  * decided by an LLM (R07.1, spec §3).
  *
- * Contract:
- *   - input is title + lead only (the expensive page is never fetched for the
- *     judge — R18.1);
- *   - the model answers strict JSON; invalid JSON, an unknown section/direction
- *     or a confidence below JUDGE_CONFIDENCE_THRESHOLD is a rejection, never an
- *     exception (fail-closed: "лучше пропустить, чем промахнуться");
- *   - the prompt comes from topics.ts, so a new direction needs no edit here.
+ * Two calls, both fail-closed:
+ *   1. verdict — strict JSON {onTopic, section, direction, confidence, reason}
+ *      over title + lead only (the expensive page is never fetched — R18.1);
+ *   2. review — an independent question about the *claimed* section/direction
+ *      over the same text. A confident-but-wrong verdict (energy grids filed
+ *      as "biology", the miss the owner named) is not detectable by inspecting
+ *      its own JSON, so a second, differently-framed answer decides. Only
+ *      on-topic verdicts above the confidence threshold pay for this call.
  *
- * The module knows nothing about the DB, budgets or publication. The LLM is
- * injected through `completeJson`, so tests never touch the network.
+ * Any unparsable answer, unknown id, inconsistent section/direction, low
+ * confidence or review disagreement is a rejection with a reason code, never
+ * an exception ("лучше пропустить, чем промахнуться"). A rejected verdict is
+ * normalised to the neutral shape (section "ai-news", no direction) so no
+ * downstream stage ever sees a rejected card attributed to a science field.
+ *
+ * The prompt comes from topics.ts, so a new direction needs no edit here. The
+ * module knows nothing about the DB, budgets or publication; the LLM is the
+ * shared `CompleteJson` injected by the provider chain, so tests never touch
+ * the network.
  */
 
 import {
@@ -21,42 +30,21 @@ import {
   type DirectionId,
   type SectionId,
 } from "./topics";
+import type { ChatMessage, CompleteJson } from "../../api/ai/providers/types";
 
 export const JUDGE_CONFIDENCE_THRESHOLD = 0.7;
 
 export const INVALID_JUDGEMENT_REASON = "invalid-judgement";
 export const LOW_CONFIDENCE_REASON = "low-confidence";
+export const REJECTED_BY_REVIEW_REASON = "rejected-by-review";
+export const INVALID_REVIEW_REASON = "invalid-review";
 
-/** Judgement JSON is short; the cap keeps a chatty model from burning tokens. */
+/** Verdict/review JSON is short; the cap keeps a chatty model from burning tokens. */
 const JUDGE_MAX_TOKENS = 300;
+const REVIEW_MAX_TOKENS = 200;
 /** Deterministic verdicts: the same material must not flip between runs. */
 const JUDGE_TEMPERATURE = 0;
 const MAX_REASON_CHARS = 240;
-
-export type JudgeChatRole = "system" | "user" | "assistant";
-
-export interface JudgeChatMessage {
-  role: JudgeChatRole;
-  content: string;
-}
-
-/**
- * Structural twin of `CompleteJson` from app/api/ai/providers/types.ts
- * (declared locally because that module did not exist yet — see CONCERNS).
- * Optional metadata keeps the two assignable in both directions.
- */
-export interface JudgeChatResult {
-  text: string;
-  provider?: string;
-  model?: string;
-  usage?: { inputTokens: number; outputTokens: number } | null;
-}
-
-export type CompleteJson = (args: {
-  messages: JudgeChatMessage[];
-  maxTokens?: number;
-  temperature?: number;
-}) => Promise<JudgeChatResult>;
 
 export interface Judgement {
   onTopic: boolean;
@@ -78,22 +66,22 @@ export interface JudgeDeps {
   completeJson?: CompleteJson;
 }
 
-interface ParsedVerdict {
-  onTopic: boolean;
-  section: SectionId;
-  direction: DirectionId | null;
+type ParsedVerdict = Judgement;
+
+interface ParsedReview {
+  agree: boolean;
   confidence: number;
   reason: string;
 }
 
+type ReviewDecision = { ok: true } | { ok: false; reason: string };
+
+function rejected(confidence: number, reason: string): Judgement {
+  return { onTopic: false, section: "ai-news", direction: null, confidence, reason };
+}
+
 function invalidJudgement(): Judgement {
-  return {
-    onTopic: false,
-    section: "ai-news",
-    direction: null,
-    confidence: 0,
-    reason: INVALID_JUDGEMENT_REASON,
-  };
+  return rejected(0, INVALID_JUDGEMENT_REASON);
 }
 
 /**
@@ -130,6 +118,14 @@ function normalizeReason(reason: string): string {
   return oneLine.length > MAX_REASON_CHARS ? oneLine.slice(0, MAX_REASON_CHARS) : oneLine;
 }
 
+function isPlainObject(raw: unknown): raw is Record<string, unknown> {
+  return typeof raw === "object" && raw !== null && !Array.isArray(raw);
+}
+
+function isConfidence(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
 /**
  * Shape check: every field is required, ids must exist in the topics registry,
  * and section/direction must be consistent — "science" without a direction or
@@ -137,21 +133,13 @@ function normalizeReason(reason: string): string {
  * answer, not a verdict to repair.
  */
 function parseVerdict(raw: unknown): ParsedVerdict | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  if (!isPlainObject(raw)) return null;
 
-  const record = raw as Record<string, unknown>;
-  const { onTopic, section, direction, confidence, reason } = record;
+  const { onTopic, section, direction, confidence, reason } = raw;
 
   if (typeof onTopic !== "boolean") return null;
   if (typeof section !== "string" || !sectionById(section)) return null;
-  if (
-    typeof confidence !== "number" ||
-    !Number.isFinite(confidence) ||
-    confidence < 0 ||
-    confidence > 1
-  ) {
-    return null;
-  }
+  if (!isConfidence(confidence)) return null;
   if (typeof reason !== "string" || reason.trim().length === 0) return null;
 
   let parsedDirection: DirectionId | null = null;
@@ -173,7 +161,18 @@ function parseVerdict(raw: unknown): ParsedVerdict | null {
   };
 }
 
-function buildMessages(input: JudgeInput): JudgeChatMessage[] {
+function parseReview(raw: unknown): ParsedReview | null {
+  if (!isPlainObject(raw)) return null;
+
+  const { agree, confidence, reason } = raw;
+  if (typeof agree !== "boolean") return null;
+  if (!isConfidence(confidence)) return null;
+  if (typeof reason !== "string" || reason.trim().length === 0) return null;
+
+  return { agree, confidence, reason: normalizeReason(reason) };
+}
+
+function buildMessages(input: JudgeInput): ChatMessage[] {
   const title = (input.title ?? "").trim();
   const lead = (input.lead ?? "").trim();
   const language = (input.language ?? "").trim();
@@ -191,6 +190,75 @@ function buildMessages(input: JudgeInput): JudgeChatMessage[] {
     { role: "system", content: TOPIC_PROMPT_RU },
     { role: "user", content: lines.join("\n") },
   ];
+}
+
+/**
+ * The review is a separate question, not a paraphrase of the verdict: it names
+ * what is being checked (section definition, direction definition) and asks the
+ * model to disagree when in doubt.
+ */
+function reviewMessages(input: JudgeInput, verdict: ParsedVerdict): ChatMessage[] {
+  const section = sectionById(verdict.section);
+  const direction = verdict.direction ? directionById(verdict.direction) : null;
+
+  const system = [
+    "Ты — независимый проверяющий научно-новостного дайджеста. Другой судья уже вынес вердикт; " +
+      "проверь его заново по тексту материала, а не по формулировке вердикта.",
+    "Подтверждай (agree=true) только если материал действительно про названный раздел и направление. " +
+      "Энергосети, электрика, ЛЭП и энергетика сами по себе не относятся к направлениям науки. " +
+      "При сомнении ставь agree=false. confidence — число от 0 до 1; ниже 0.7 вердикт будет отклонён.",
+    "Ответ — строго один JSON-объект без markdown: " +
+      '{"agree": true, "confidence": 0.9, "reason": "одна строка по-русски"}',
+  ].join("\n");
+
+  const title = (input.title ?? "").trim();
+  const lead = (input.lead ?? "").trim();
+  // The claimed verdict is our own model's data, not instructions: it goes into
+  // the user turn, while the article stays inside the untrusted markers.
+  const user = [
+    "Первый судья вынес вердикт:",
+    `Раздел: ${verdict.section} («${section?.label ?? verdict.section}»): ${section?.definition ?? ""}`,
+    direction
+      ? `Направление: ${direction.id} («${direction.label}»): ${direction.definition}`
+      : "Направление: не указано.",
+    `Обоснование первого судьи: ${verdict.reason}`,
+    "",
+    "Материал:",
+    "--- BEGIN ARTICLE (UNTRUSTED) ---",
+    `Заголовок: ${title}`,
+    `Лид: ${lead}`,
+    "--- END ARTICLE ---",
+  ].join("\n");
+
+  return [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+}
+
+async function reviewVerdict(
+  input: JudgeInput,
+  verdict: ParsedVerdict,
+  completeJson: CompleteJson,
+): Promise<ReviewDecision> {
+  let replyText = "";
+  try {
+    const result = await completeJson({
+      messages: reviewMessages(input, verdict),
+      maxTokens: REVIEW_MAX_TOKENS,
+      temperature: JUDGE_TEMPERATURE,
+    });
+    replyText = typeof result?.text === "string" ? result.text : "";
+  } catch {
+    return { ok: false, reason: INVALID_REVIEW_REASON };
+  }
+
+  const review = parseReview(extractJsonObject(replyText));
+  if (!review) return { ok: false, reason: INVALID_REVIEW_REASON };
+  if (!review.agree || review.confidence < JUDGE_CONFIDENCE_THRESHOLD) {
+    return { ok: false, reason: REJECTED_BY_REVIEW_REASON };
+  }
+  return { ok: true };
 }
 
 export async function judgeRelevance(input: JudgeInput, deps: JudgeDeps = {}): Promise<Judgement> {
@@ -217,10 +285,13 @@ export async function judgeRelevance(input: JudgeInput, deps: JudgeDeps = {}): P
 
   const verdict = parseVerdict(extractJsonObject(replyText));
   if (!verdict) return invalidJudgement();
-
-  if (verdict.onTopic && verdict.confidence < JUDGE_CONFIDENCE_THRESHOLD) {
-    return { ...verdict, onTopic: false, reason: LOW_CONFIDENCE_REASON };
+  if (!verdict.onTopic) return rejected(verdict.confidence, verdict.reason);
+  if (verdict.confidence < JUDGE_CONFIDENCE_THRESHOLD) {
+    return rejected(verdict.confidence, LOW_CONFIDENCE_REASON);
   }
+
+  const review = await reviewVerdict(input, verdict, completeJson);
+  if (!review.ok) return rejected(verdict.confidence, review.reason);
 
   return verdict;
 }
