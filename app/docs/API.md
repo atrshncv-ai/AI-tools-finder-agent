@@ -26,14 +26,6 @@ GET /health
 }
 ```
 
-### OAuth Callback
-
-```
-GET /api/oauth/callback?code=<auth_code>&state=<state>
-```
-
-Обрабатывает callback от Kimi OAuth и перенаправляет на главную страницу.
-
 ---
 
 ## tRPC API
@@ -319,11 +311,11 @@ Array<{
 
 #### parser.status
 
-Проверить статус LM Studio.
+Проверить статус подключения к Zen API.
 
 **Выход:**
 ```typescript
-{ lmStudio: boolean }
+{ zen: boolean }
 ```
 
 ---
