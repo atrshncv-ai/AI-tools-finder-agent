@@ -1,10 +1,16 @@
 #!/usr/bin/env tsx
 /**
- * evaluate-news.ts — Hard Data-Driven Scoring (no LLM judgement calls).
+ * evaluate-news.ts — two-stage selection, deterministic scoring, day budget.
+ *
+ * Stage A (prefilter.ts) is free: title + RSS lead, no network. Stage B
+ * (judge.ts) is one cheap LLM call on the SAME title + lead — never on the
+ * page: 100 candidates a day against a budget of 8 means 90% of the work would
+ * be wasted otherwise (R18.1). Only after a candidate is confirmed on-topic by
+ * the judge does it compete for the day's download budget, and only the best
+ * DAILY_BUDGET of them get their page fetched and scored here.
  *
  * The LLM is NOT qualified to judge "scientific value" — so it doesn't.
- * This script collects CONCRETE metrics via lightweight HTTP/JSON APIs and
- * sums points deterministically.
+ * Stage B decides topic only; the score below is deterministic:
  *
  * Tech scoring matrix (AI tools):
  *   +40  GitHub Trending Top-10   +25  GitHub Trending Top-50
@@ -23,12 +29,12 @@
  *   +20  High Altmetric score (>= 50) — proxy for active scientific discussion
  *   +15  Topic bonus: AI x chemistry/materials/biology/medicine/physics
  *
- * Gate: only articles with score >= 50 reach the dashboard pipeline.
- * Daily cap: DISABLED by default (--daily-cap 0 = unlimited); a positive
- * value re-enables the legacy quota of N approved articles per UTC day.
+ * Gate: only articles with score >= SCORE_GATE reach the manifest queue.
+ * Budget: DAILY_BUDGET (5..10, default 8) is the hard publication budget, read
+ * from the environment; this stage never downloads more pages than the budget.
  *
  * Usage:
- *   npx tsx scripts/hermes/evaluate-news.ts --batch [--daily-cap 5]
+ *   npx tsx scripts/hermes/evaluate-news.ts --batch
  *   npx tsx scripts/hermes/evaluate-news.ts --id 42
  */
 
@@ -36,7 +42,7 @@ import "dotenv/config";
 import * as cheerio from "cheerio";
 import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
-import { eq, and, isNull, isNotNull, inArray, gte, desc } from "drizzle-orm";
+import { eq, and, isNull, desc, sql } from "drizzle-orm";
 import { fetchYoutubeTranscript } from "./youtube-transcript";
 import { DEDICATED_AI_YOUTUBE_SOURCES } from "./youtube-sources";
 import { scoreYoutubeCandidate } from "./youtube-policy";
@@ -44,11 +50,23 @@ import { resolveSection } from "../../api/lib/section-resolve";
 
 import { SCORE_GATE } from "./pipeline-config";
 import { hasExplicitAiSignal } from "../../api/lib/classify";
+import { prefilterCandidate, type PrefilterInput, type PrefilterResult } from "./prefilter";
+import { JUDGE_CONFIDENCE_THRESHOLD, judgeRelevance, type Judgement } from "./judge";
+import { directionById, sectionById, type DirectionId, type SectionId } from "./topics";
+import {
+  CYCLE_STAGE,
+  cycleIdFor,
+  dailyBudget,
+  emptyCycleMetrics,
+  recordCycle,
+  selectForPublication,
+  type CycleMetrics,
+  type UsageTotals,
+} from "./publish-budget";
+import type { CompleteJson } from "../../api/ai/providers/types";
 
 const FETCH_TIMEOUT_MS = 20_000;
 const UA = process.env.AGENT_UA || "science-agent/2.0";
-
-const RELEASE_MAX_AGE_MS = 72 * 3600_000;
 
 // ─── Source tiers for Science scoring ───────────────────────────────────────
 
@@ -152,18 +170,74 @@ interface EvalResult {
   scienceField?: string | null;
 }
 
+/**
+ * One row from `news` as the pipeline sees it: `lead` is the description saved
+ * at collection time (`news.summary` before summarization), never the page.
+ */
+export interface EvaluationCandidate {
+  id: number;
+  title: string;
+  lead: string;
+  originalUrl: string;
+  source: string;
+  publishedAt: Date | string;
+  isScience: boolean;
+  language?: string | null;
+  section?: string | null;
+  sphereTags?: string[] | null;
+  metrics?: unknown;
+}
+
+/** Judge verdict plus the provider that produced it (interfaces.md §10). */
+export type JudgeVerdict = Judgement & {
+  provider: string | null;
+  model: string | null;
+};
+
+export type EvaluationDecision =
+  | "approved"
+  | "rejected-prefilter"
+  | "rejected-judge"
+  | "deferred-budget"
+  | "rejected-low-score";
+
+export interface EvaluationOutcome {
+  candidate: EvaluationCandidate;
+  decision: EvaluationDecision;
+  prefilter: PrefilterResult | null;
+  verdict: JudgeVerdict | null;
+  result: EvalResult | null;
+  /** Full `news.metrics` payload to persist for this row. */
+  metrics: Record<string, unknown>;
+}
+
+export interface EvaluationCycleResult {
+  outcomes: EvaluationOutcome[];
+  counters: CycleMetrics;
+  /** Candidates whose page was fetched and scored (the day's download budget). */
+  scored: number;
+  /** Judge LLM calls actually made (reused verdicts cost nothing). */
+  judgeCalls: number;
+}
+
+export interface EvaluationDeps {
+  now?: Date;
+  /** LLM answer source for the judge; absent = no provider, fail-closed. */
+  completeJson?: CompleteJson | null;
+  /** Cheap stage A; defaults to the real prefilter. */
+  prefilter?: (input: PrefilterInput) => PrefilterResult;
+  /** Expensive scoring; defaults to the real page-scoring `evaluate`. */
+  score?: (candidate: EvaluationCandidate) => Promise<EvalResult>;
+}
+
 // ─── HTTP utilities ─────────────────────────────────────────────────────────
 
-function parseArgs(): { id: number | null; batch: boolean; dailyCap: number } {
+function parseArgs(): { id: number | null; batch: boolean } {
   const a = process.argv.slice(2);
   const idIdx = a.indexOf("--id");
-  const capIdx = a.indexOf("--daily-cap");
   return {
     id: idIdx >= 0 ? parseInt(a[idIdx + 1] || "", 10) : null,
     batch: a.includes("--batch") || idIdx < 0,
-    // 0 (default) = UNLIMITED: business decision — every article above the
-    // score gate is published, no daily quota.
-    dailyCap: capIdx >= 0 ? parseInt(a[capIdx + 1] || "0", 10) : 0,
   };
 }
 
@@ -265,15 +339,6 @@ async function hackerNewsPoints(url: string, title: string): Promise<number> {
   return best;
 }
 
-async function redditUps(url: string): Promise<number> {
-  const data = await fetchJson<{
-    data?: { children?: { data?: { ups?: number } }[] };
-  }>(`https://www.reddit.com/search.json?q=url:${encodeURIComponent(url)}&limit=5&sort=top`);
-  let best = 0;
-  for (const ch of data?.data?.children ?? []) best = Math.max(best, ch.data?.ups ?? 0);
-  return best;
-}
-
 async function altmetricScore(doi: string): Promise<number | null> {
   const data = await fetchJson<{ score?: number }>(
     `https://api.altmetric.com/v1/doi/${encodeURIComponent(doi)}`,
@@ -290,6 +355,8 @@ function isScienceSource(source: string): boolean {
 async function evaluate(article: {
   id: number;
   title: string;
+  /** RSS lead saved at collection time; used for section routing, never the page. */
+  lead?: string | null;
   originalUrl: string;
   source: string;
   isScience: boolean;
@@ -499,15 +566,17 @@ async function evaluate(article: {
     return { id: article.id, title: article.title, score: 0, breakdown, metrics };
   }
 
-  // Unified three-way routing over the fetched page text. Bidirectional:
-  // a science article misrouted on a sparse RSS snippet moves to its real
-  // section (and back) once the full text is available.
-  const resolution = resolveSection({ title: article.title, content: pageText });
+  // Unified three-way routing. The classifiers read title + description ONLY
+  // (the page body fakes science domains — see section-resolve.ts), so the
+  // saved RSS lead is passed here; the page text stays available for the
+  // reproducibility signals above. Passing the title alone was the confirmed
+  // cause of misrouted cards.
+  const resolution = resolveSection({ title: article.title, description: article.lead ?? "", content: pageText });
   if (resolution.section !== section) {
     breakdown.push({
       criterion: "section-reroute",
       points: 0,
-      evidence: `${section} -> ${resolution.section} (full text)`,
+      evidence: `${section} -> ${resolution.section} (title + lead)`,
     });
     section = resolution.section;
   }
@@ -656,13 +725,329 @@ async function evaluate(article: {
   };
 }
 
+// ─── Stage A + B + budget ───────────────────────────────────────────────────
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function isYoutubeCandidate(candidate: EvaluationCandidate): boolean {
+  return candidate.source.startsWith("youtube-") || asRecord(candidate.metrics).origin === "youtube-rss";
+}
+
+/** A verdict stored by a previous run is reused: the judge is paid per call. */
+function readStoredVerdict(metrics: unknown): JudgeVerdict | null {
+  const judge = asRecord(asRecord(metrics).judge);
+  const { onTopic, section, direction, confidence, reason, provider, model } = judge;
+  if (onTopic !== true) return null;
+  if (typeof confidence !== "number" || !Number.isFinite(confidence)) return null;
+  if (confidence < JUDGE_CONFIDENCE_THRESHOLD) return null;
+  if (typeof section !== "string" || !sectionById(section)) return null;
+  if (typeof reason !== "string" || !reason.trim()) return null;
+  if (direction !== null && (typeof direction !== "string" || !directionById(direction))) return null;
+  return {
+    onTopic: true,
+    section: section as SectionId,
+    direction: (direction ?? null) as DirectionId | null,
+    confidence,
+    reason,
+    provider: typeof provider === "string" ? provider : null,
+    model: typeof model === "string" ? model : null,
+  };
+}
+
+/**
+ * Machine reason codes from judge.ts are single tokens (`invalid-judgement`,
+ * `low-confidence`, `invalid-review`, `rejected-by-review`, …); a model's prose
+ * explanation is a sentence. Codes are kept as their own counter key so a new
+ * fail-closed branch never needs an edit here, and prose collapses into
+ * `judge:off-topic`.
+ */
+function judgeRejectionReason(verdict: Judgement): string {
+  const reason = verdict.reason.trim();
+  return /^[a-z][a-z0-9-]{2,40}$/.test(reason) ? `judge:${reason}` : "judge:off-topic";
+}
+
+/**
+ * The whole cycle decision, free of DB and network of its own: every
+ * dependency is injectable, which is what the ticket's fetch-count and
+ * judge-call tests observe.
+ *
+ * Order is the contract: prefilter (`title` + saved lead) → judge (same two
+ * fields) → day budget → page download and scoring. A page is never fetched
+ * for a candidate the prefilter dropped, the judge rejected, or the budget did
+ * not reach.
+ */
+export async function runEvaluationCycle(input: {
+  candidates: readonly EvaluationCandidate[];
+  budget: number;
+  deps?: EvaluationDeps;
+}): Promise<EvaluationCycleResult> {
+  const deps = input.deps ?? {};
+  const now = deps.now ?? new Date();
+  const evaluatedAt = now.toISOString();
+  const budget = Number.isFinite(input.budget) ? Math.max(0, Math.floor(input.budget)) : 0;
+
+  const prefilter =
+    deps.prefilter ?? ((candidate: PrefilterInput) => prefilterCandidate(candidate, { now }));
+  const completeJson = deps.completeJson ?? null;
+  const score = deps.score ?? scoreCandidate;
+
+  const counters = emptyCycleMetrics();
+  counters.collected = input.candidates.length;
+  const outcomes: EvaluationOutcome[] = [];
+
+  const bump = (reason: string): void => {
+    counters.rejectedByReason[reason] = (counters.rejectedByReason[reason] ?? 0) + 1;
+  };
+  const baseMetrics = (candidate: EvaluationCandidate): Record<string, unknown> => ({
+    ...asRecord(candidate.metrics),
+  });
+
+  // ── Stage A: cheap, deterministic, no network ──
+  const passed: { candidate: EvaluationCandidate; prefilter: PrefilterResult }[] = [];
+  for (const candidate of input.candidates) {
+    const result = prefilter({
+      title: candidate.title,
+      lead: candidate.lead,
+      source: candidate.source,
+      publishedAt: candidate.publishedAt,
+      isYoutube: isYoutubeCandidate(candidate),
+    });
+    if (!result.keep) {
+      bump(`prefilter:${result.reason}`);
+      outcomes.push({
+        candidate,
+        decision: "rejected-prefilter",
+        prefilter: result,
+        verdict: null,
+        result: null,
+        metrics: {
+          ...baseMetrics(candidate),
+          prefilter: result,
+          evaluatedAt,
+          decision: "rejected-prefilter",
+        },
+      });
+      continue;
+    }
+    passed.push({ candidate, prefilter: result });
+  }
+  counters.prefiltered = passed.length;
+
+  // ── Stage B: LLM judge on title + saved lead only ──
+  const meta: { provider: string | null; model: string | null } = { provider: null, model: null };
+  const tracked = completeJson
+    ? async (args: Parameters<CompleteJson>[0]) => {
+        meta.provider = null;
+        meta.model = null;
+        const result = await completeJson(args);
+        meta.provider = result.provider;
+        meta.model = result.model;
+        return result;
+      }
+    : null;
+
+  let judgeCalls = 0;
+  const onTopic: { candidate: EvaluationCandidate; prefilter: PrefilterResult; verdict: JudgeVerdict }[] = [];
+  for (const item of passed) {
+    const stored = readStoredVerdict(item.candidate.metrics);
+    let verdict: JudgeVerdict;
+    if (stored) {
+      // The verdict was already paid for by a previous cycle: reuse it.
+      verdict = stored;
+    } else {
+      judgeCalls++;
+      const judgement = await judgeRelevance(
+        {
+          title: item.candidate.title,
+          lead: item.candidate.lead,
+          language: item.candidate.language ?? null,
+        },
+        tracked ? { completeJson: tracked } : {},
+      );
+      verdict = { ...judgement, provider: meta.provider, model: meta.model };
+    }
+
+    if (!verdict.onTopic) {
+      bump(judgeRejectionReason(verdict));
+      outcomes.push({
+        candidate: item.candidate,
+        decision: "rejected-judge",
+        prefilter: item.prefilter,
+        verdict,
+        result: null,
+        metrics: {
+          ...baseMetrics(item.candidate),
+          prefilter: item.prefilter,
+          judge: verdict,
+          evaluatedAt,
+          decision: "rejected-judge",
+        },
+      });
+      continue;
+    }
+    onTopic.push({ candidate: item.candidate, prefilter: item.prefilter, verdict });
+  }
+  counters.judged = onTopic.length;
+
+  // ── Day budget: only the best reach the expensive stage ──
+  // "Best" before the page is paid for = the cheap prefilter score, then the
+  // judge's confidence, then freshness — the same ordering the release uses
+  // (R08.1), with the prefilter score standing in for the final score that only
+  // the page can produce.
+  const ranked = selectForPublication(
+    onTopic.map((item) => ({
+      id: item.candidate.id,
+      score: item.prefilter.score,
+      confidence: item.verdict.confidence,
+      publishedAt: item.candidate.publishedAt,
+    })),
+    budget,
+  );
+  const selectedIds = new Set(ranked.map((item) => item.id));
+
+  let scored = 0;
+  for (const item of onTopic) {
+    if (!selectedIds.has(item.candidate.id)) {
+      // On topic but outside the download budget: stays pending with its
+      // verdict, so a later cycle can score it without paying the judge again.
+      outcomes.push({
+        candidate: item.candidate,
+        decision: "deferred-budget",
+        prefilter: item.prefilter,
+        verdict: item.verdict,
+        result: null,
+        metrics: {
+          ...baseMetrics(item.candidate),
+          prefilter: item.prefilter,
+          judge: item.verdict,
+          evaluatedAt,
+          decision: "deferred-budget",
+        },
+      });
+      continue;
+    }
+
+    scored++;
+    try {
+      const result = await score(item.candidate);
+      const decision: EvaluationDecision = result.score >= SCORE_GATE ? "approved" : "rejected-low-score";
+      if (decision === "approved") counters.approved++;
+      else bump("score:low-score");
+      outcomes.push({
+        candidate: item.candidate,
+        decision,
+        prefilter: item.prefilter,
+        verdict: item.verdict,
+        result,
+        metrics: {
+          ...baseMetrics(item.candidate),
+          ...result.metrics,
+          prefilter: item.prefilter,
+          judge: item.verdict,
+          scoreBreakdown: result.breakdown,
+          evaluatedAt,
+          // The day's download allowance is counted from this stamp: a retry
+          // after a failure must not buy the same pages again.
+          scoredAt: evaluatedAt,
+          decision,
+        },
+      });
+    } catch (err) {
+      const message = (err as Error)?.message?.slice(0, 200) ?? "evaluation-failed";
+      bump("score:error");
+      outcomes.push({
+        candidate: item.candidate,
+        decision: "rejected-low-score",
+        prefilter: item.prefilter,
+        verdict: item.verdict,
+        result: { id: item.candidate.id, title: item.candidate.title, score: 0, breakdown: [], metrics: {} },
+        metrics: {
+          ...baseMetrics(item.candidate),
+          prefilter: item.prefilter,
+          judge: item.verdict,
+          evalError: message,
+          evaluatedAt,
+          scoredAt: evaluatedAt,
+          decision: "rejected-low-score",
+        },
+      });
+    }
+  }
+
+  return { outcomes, counters, scored, judgeCalls };
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
+function toCandidate(row: typeof news.$inferSelect): EvaluationCandidate {
+  return {
+    id: row.id,
+    title: row.title,
+    lead: row.summary ?? "",
+    originalUrl: row.originalUrl,
+    source: row.source,
+    publishedAt: row.publishedAt,
+    isScience: row.isScience,
+    language: row.language,
+    section: row.section,
+    sphereTags: row.sphereTags,
+    metrics: row.metrics,
+  };
+}
+
+function scoreCandidate(candidate: EvaluationCandidate): Promise<EvalResult> {
+  return evaluate({
+    id: candidate.id,
+    title: candidate.title,
+    lead: candidate.lead,
+    originalUrl: candidate.originalUrl,
+    source: candidate.source,
+    isScience: candidate.isScience,
+    section: candidate.section,
+    sphereTags: candidate.sphereTags,
+    metrics: candidate.metrics,
+  });
+}
+
+/** How one outcome lands in the `news` row (score, status, section). */
+function updateForOutcome(outcome: EvaluationOutcome): Record<string, unknown> {
+  const set: Record<string, unknown> = { metrics: outcome.metrics, updatedAt: new Date() };
+  if (outcome.decision === "approved" && outcome.result) {
+    set.score = outcome.result.score;
+    if (outcome.result.section) set.section = outcome.result.section;
+    set.sphereTags = outcome.result.sphereTags ?? [];
+    if (outcome.result.isScience !== undefined) set.isScience = outcome.result.isScience;
+    if (outcome.result.scienceField !== undefined) set.scienceField = outcome.result.scienceField;
+    if (outcome.result.originalContent) set.originalContent = outcome.result.originalContent;
+    return set;
+  }
+  if (outcome.decision === "rejected-low-score") {
+    set.score = outcome.result?.score ?? 0;
+    set.status = "rejected";
+    return set;
+  }
+  if (outcome.decision === "deferred-budget") {
+    // Passed the judge, lost the download budget: stays pending (score NULL) so
+    // a later cycle can score it without paying the judge twice.
+    return set;
+  }
+  set.score = 0;
+  set.status = "rejected";
+  return set;
+}
+
 async function main() {
-  const { id, batch, dailyCap } = parseArgs();
+  const { id, batch } = parseArgs();
+  const budget = dailyBudget();
+  const now = new Date();
+  const cycleId = cycleIdFor(now);
   const db = getDb();
 
-  let targets;
+  let targets: (typeof news.$inferSelect)[];
   if (id) {
     targets = await db.select().from(news).where(eq(news.id, id)).limit(1);
   } else if (batch) {
@@ -670,117 +1055,105 @@ async function main() {
       .select()
       .from(news)
       .where(and(eq(news.status, "pending"), isNull(news.score)))
-      .orderBy(desc(news.createdAt))
+      // Candidates the judge has not seen yet go first: a deferred-but-on-topic
+      // backlog must never starve a fresh material out of the batch window.
+      .orderBy(sql`(${news.metrics} -> 'judge') is null desc`, desc(news.createdAt))
       .limit(200);
   } else {
     targets = [];
   }
 
   if (targets.length === 0) {
-    console.log(JSON.stringify({ status: "ok", evaluated: 0, approved: 0, rejected: 0 }));
+    // Still write the day's ledger: the owner report must tell "nothing was
+    // collected" from "the cycle never ran".
+    await recordCycle(cycleId, emptyCycleMetrics(), CYCLE_STAGE.evaluated);
+    console.log(
+      JSON.stringify({ status: "ok", cycleId, budget, collected: 0, approved: 0, rejected: 0 }),
+    );
     console.error("[evaluate-news] No unevaluated pending articles");
     process.exit(0);
   }
 
-  console.error(`[evaluate-news] Scoring ${targets.length} articles...`);
-  const results: EvalResult[] = [];
-  for (const t of targets) {
-    try {
-      const r = await evaluate(t);
-      results.push(r);
-      console.error(
-        `[evaluate] #${r.id} score=${r.score} ${r.breakdown.map((b) => `${b.criterion}+${b.points}`).join(", ") || "(no criteria met)"}`,
-      );
-    } catch (err) {
-      console.error(`[evaluate] #${t.id} FAILED: ${(err as Error).message.slice(0, 120)}`);
-      results.push({
-        id: t.id,
-        title: t.title,
-        score: 0,
-        breakdown: [],
-        metrics: { evalError: (err as Error).message.slice(0, 200) },
-      });
-    }
+  // The day's download allowance is per DAY, not per run: retries after a
+  // failure continue the same budget instead of buying more pages, and the
+  // "page only for the budget" rule holds for the whole day.
+  const dayStart = new Date(now);
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const [scoredTodayRow] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(news)
+    .where(sql`${news.metrics}->>'scoredAt' >= ${dayStart.toISOString()}`);
+  const scoredToday = scoredTodayRow?.n ?? 0;
+  const downloadBudget = id ? 1 : Math.max(0, budget - scoredToday);
+
+  console.error(
+    `[evaluate-news] ${targets.length} candidates, day budget=${budget}, ` +
+      `pages left today=${downloadBudget} (${scoredToday} already downloaded)`,
+  );
+
+  // Provider chain (GigaChat → OpenCode, error classification from task 02).
+  // Token usage is accumulated for the cycle ledger: it is never dropped.
+  const usage: UsageTotals = { calls: 0, inputTokens: 0, outputTokens: 0 };
+  const { createProviderChain } = await import("../../api/ai/providers/chain");
+  const chain = createProviderChain({
+    usageSink: (record) => {
+      usage.calls++;
+      usage.inputTokens += record.inputTokens;
+      usage.outputTokens += record.outputTokens;
+    },
+  });
+
+  const cycle = await runEvaluationCycle({
+    candidates: targets.map(toCandidate),
+    // A manual `--id` run is one article: it must not be blocked by the day's
+    // download budget, but it still never fetches more than one page.
+    budget: downloadBudget,
+    deps: { now, completeJson: chain.completeJson },
+  });
+
+  for (const outcome of cycle.outcomes) {
+    await db.update(news).set(updateForOutcome(outcome)).where(eq(news.id, outcome.candidate.id));
+    console.error(
+      `[evaluate] #${outcome.candidate.id} ${outcome.decision}` +
+        (outcome.result ? ` score=${outcome.result.score}` : "") +
+        (outcome.verdict ? ` judge=${outcome.verdict.confidence.toFixed(2)}` : "") +
+        (outcome.prefilter ? ` prefilter="${outcome.prefilter.reason}"` : ""),
+    );
   }
 
-  // Daily cap: 0 means UNLIMITED (business decision — publish everything
-  // above the gate). A positive cap still limits approvals per UTC day.
-  let slots: number;
-  if (dailyCap <= 0) {
-    slots = Number.POSITIVE_INFINITY;
-  } else {
-    const dayStart = new Date();
-    dayStart.setUTCHours(0, 0, 0, 0);
-    const approvedToday = await db
-      .select({ id: news.id })
-      .from(news)
-      .where(
-        and(
-          isNotNull(news.score),
-          gte(news.score, SCORE_GATE),
-          inArray(news.status, ["pending", "summarized", "translated", "published"]),
-          gte(news.createdAt, dayStart),
-        ),
-      );
-    slots = id ? dailyCap : Math.max(0, dailyCap - approvedToday.length);
-  }
-  console.error(`[evaluate-news] Daily slots remaining: ${dailyCap <= 0 ? "unlimited" : `${slots}/${dailyCap}`}`);
+  const counters = await recordCycle(
+    cycleId,
+    { ...cycle.counters, usage },
+    CYCLE_STAGE.evaluated,
+  );
 
-  // Rank and decide
-  results.sort((a, b) => b.score - a.score);
-  let approved = 0;
-  let rejected = 0;
-
-  for (const r of results) {
-    const passesGate = r.score >= SCORE_GATE;
-    const approvedDecision = passesGate && slots > 0;
-    const metrics = {
-      ...r.metrics,
-      scoreBreakdown: r.breakdown,
-      evaluatedAt: new Date().toISOString(),
-      decision: approvedDecision
-        ? "approved"
-        : passesGate
-          ? "rejected-daily-cap"
-          : "rejected-low-score",
-    };
-
-    if (approvedDecision) {
-      slots--;
-      approved++;
-      const updateSet: Record<string, unknown> = {
-        score: r.score,
-        metrics,
-        ...(r.originalContent ? { originalContent: r.originalContent } : {}),
-        updatedAt: new Date(),
-      };
-      if (r.section) updateSet.section = r.section;
-      updateSet.sphereTags = r.sphereTags ?? [];
-      if (r.isScience !== undefined) updateSet.isScience = r.isScience;
-      if (r.scienceField !== undefined) updateSet.scienceField = r.scienceField;
-      await db
-        .update(news)
-        .set(updateSet)
-        .where(eq(news.id, r.id));
-    } else {
-      rejected++;
-      await db
-        .update(news)
-        .set({ score: r.score, metrics, status: "rejected", updatedAt: new Date() })
-        .where(eq(news.id, r.id));
-    }
-  }
-
+  const deferred = cycle.outcomes.filter((o) => o.decision === "deferred-budget").length;
   const output = {
     status: "ok",
-    evaluated: results.length,
-    approved,
-    rejected,
-    dailyCap,
-    top: results.slice(0, 5).map((r) => ({ id: r.id, score: r.score, title: r.title.slice(0, 80) })),
+    cycleId,
+    budget,
+    downloadBudget,
+    scoredToday,
+    collected: counters.collected,
+    prefiltered: counters.prefiltered,
+    judged: counters.judged,
+    approved: counters.approved,
+    deferred,
+    rejected: cycle.outcomes.length - counters.approved - deferred,
+    judgeCalls: cycle.judgeCalls,
+    scored: cycle.scored,
+    top: cycle.outcomes
+      .filter((o) => o.decision === "approved" && o.result)
+      .sort((a, b) => (b.result?.score ?? 0) - (a.result?.score ?? 0))
+      .slice(0, 5)
+      .map((o) => ({ id: o.candidate.id, score: o.result?.score, title: o.candidate.title.slice(0, 80) })),
   };
   console.log(JSON.stringify(output));
-  console.error(`[evaluate-news] Done: ${approved} approved (>${SCORE_GATE}), ${rejected} rejected`);
+  console.error(
+    `[evaluate-news] Done: collected=${counters.collected} prefiltered=${counters.prefiltered} ` +
+      `judged=${counters.judged} approved=${counters.approved} deferred=${deferred} ` +
+      `scored=${cycle.scored} judgeCalls=${cycle.judgeCalls}`,
+  );
   process.exit(0);
 }
 

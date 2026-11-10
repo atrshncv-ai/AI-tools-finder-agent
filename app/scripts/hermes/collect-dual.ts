@@ -31,7 +31,7 @@ import { listChannelVideos } from "./youtube-transcript";
 import { YOUTUBE_SOURCES } from "./youtube-sources";
 import { ssrfCheck } from "../../api/lib/url-safety";
 import { classifyScience } from "../ensure-science-categories";
-import { resolveSection } from "../../api/lib/section-resolve";
+import { resolveSection, type SectionResolution } from "../../api/lib/section-resolve";
 import { classifyInvention, buildInventionContext } from "../../api/lib/invention-classify";
 import { recordFeedHealth } from "./feed-health";
 
@@ -70,6 +70,41 @@ interface Candidate {
   description?: string | null;
   /** Pre-collected hard metrics from the source API (if available). */
   metrics: Record<string, unknown>;
+}
+
+/**
+ * Values for one `news` insert. The collected description is stored in
+ * `summary` — that is the lead the judge and the section router read on the
+ * next step (`evaluate-news.ts` takes title + `news.summary`). `save-summary`
+ * later overwrites it with the Russian digest text, so the raw lead is only a
+ * transport field between collect and evaluate. Dropping it here was the reason
+ * the judge used to see a title alone (R18.1).
+ */
+export function buildNewsRow(
+  candidate: Candidate,
+  resolution: SectionResolution,
+  category: { categoryId: number | null; categorySlug: string | null } = {
+    categoryId: null,
+    categorySlug: null,
+  },
+): typeof news.$inferInsert {
+  return {
+    title: candidate.title.slice(0, 500),
+    originalTitle: candidate.title.slice(0, 500),
+    summary: (candidate.description ?? "").trim(),
+    originalUrl: candidate.url,
+    source: candidate.source,
+    publishedAt: candidate.publishedAt,
+    language: candidate.language,
+    isScience: resolution.isScience,
+    scienceField: resolution.scienceField,
+    section: resolution.section,
+    sphereTags: resolution.sphereTags,
+    categoryId: category.categoryId,
+    categorySlug: category.categorySlug,
+    status: "pending",
+    metrics: candidate.metrics,
+  };
 }
 
 const rss = new Parser({
@@ -561,27 +596,10 @@ async function main() {
 
       // Unified three-way routing (single source of truth, see section-resolve).
       // Later stages re-run it with richer text and may move the article.
-      const section = resolution.section;
 
       const rows = await db
         .insert(news)
-        .values({
-          title: c.title.slice(0, 500),
-          originalTitle: c.title.slice(0, 500),
-          summary: "",
-          originalUrl: c.url,
-          source: c.source,
-          publishedAt: c.publishedAt,
-          language: c.language,
-          isScience: resolution.isScience,
-          scienceField: resolution.scienceField,
-          section,
-          sphereTags: resolution.sphereTags,
-          categoryId,
-          categorySlug,
-          status: "pending",
-          metrics: c.metrics,
-        })
+        .values(buildNewsRow(c, resolution, { categoryId, categorySlug }))
         .returning({ id: news.id });
       inserted++;
       insertedIds.push(rows[0].id);
@@ -615,7 +633,12 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((err) => {
-  console.error("[collect-dual] Fatal error:", err);
-  process.exit(1);
-});
+// Only auto-run when executed directly (npx tsx .../collect-dual.ts).
+// Importing this module (e.g. from vitest) must not start a collection cycle.
+const invokedDirectly = (process.argv[1] ?? "").endsWith("collect-dual.ts");
+if (invokedDirectly) {
+  main().catch((err) => {
+    console.error("[collect-dual] Fatal error:", err);
+    process.exit(1);
+  });
+}

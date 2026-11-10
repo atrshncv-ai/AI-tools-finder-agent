@@ -1,0 +1,1 @@
+ALTER TABLE "pipeline_state" ADD COLUMN "metrics" jsonb;

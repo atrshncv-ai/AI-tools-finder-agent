@@ -273,6 +273,10 @@ export const pipelineState = pgTable(
     stage: text("stage").default("idle").notNull(),
     totalArticles: integer("totalArticles").default(0).notNull(),
     processedArticles: integer("processedArticles").default(0).notNull(),
+    // Funnel counters of the cycle (collected / prefiltered / judged /
+    // approved / published / rejectedByReason), written by the Hermes steps.
+    // interfaces.md §10: no new columns on `news`; the cycle ledger lives here.
+    metrics: jsonb("metrics"),
     startedAt: timestamp("startedAt"),
     completedAt: timestamp("completedAt"),
     errorMessage: text("errorMessage"),

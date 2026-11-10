@@ -10,13 +10,21 @@
  * writes a structured manifest.json for Hermes to consume. Unevaluated rows
  * (score=NULL) NEVER reach the LLM.
  *
- * Exit codes: 0 = success, 1 = error
+ * DAY BUDGET (interfaces.md §2, spec §4): the manifest carries only the best
+ * DAILY_BUDGET articles by score (ties: judge confidence, then freshness). The
+ * pipeline pays for summaries here, so paying for more than can be published
+ * today is the very "работа впустую" the budget exists to stop.
+ *
+ * Exit codes: 0 = success, 1 = error (including a bad DAILY_BUDGET: a
+ * configuration error at start-up, not a silent default).
  */
 
+import "dotenv/config";
 import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
 import { eq, and, isNull, desc, gte } from "drizzle-orm";
 import { SCORE_GATE } from "./pipeline-config";
+import { dailyBudget, judgeConfidenceOf, selectForPublication } from "./publish-budget";
 
 // Same gate as evaluate-news.ts (shared constant). gte(score, SCORE_GATE)
 // also excludes score=NULL rows: NULL comparisons are never true in SQL, so
@@ -46,10 +54,36 @@ interface Manifest {
   summary: {
     total: number;
     pending: number;
+    budget: number;
     byStatus: Record<string, number>;
     byLanguage: Record<string, number>;
     bySource: Record<string, number>;
   };
+}
+
+/** The subset of a DB row the budget needs, plus the manifest fields to keep. */
+type BudgetableArticle = {
+  id: number;
+  score: number | null;
+  metrics?: unknown;
+  publishedAt: Date | string;
+};
+
+/**
+ * Keep the best `budget` approved articles: score desc → judge confidence desc
+ * → publishedAt desc (R08.1). Pure, so the ranking is testable without a DB.
+ */
+export function applyDailyBudget<T extends BudgetableArticle>(
+  articles: readonly T[],
+  budget: number,
+): T[] {
+  return selectForPublication(
+    articles.map((article) => ({
+      ...article,
+      confidence: judgeConfidenceOf(article.metrics),
+    })),
+    budget,
+  );
 }
 
 function parseArgs(): { outputPath: string; limit: number; scienceOnly: boolean } {
@@ -79,8 +113,11 @@ function parseArgs(): { outputPath: string; limit: number; scienceOnly: boolean 
 
 async function main() {
   const { outputPath, limit, scienceOnly } = parseArgs();
+  const budget = dailyBudget();
 
-  console.log(`[manifest-gen] Generating manifest (limit=${limit}, scienceOnly=${scienceOnly})...`);
+  console.log(
+    `[manifest-gen] Generating manifest (limit=${limit}, budget=${budget}, scienceOnly=${scienceOnly})...`,
+  );
 
   const db = getDb();
 
@@ -93,12 +130,16 @@ async function main() {
     whereConditions.push(eq(news.isScience, true));
   }
 
-  const articles = await db
+  // Filter in SQL, rank by the one shared ordering in JS: the query only needs
+  // to be wide enough to contain the day's best.
+  const rows = await db
     .select()
     .from(news)
     .where(and(...whereConditions))
-    .orderBy(desc(news.publishedAt))
-    .limit(limit);
+    .orderBy(desc(news.score), desc(news.publishedAt))
+    .limit(Math.max(limit, budget));
+
+  const articles = applyDailyBudget(rows, budget);
 
   const cycleId = `cycle-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}-manifest`;
 
@@ -133,6 +174,7 @@ async function main() {
     summary: {
       total: articles.length,
       pending: articles.length,
+      budget,
       byStatus,
       byLanguage,
       bySource,
@@ -142,13 +184,18 @@ async function main() {
   const fs = await import("fs");
   fs.writeFileSync(outputPath, JSON.stringify(manifest, null, 2), "utf-8");
 
-  console.log(`[manifest-gen] Written ${articles.length} articles to ${outputPath}`);
+  console.log(`[manifest-gen] Written ${articles.length} articles to ${outputPath} (budget ${budget})`);
   console.log(`[manifest-gen] Cycle ID: ${cycleId}`);
 
   process.exit(0);
 }
 
-main().catch((err) => {
-  console.error("[manifest-gen] Fatal error:", err);
-  process.exit(1);
-});
+// Only auto-run when executed directly (npx tsx .../manifest-gen.ts).
+// Importing this module (e.g. from vitest) must not touch the DB.
+const invokedDirectly = (process.argv[1] ?? "").endsWith("manifest-gen.ts");
+if (invokedDirectly) {
+  main().catch((err) => {
+    console.error("[manifest-gen] Fatal error:", err);
+    process.exit(1);
+  });
+}
