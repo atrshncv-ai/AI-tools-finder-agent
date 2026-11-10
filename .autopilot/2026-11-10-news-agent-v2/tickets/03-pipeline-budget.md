@@ -2,7 +2,7 @@
 
 **Требования:** R06, R07, R08, R08.1, R17, R18, R18.1, R19
 **Зависит от:** 01, 02
-**Зона:** `app/scripts/hermes/evaluate-news.ts` · `app/scripts/hermes/manifest-gen.ts` · `app/scripts/hermes/publish-budget.ts` · `app/scripts/hermes/ralph-loop.sh` · `app/db/schema.ts` · `app/db/migrations/0011_*.sql` · `app/scripts/hermes/pipeline-budget.test.ts`
+**Зона:** `app/scripts/hermes/collect-dual.ts` · `app/scripts/hermes/evaluate-news.ts` · `app/scripts/hermes/manifest-gen.ts` · `app/scripts/hermes/publish-budget.ts` · `app/scripts/hermes/ralph-loop.sh` · `app/scripts/hermes/deploy-ready.ts` · `app/db/schema.ts` · `app/db/migrations/0011_*.sql` · `app/scripts/hermes/pipeline-budget.test.ts`
 **Волна:** 2
 **Ревью:** нет
 **Модель:** обычная
@@ -31,6 +31,7 @@
 
 ## Критерии приёмки
 
+- [ ] описание из RSS сохраняется при сборе и доходит до судьи (сейчас `collect-dual.ts:571` пишет `summary: ""` вразрез с веткой `:551`)
 - [ ] из 100 кандидатов страница скачивается не более чем для `DAILY_BUDGET × 3`
       (тест считает обращения к `fetch`)
 - [ ] судья вызывается только для прошедших префильтр; его вердикт сохраняется
@@ -38,5 +39,7 @@
 - [ ] `manifest-gen` при 20 одобренных и бюджете 8 отдаёт 8 лучших по баллу
 - [ ] `DAILY_BUDGET` вне диапазона 5..10 — ошибка конфигурации при старте, а не тихое значение
 - [ ] счётчики цикла записываются в `pipeline_state.metrics`; миграция применяется на чистой БД
+- [ ] публикация не может превысить бюджет дня: прямой вызов публикации сверх бюджета
+      отклоняется с причиной, а не проходит молча
 - [ ] второй запуск в тот же календарный день не публикует второй выпуск
 - [ ] при отказе провайдера публикация не происходит, причина отказа попадает в счётчики

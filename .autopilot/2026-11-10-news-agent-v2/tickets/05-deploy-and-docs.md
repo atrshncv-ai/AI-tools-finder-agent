@@ -2,7 +2,7 @@
 
 **Требования:** R01, R01.1, R02, R02i, R03, R03.1, R04, R05, R12.2, R16, G01, G02
 **Зависит от:** 03, 04
-**Зона:** `scripts/deploy/` · `scripts/backup-offsite.sh` · `scripts/check-env-example.ts` · `scripts/check-docs.ts` · `docs/DEPLOY.md` · `ARCHITECTURE.md` · `CONTEXT.md` · `PROGRESS.md` · `docs/adr/` · `ecosystem.config.cjs` · `.env.example`
+**Зона:** `scripts/deploy/` · `app/skills/news-processor/SKILL.md` · `README.md` · `scripts/backup-offsite.sh` · `scripts/check-env-example.ts` · `scripts/check-docs.ts` · `docs/DEPLOY.md` · `ARCHITECTURE.md` · `CONTEXT.md` · `PROGRESS.md` · `docs/adr/` · `ecosystem.config.cjs` · `.env.example`
 **Волна:** 3
 **Ревью:** нет
 **Модель:** обычная
