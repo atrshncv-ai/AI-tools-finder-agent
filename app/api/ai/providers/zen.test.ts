@@ -189,8 +189,8 @@ describe("createZenProvider", () => {
       encoding: "utf8",
     });
 
-    expect(stdout).toContain("ZEN_GO_API_KEY");
     expect(stdout).not.toContain(GO_KEY_TWO);
+    expect(stdout).not.toContain("ZEN_GO_API_KEY");
     const envText = readFileSync(path, "utf8");
     expect(envText).toContain(`ZEN_GO_API_KEY=${GO_KEY_TWO}`);
     expect(envText).toContain("KEEP_ME=keep");
@@ -204,5 +204,48 @@ describe("createZenProvider", () => {
     await secondProvider.completeJson({ messages: [{ role: "user", content: "Текст" }] });
 
     expect(secondCalls[0].headers["Authorization"]).toBe(`Bearer ${GO_KEY_TWO}`);
+  });
+});
+
+type ScriptResult = { status: number | null; stdout: string; stderr: string };
+
+function runUpdateKey(envPath: string, args: string[], input?: string): ScriptResult {
+  const options: { env: NodeJS.ProcessEnv; encoding: "utf8"; input?: string } = {
+    env: { ...process.env, ENV_FILE: envPath },
+    encoding: "utf8",
+  };
+  if (input !== undefined) options.input = input;
+  try {
+    const stdout = execFileSync("bash", [SCRIPT_PATH, ...args], options);
+    return { status: 0, stdout, stderr: "" };
+  } catch (error) {
+    const failure = error as { status?: number | null; stdout?: string; stderr?: string };
+    return {
+      status: typeof failure.status === "number" ? failure.status : null,
+      stdout: failure.stdout ?? "",
+      stderr: failure.stderr ?? "",
+    };
+  }
+}
+
+describe("scripts/update-key.sh", () => {
+  it("refuses a value passed as an argument, where it would leak through history and ps", () => {
+    const path = envFile({ ZEN_GO_API_KEY: GO_KEY_ONE });
+
+    const result = runUpdateKey(path, ["ZEN_GO_API_KEY", GO_KEY_TWO]);
+
+    expect(result.status).toBe(64);
+    expect(`${result.stdout}${result.stderr}`).not.toContain(GO_KEY_TWO);
+    expect(readFileSync(path, "utf8")).toContain(`ZEN_GO_API_KEY=${GO_KEY_ONE}`);
+  });
+
+  it("never echoes the first argument when it is not a valid variable name", () => {
+    const path = envFile({ ZEN_GO_API_KEY: GO_KEY_ONE });
+
+    const result = runUpdateKey(path, [GO_KEY_TWO]);
+
+    expect(result.status).toBe(64);
+    expect(`${result.stdout}${result.stderr}`).not.toContain(GO_KEY_TWO);
+    expect(readFileSync(path, "utf8")).toContain(`ZEN_GO_API_KEY=${GO_KEY_ONE}`);
   });
 });
