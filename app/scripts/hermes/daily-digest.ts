@@ -3,15 +3,24 @@
  * daily-digest.ts — Morning Telegram digest of everything published in the
  * last 24 hours.
  *
- * Sections: 🎬 YouTube videos, 🛠 Tech (GitHub/HN/RSS blogs), 🔬 Science.
- * Each item links to its original source; the footer links to the dashboard.
+ * Two audiences, two messages (R11, R17i):
+ *   - clients get ONLY `buildClientDigest` output: the approved form, no
+ *     pipeline-health line, no error codes, no funnel counters;
+ *   - the owner gets a copy of the same clean digest plus a separate service
+ *     report (`buildOwnerReport`) with counters, rejection reasons and errors.
+ * The owner report goes out first, so a broken release reaches the owner
+ * before it reaches the client (R17).
  *
  * Env:
- *   TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_IDS — when absent the digest is only
- *     printed to stdout (stub mode, no sending).
- *   TELEGRAM_CHAT_IDS — comma-separated list of recipient chat IDs (owner +
- *     client). Legacy single TELEGRAM_CHAT_ID is honored as a fallback.
- *   DIGEST_DASHBOARD_URL — dashboard base URL (default http://localhost:3000)
+ *   TELEGRAM_BOT_TOKEN — when absent the digest is only printed to stdout
+ *     (stub mode, no sending).
+ *   TELEGRAM_CLIENT_CHAT_IDS — comma-separated client recipients. Legacy
+ *     TELEGRAM_CHAT_IDS / TELEGRAM_CHAT_ID are honoured as a client fallback.
+ *   TELEGRAM_OWNER_CHAT_IDS — comma-separated owner recipients: a copy of the
+ *     clean digest plus the service report. Missing owner address does not
+ *     stop the client delivery.
+ *   DIGEST_DASHBOARD_URL — dashboard base URL (default http://localhost:3000).
+ *   PAYMENT_MANAGER_CHAT_ID / PAYMENT_DUE_AT — server-payment reminders.
  *
  * Usage:
  *   npx tsx scripts/hermes/daily-digest.ts
@@ -20,133 +29,101 @@
 import "dotenv/config";
 
 import { getDb } from "../../api/queries/connection";
-import { collectPipelineStats, formatHealthLine } from "./pipeline-health";
+import { collectPipelineStats, formatHealthLine, type PipelineStats } from "./pipeline-health";
+import {
+  buildClientDigest,
+  buildEmptyClientDigest,
+  buildOwnerReport,
+  DIGEST_WINDOW_HOURS,
+  splitTelegramText,
+  type CycleStats,
+  type DigestItem,
+} from "./digest-format";
 import { news } from "@db/schema";
-import { and, desc, eq, isNotNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, ne, sql } from "drizzle-orm";
 import { pathToFileURL } from "node:url";
 
-const WINDOW_HOURS = 24;
-const MAX_ITEMS_PER_SECTION = 7;
-const TELEGRAM_MAX_LEN = 4000;
 const DASHBOARD_URL = (process.env.DIGEST_DASHBOARD_URL || "http://localhost:3000").replace(/\/+$/, "");
 const nonEmptySummary = and(isNotNull(news.summary), ne(news.summary, ""));
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-// Recipient list: TELEGRAM_CHAT_IDS (comma-separated) takes precedence; the
-// legacy single-recipient TELEGRAM_CHAT_ID still works as a fallback.
-// Surrounding quotes are stripped per id: cron sources .env via bash
-// (`set -a; . ./.env`), which — unlike dotenv — keeps literal quotes, and a
-// quoted id makes Telegram reject the chat ("chat not found").
-const CHAT_IDS = (process.env.TELEGRAM_CHAT_IDS || process.env.TELEGRAM_CHAT_ID || "")
-  .split(",")
-  .map((s) => s.trim().replace(/^["']+|["']+$/g, ""))
-  .filter(Boolean);
 const PAYMENT_MANAGER_CHAT_ID = (process.env.PAYMENT_MANAGER_CHAT_ID || "").trim();
 const PAYMENT_DUE_AT = process.env.PAYMENT_DUE_AT || "2026-11-10";
 
-/** Telegram legacy-Markdown escaping for dynamic text. */
-function esc(text: string): string {
-  return text.replace(/([_*\[\]`])/g, "\\$1");
-}
-
-interface DigestItem {
-  id: number;
-  title: string;
-  originalUrl: string;
-  source: string | null;
-  isScience: boolean | null;
-  section: string;
-  sphereTags: string[];
-  summary?: string | null;
-}
-
-function formatSection(emoji: string, name: string, items: DigestItem[]): string[] {
-  if (items.length === 0) return [];
-  const lines = [`${emoji} *${name}* — ${items.length}`];
-  for (const item of items.slice(0, MAX_ITEMS_PER_SECTION)) {
-    const description = item.summary ? ` — ${esc(item.summary.replace(/\s+/g, " ").trim().slice(0, 180))}` : "";
-    lines.push(`▫️ [${esc(item.title)}](${item.originalUrl})${description}`);
-  }
-  if (items.length > MAX_ITEMS_PER_SECTION) {
-    lines.push(`Ещё ${items.length - MAX_ITEMS_PER_SECTION} материалов — в дашборде.`);
-  }
-  lines.push("");
-  return lines;
-}
-
-export function splitTelegramText(text: string, maxLen = TELEGRAM_MAX_LEN): string[] {
-  if (text.length <= maxLen) return [text];
-  const chunks: string[] = [];
-  let remaining = text;
-  while (remaining.length > maxLen) {
-    let cut = remaining.lastIndexOf("\n", maxLen);
-    if (cut < 0) cut = maxLen;
-    chunks.push(remaining.slice(0, cut));
-    remaining = remaining.slice(cut).replace(/^\n+/, "");
-  }
-  if (remaining) chunks.push(remaining);
-  return chunks;
-}
-
-export function isPaymentReminderDay(now: Date, dueAt = PAYMENT_DUE_AT): boolean {
-  const due = new Date(`${dueAt}T00:00:00Z`);
-  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const days = Math.floor((today.getTime() - due.getTime()) / 86_400_000);
-  return days === -88 || (days >= 0 && days % 30 === 0);
-}
-
-export function paymentReminderText(dueAt = PAYMENT_DUE_AT): string {
-  return `💳 *Напоминание об оплате сервера*\n\nПожалуйста, проверьте оплату сервера. Текущий ориентир окончания оплаченного периода: *${dueAt}*.\n\nПосле этой даты напоминание будет приходить каждые 30 дней.`;
-}
-
-export function buildDigest(items: DigestItem[], healthLine?: string): string {
-  const science = items.filter((i) => i.section === "science" || (!i.section && i.isScience));
-  const inventions = items.filter((i) => i.section === "invention-tools");
-  const tech = items.filter((i) => i.section === "ai-news" || (!i.section && !i.isScience));
-
-  const dateStr = new Date().toLocaleDateString("ru-RU", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: "Europe/Moscow",
-  });
-
-  const lines = [
-    `🌅 *Утренний дайджест научного агента*`,
-    `_${dateStr}_`,
-    "",
-    `За последние ${WINDOW_HOURS} часа опубликовано: *${items.length}*`,
-  ];
-  if (healthLine) lines.push(healthLine);
-  lines.push(
-    "",
-    ...formatSection("🛠", "ИИ-новости", tech),
-    ...formatSection("🔬", "ИИ для науки", science),
-    ...formatSection("🧪", "Инструменты для изобретений", inventions),
-  );
-  lines.push(`📊 Дашборд доступен по кнопке ниже`);
-  return lines.join("\n");
+export interface DigestRecipients {
+  /** Client chat IDs — clean digest only. */
+  client: string[];
+  /** Owner chat IDs — the same digest as a copy plus the service report. */
+  owner: string[];
 }
 
 /**
- * Heartbeat for an empty day: the bot must NEVER be silent — a missing digest
- * is indistinguishable from a broken cron/pipeline. An explicit "nothing
- * published" message turns silence back into a diagnosable signal.
+ * Parse a comma-separated chat-id list. Surrounding quotes are stripped per id:
+ * cron sources `.env` via bash (`set -a; . ./.env`), which — unlike dotenv —
+ * keeps literal quotes, and a quoted id makes Telegram reject the chat
+ * ("chat not found").
  */
-export function buildEmptyDigest(): string {
-  const dateStr = new Date().toLocaleDateString("ru-RU", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: "Europe/Moscow",
-  });
-  return [
-    `🌅 *Утренний дайджест научного агента*`,
-    `_${dateStr}_`,
-    "",
-    `За последние ${WINDOW_HOURS} часа новых публикаций нет — конвейер работает, свежих материалов не нашлось.`,
-    "",
-    `📊 Дашборд доступен по кнопке ниже`,
-  ].join("\n");
+function parseChatIds(raw: string | undefined): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((s) => s.trim().replace(/^["']+|["']+$/g, ""))
+    .filter(Boolean);
+}
+
+/**
+ * Client and owner recipients come from separate variables. The legacy shared
+ * TELEGRAM_CHAT_IDS / TELEGRAM_CHAT_ID list stays a client fallback, so an
+ * existing deployment keeps delivering; the owner copy is opt-in.
+ */
+export function resolveRecipients(env: NodeJS.ProcessEnv = process.env): DigestRecipients {
+  return {
+    client: parseChatIds(
+      env.TELEGRAM_CLIENT_CHAT_IDS || env.TELEGRAM_CHAT_IDS || env.TELEGRAM_CHAT_ID,
+    ),
+    owner: parseChatIds(env.TELEGRAM_OWNER_CHAT_IDS || env.TELEGRAM_OWNER_CHAT_ID),
+  };
+}
+
+interface MetricsRecord {
+  decision?: unknown;
+  judge?: { onTopic?: unknown; reason?: unknown } | null;
+}
+
+/** Judge reasons that are machine codes; any other judge reason is free text. */
+const JUDGE_REASON_CODES = new Set(["invalid-judgement", "low-confidence"]);
+
+/**
+ * Why a material was rejected, as a stable machine code for the owner report:
+ * a judge rejection becomes `off-topic` (or its own code), else the
+ * evaluator's decision code. The judge's free-text reason is deliberately not
+ * used — every rejected item would get its own bucket and "top-3" would lie.
+ */
+function rejectionReason(metrics: unknown): string | null {
+  if (!metrics || typeof metrics !== "object") return null;
+  const record = metrics as MetricsRecord;
+  const judge = record.judge;
+  if (judge && judge.onTopic === false) {
+    const reason = typeof judge.reason === "string" ? judge.reason.trim() : "";
+    return JUDGE_REASON_CODES.has(reason) ? reason : "off-topic";
+  }
+  if (typeof record.decision === "string" && record.decision.trim()) return record.decision.trim();
+  return null;
+}
+
+/** Rejected-in-window count and the reason histogram for the owner report. */
+async function collectRejectionStats(
+  db: ReturnType<typeof getDb>,
+  since: Date,
+): Promise<{ rejected: number; reasons: Record<string, number> }> {
+  const rows = await db
+    .select({ metrics: news.metrics })
+    .from(news)
+    .where(and(eq(news.status, "rejected"), gte(news.updatedAt, since)));
+  const reasons: Record<string, number> = {};
+  for (const row of rows) {
+    const reason = rejectionReason(row.metrics);
+    if (reason) reasons[reason] = (reasons[reason] ?? 0) + 1;
+  }
+  return { rejected: rows.length, reasons };
 }
 
 const SEND_MAX_ATTEMPTS = 3;
@@ -217,9 +194,31 @@ export async function sendTelegram(text: string, chatId: string): Promise<boolea
   return false;
 }
 
+interface DeliveryResult {
+  ok: number;
+  total: number;
+}
+
+/** Send every part to every chat; one failing chat never blocks the others. */
+async function sendParts(parts: string[], chatIds: string[]): Promise<DeliveryResult> {
+  let okCount = 0;
+  for (let ci = 0; ci < chatIds.length; ci++) {
+    const chatId = chatIds[ci];
+    let ok = true;
+    for (let pi = 0; pi < parts.length; pi++) {
+      ok = (await sendTelegram(parts[pi], chatId)) && ok;
+      if (pi < parts.length - 1) await sleep(SEND_PACE_MS);
+    }
+    console.error(`[daily-digest] → chat ${chatId}: ${ok ? "sent" : "FAILED"}`);
+    if (ok) okCount++;
+    if (ci < chatIds.length - 1) await sleep(SEND_PACE_MS);
+  }
+  return { ok: okCount, total: chatIds.length };
+}
+
 async function main() {
   const db = getDb();
-  const since = new Date(Date.now() - WINDOW_HOURS * 3600_000);
+  const since = new Date(Date.now() - DIGEST_WINDOW_HOURS * 3600_000);
 
   // platformPublishedAt is immutable; updatedAt may change during enrichment.
   const recentItems = await db
@@ -237,42 +236,101 @@ async function main() {
     .where(and(eq(news.status, "published"), sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt}) >= ${since.toISOString()}`, nonEmptySummary))
     .orderBy(desc(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt})`));
 
-  const items = [...recentItems];
-  console.error(`[daily-digest] ${items.length} published in last ${WINDOW_HOURS}h`);
+  const items: DigestItem[] = [...recentItems];
+  console.error(`[daily-digest] ${items.length} published in last ${DIGEST_WINDOW_HOURS}h`);
 
+  const now = new Date();
+  const recipients = resolveRecipients();
+  const envErrors: string[] = [];
+
+  let healthStats: PipelineStats | undefined;
   let healthLine: string | undefined;
   try {
-    healthLine = formatHealthLine(await collectPipelineStats(since));
+    healthStats = await collectPipelineStats(since);
+    healthLine = formatHealthLine(healthStats);
   } catch (err) {
-    console.error(`[daily-digest] health line skipped: ${(err as Error).message.slice(0, 120)}`);
+    const message = (err as Error).message.slice(0, 120);
+    console.error(`[daily-digest] health line skipped: ${message}`);
+    // Fixed class only: DB/provider errors can echo connection details.
+    envErrors.push("статистика конвейера недоступна");
   }
 
-  const digestParts = items.length > 0
-    ? splitTelegramText(buildDigest(items, healthLine))
-    : [buildEmptyDigest()];
+  let rejected = 0;
+  let rejectedByReason: Record<string, number> = {};
+  try {
+    ({ rejected, reasons: rejectedByReason } = await collectRejectionStats(db, since));
+  } catch (err) {
+    console.error(`[daily-digest] rejection stats skipped: ${(err as Error).message.slice(0, 120)}`);
+    envErrors.push("причины отказа недоступны");
+  }
 
-  if (!BOT_TOKEN || CHAT_IDS.length === 0) {
-    console.error("[daily-digest] STUB MODE (no TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_IDS) — printing digest:");
-    console.log(digestParts.join("\n---\n"));
+  if (recipients.client.length === 0) {
+    envErrors.push("нет клиентских chat_id — клиентский дайджест некому отправить");
+  }
+
+  const stats: CycleStats = {
+    collected: healthStats?.collected ?? items.length,
+    rejected,
+    published: items.length,
+    rejectedByReason,
+    errors: envErrors,
+  };
+  const report = buildOwnerReport(stats, { date: now, dashboardUrl: DASHBOARD_URL, healthLine });
+  const clientParts = splitTelegramText(
+    items.length > 0
+      ? buildClientDigest(items, { date: now, dashboardUrl: DASHBOARD_URL })
+      : buildEmptyClientDigest({ date: now, dashboardUrl: DASHBOARD_URL }),
+  );
+
+  if (!BOT_TOKEN || (recipients.client.length === 0 && recipients.owner.length === 0)) {
+    console.error("[daily-digest] STUB MODE (no TELEGRAM_BOT_TOKEN / recipients) — printing messages:");
+    console.log(
+      [
+        "=== КЛИЕНТСКОЕ СООБЩЕНИЕ ===",
+        ...clientParts,
+        "",
+        "=== СЛУЖЕБНЫЙ ОТЧЁТ ВЛАДЕЛЬЦУ ===",
+        report,
+      ].join("\n"),
+    );
   } else {
-    // Fan-out to every recipient; one failing chat must not block the others.
-    // Small pacing between parts/recipients avoids burst throttling.
-    let okCount = 0;
-    for (let ci = 0; ci < CHAT_IDS.length; ci++) {
-      const chatId = CHAT_IDS[ci];
-      let ok = true;
-      for (let pi = 0; pi < digestParts.length; pi++) {
-        ok = (await sendTelegram(digestParts[pi], chatId)) && ok;
-        if (pi < digestParts.length - 1) await sleep(SEND_PACE_MS);
-      }
-      console.error(`[daily-digest] → chat ${chatId}: ${ok ? "sent" : "FAILED"}`);
-      if (ok) okCount++;
-      if (ci < CHAT_IDS.length - 1) await sleep(SEND_PACE_MS);
+    // Owner first: a broken release must reach the owner before the client (R17).
+    let reportOk = false;
+    if (recipients.owner.length > 0) {
+      const reportDelivery = await sendParts(splitTelegramText(report), recipients.owner);
+      reportOk = reportDelivery.ok === reportDelivery.total;
+      console.error(`[daily-digest] owner report → ${reportDelivery.ok}/${reportDelivery.total}`);
+    } else {
+      console.error("[daily-digest] no TELEGRAM_OWNER_CHAT_IDS — service report is not delivered");
     }
-    const status = okCount === CHAT_IDS.length ? "sent" : okCount > 0 ? "partial" : "failed";
-    console.log(JSON.stringify({ status, items: items.length, recipients: { ok: okCount, total: CHAT_IDS.length } }));
-    // Total delivery failure must be visible in the cron log (non-zero exit).
-    if (okCount === 0) process.exit(1);
+
+    const clientDelivery: DeliveryResult =
+      recipients.client.length > 0 ? await sendParts(clientParts, recipients.client) : { ok: 0, total: 0 };
+    // The owner's id may also be listed among clients; sending the copy again
+    // would duplicate the message, so only the missing ids get it.
+    const copyIds = recipients.owner.filter((id) => !recipients.client.includes(id));
+    const copyDelivery: DeliveryResult =
+      copyIds.length > 0 ? await sendParts(clientParts, copyIds) : { ok: 0, total: 0 };
+
+    const clientOk = clientDelivery.total > 0 && clientDelivery.ok === clientDelivery.total;
+    const ownerOk =
+      recipients.owner.length === 0 || (reportOk && copyDelivery.ok === copyDelivery.total);
+    const delivered = clientDelivery.ok + copyDelivery.ok;
+    const status = clientOk && ownerOk ? "sent" : delivered > 0 || reportOk ? "partial" : "failed";
+    console.log(
+      JSON.stringify({
+        status,
+        items: items.length,
+        recipients: {
+          client: { ok: clientDelivery.ok, total: clientDelivery.total },
+          ownerCopy: { ok: copyDelivery.ok, total: copyDelivery.total },
+        },
+        ownerReport: recipients.owner.length === 0 ? "skipped" : reportOk ? "sent" : "failed",
+      }),
+    );
+    // Total client-delivery failure (or no client recipients at all) must be
+    // visible in the cron log.
+    if (!clientOk) process.exit(1);
   }
 
   if (PAYMENT_MANAGER_CHAT_ID && isPaymentReminderDay(new Date())) {
@@ -282,13 +340,42 @@ async function main() {
   process.exit(0);
 }
 
+export function isPaymentReminderDay(now: Date, dueAt = PAYMENT_DUE_AT): boolean {
+  const due = new Date(`${dueAt}T00:00:00Z`);
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const days = Math.floor((today.getTime() - due.getTime()) / 86_400_000);
+  return days === -88 || (days >= 0 && days % 30 === 0);
+}
+
+export function paymentReminderText(dueAt = PAYMENT_DUE_AT): string {
+  return `💳 *Напоминание об оплате сервера*\n\nПожалуйста, проверьте оплату сервера. Текущий ориентир окончания оплаченного периода: *${dueAt}*.\n\nПосле этой даты напоминание будет приходить каждые 30 дней.`;
+}
+
+/**
+ * Best-effort owner alert when the digest cannot be built at all (R17: the
+ * owner learns about a failure before the client). The error text itself is
+ * never sent — it can contain connection details or credentials.
+ */
+async function alertOwnerOfFailure(): Promise<void> {
+  const owner = resolveRecipients().owner;
+  if (!BOT_TOKEN || owner.length === 0) return;
+  const text = [
+    "🧾 *Служебный отчёт* · сбой дайджеста",
+    "",
+    "⚠️ Дайджест не собран: скрипт завершился с ошибкой.",
+    "Клиенту сообщение не отправлено. Подробности — в логе cron.",
+  ].join("\n");
+  for (const chatId of owner) await sendTelegram(text, chatId);
+}
+
 // Run only when executed as a script (tsx scripts/hermes/daily-digest.ts),
-// not when imported by tests for buildDigest/splitTelegramText.
+// not when imported by tests for resolveRecipients/sendTelegram.
 const invokedAsScript =
   process.argv[1] != null && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (invokedAsScript) {
-  main().catch((err) => {
+  main().catch(async (err) => {
     console.error("[daily-digest] Fatal error:", err);
+    await alertOwnerOfFailure().catch(() => {});
     process.exit(1);
   });
 }
