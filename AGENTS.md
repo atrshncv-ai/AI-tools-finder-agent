@@ -98,4 +98,6 @@ digest via cron (`daily-digest.ts`). Full reference: `ARCHITECTURE.md`.
 Если работа продолжается — скажи «продолжи автопилот»: состояние поднимется из `.autopilot/state.js`, переспрашивать ничего не нужно.
 
 Решения — `docs/adr/`, словарь терминов — `CONTEXT.md`.
+
+Два ремоута: `git push origin main` уходит сразу в GitHub и в GitVerse (у `origin` два push-URL). Отдельное зеркало — ремоут `gitverse` (`gitverse.ru/a.trshncv2/Science-finder-agent`), ключ `~/.ssh/gitverse_science_finder` через алиас `gitverse-science`.
 <!-- autopilot:end -->
