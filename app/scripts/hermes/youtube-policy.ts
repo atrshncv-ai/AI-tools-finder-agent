@@ -29,6 +29,11 @@ interface YoutubeCandidateSignals {
    * "missing transcript" refusal must not fire for this candidate.
    */
   descriptionOnly?: boolean;
+  /**
+   * Authority points from the configured channel tier (+45/+30/+15). Omitted
+   * for a legacy channel, which keeps the historical curated +45.
+   */
+  authorityPoints?: number;
 }
 
 export interface YoutubeCandidateDecision {
@@ -67,13 +72,18 @@ export function isDescriptionOnlyVideo(metrics: unknown): boolean {
  *
  * Owner mandate 2026-09-10: topic relevance (+15) requires a REAL explicit AI
  * signal (aiRelevant). dedicatedChannel is kept in the signature for call-site
- * stability but grants only the +45 curation/authority bonus, never relevance.
+ * stability but grants authority only, never relevance. Authority is tiered
+ * (+45/+30/+15) for the owner-verified channels and stays +45 for legacy ones.
  *
  * Description-only videos (Data API origin) are scored on the material that
  * exists: the +10 "verified transcript" bonus is NOT paid, because a
  * description is weaker evidence than a transcript. They still clear the 50
  * gate on curation + topic (60) and rank below an equivalent transcribed video.
  */
+function authorityPoints(signals: YoutubeCandidateSignals): number {
+  return signals.authorityPoints ?? 45;
+}
+
 export function scoreYoutubeCandidate(
   signals: YoutubeCandidateSignals,
 ): YoutubeCandidateDecision {
@@ -83,7 +93,7 @@ export function scoreYoutubeCandidate(
     }
     const longFormPriority = isPriorityLongVideo(signals.durationSeconds);
     const score =
-      45 + // curated source (authority, not relevance)
+      authorityPoints(signals) + // curated source (authority, not relevance)
       (signals.aiRelevant ? 15 : 0) +
       (longFormPriority ? 10 : 0);
 
@@ -99,7 +109,7 @@ export function scoreYoutubeCandidate(
 
   const longFormPriority = isPriorityLongVideo(signals.durationSeconds);
   const score =
-    45 + // curated source (authority, not relevance)
+    authorityPoints(signals) + // curated source (authority, not relevance)
     (signals.aiRelevant ? 15 : 0) +
     10 + // verified transcript
     (longFormPriority ? 10 : 0);

@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { SCIENCE_FEEDS, TECH_BLOG_FEEDS } from "./collect-dual";
+import { describe, expect, it, vi } from "vitest";
+import { SCIENCE_FEEDS, TECH_BLOG_FEEDS, isFresh } from "./collect-dual";
+import { matchTitle, normalizeTitle } from "./dedup";
 
 /**
  * Approved by the customer and verified reachable: science/medicine/chemistry/
@@ -47,6 +48,79 @@ const NEW_SCIENCE_FEEDS = [
     name: "n-plus-one",
     field: "multidisciplinary",
     language: "ru",
+  },
+] as const;
+
+/**
+ * Owner-verified on 2026-11-15: every URL answered HTTP 200 and returned
+ * records. `name` doubles as `news.source` and as the source-health row, so it
+ * must stay unique; `field` is the customer direction stored with the item.
+ */
+const VERIFIED_RSS_SOURCES = [
+  {
+    name: "sciencedaily-ai",
+    url: "https://www.sciencedaily.com/rss/computers_math/artificial_intelligence.xml",
+    field: "ai-news",
+  },
+  {
+    name: "sciencedaily-chemistry",
+    url: "https://www.sciencedaily.com/rss/matter_energy/chemistry.xml",
+    field: "chemistry",
+  },
+  {
+    name: "quanta",
+    url: "https://www.quantamagazine.org/feed/",
+    field: "multidisciplinary",
+  },
+  {
+    name: "genengnews",
+    url: "https://www.genengnews.com/feed/",
+    field: "biology",
+  },
+  {
+    name: "labiotech",
+    url: "https://www.labiotech.eu/feed/",
+    field: "biology",
+  },
+  {
+    name: "drugdiscoverytrends",
+    url: "https://www.drugdiscoverytrends.com/feed/",
+    field: "medicine",
+  },
+  {
+    name: "npj-computational-materials",
+    url: "https://www.nature.com/npjcompumats.rss",
+    field: "materials",
+  },
+  {
+    name: "syncedreview",
+    url: "https://syncedreview.com/feed/",
+    field: "ai-news",
+  },
+  {
+    name: "marktechpost",
+    url: "https://www.marktechpost.com/feed/",
+    field: "ai-news",
+  },
+  {
+    name: "techcrunch-ai",
+    url: "https://techcrunch.com/category/artificial-intelligence/feed/",
+    field: "ai-news",
+  },
+  {
+    name: "verge-ai",
+    url: "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
+    field: "ai-news",
+  },
+  {
+    name: "kdnuggets",
+    url: "https://www.kdnuggets.com/feed",
+    field: "ai-news",
+  },
+  {
+    name: "mozilla-ai",
+    url: "https://blog.mozilla.ai/rss/",
+    field: "ai-news",
   },
 ] as const;
 
@@ -108,5 +182,53 @@ describe("collector feed configuration", () => {
     expect(urls.filter((url) => url === "https://www.cell.com/cell/current.rss")).toHaveLength(1);
     expect(urls.filter((url) => url === "https://naked-science.ru/?feed=rss2")).toHaveLength(1);
     expect(urls.filter((url) => url === "https://www.technologyreview.com/feed/")).toHaveLength(1);
+  });
+});
+
+describe("owner-verified RSS sources (2026-11-15)", () => {
+  it("configures all 13 feeds with the exact name/url/field and language en", () => {
+    for (const expected of VERIFIED_RSS_SOURCES) {
+      expect(SCIENCE_FEEDS).toEqual(
+        expect.arrayContaining([expect.objectContaining({ ...expected, language: "en" })]),
+      );
+    }
+  });
+
+  it("keeps every verified URL and name unique across the whole collector", () => {
+    const feeds = [...SCIENCE_FEEDS, ...TECH_BLOG_FEEDS];
+    for (const expected of VERIFIED_RSS_SOURCES) {
+      expect(feeds.filter((feed) => feed.url === expected.url)).toHaveLength(1);
+      expect(feeds.filter((feed) => feed.name === expected.name)).toHaveLength(1);
+    }
+    expect(VERIFIED_RSS_SOURCES).toHaveLength(13);
+    expect(new Set(VERIFIED_RSS_SOURCES.map((feed) => feed.url)).size).toBe(13);
+    expect(new Set(VERIFIED_RSS_SOURCES.map((feed) => feed.name)).size).toBe(13);
+  });
+
+  it("rejects a stale item from a verified feed at the 72h Time Guard", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-15T12:00:00.000Z"));
+    try {
+      expect(isFresh(new Date("2026-11-15T11:00:00.000Z"))).toBe(true);
+      expect(isFresh(new Date("2026-11-12T12:00:00.000Z"))).toBe(true); // exactly 72h
+      expect(isFresh(new Date("2026-11-12T11:59:59.000Z"))).toBe(false);
+      expect(isFresh(null)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still collapses one story republished by two verified feeds (semantic dedup)", () => {
+    // Dedup keys off URL + title, not the source: adding feeds must not bypass it.
+    const fromLabiotech = "AI drug discovery platform finds new antibiotic candidate";
+    const fromDrugDiscoveryTrends =
+      "AI drug discovery platform identifies a new antibiotic candidate";
+    const match = matchTitle(
+      fromDrugDiscoveryTrends,
+      normalizeTitle(fromDrugDiscoveryTrends),
+      fromLabiotech,
+      0.85,
+    );
+    expect(match).not.toBeNull();
   });
 });

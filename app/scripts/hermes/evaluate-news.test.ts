@@ -1,7 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { hasExplicitAiSignal } from "../../api/lib/classify";
-import { SCORE_GATE } from "./pipeline-config";
-import { RELEVANCE_LEAD_CHARS, hasAiAndDomain, relevanceEvidence } from "./evaluate-news";
+import { PUBLISH_SCORE_FLOOR, SCORE_GATE } from "./pipeline-config";
+import { prefilterCandidate, sourceTier } from "./prefilter";
+import {
+  RELEVANCE_LEAD_CHARS,
+  evaluate,
+  hasAiAndDomain,
+  relevanceEvidence,
+  scienceSourceScore,
+  sourceAuthorityPoints,
+} from "./evaluate-news";
 
 // Non-AI Nature-style news: medicine words up front, one incidental
 // "machine learning" mention buried deep in the body.
@@ -134,5 +142,140 @@ describe("evaluate-news hard AI gate has no source exemptions", () => {
     expect(hasExplicitAiSignal(githubAi)).toBe(true);
     expect(hasExplicitAiSignal(hnAi)).toBe(true);
     expect(hasExplicitAiSignal(youtubeAi)).toBe(true);
+  });
+});
+
+const NEW_TIER1_SOURCES = ["npj-computational-materials", "quanta"] as const;
+const NEW_TIER2_SOURCES = [
+  "sciencedaily-ai",
+  "sciencedaily-chemistry",
+  "genengnews",
+  "labiotech",
+  "drugdiscoverytrends",
+  "syncedreview",
+] as const;
+const NEW_TIER3_SOURCES = [
+  "techcrunch-ai",
+  "verge-ai",
+  "marktechpost",
+  "kdnuggets",
+  "mozilla-ai",
+] as const;
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("source authority tiers for the verified sources", () => {
+  const NOW = new Date("2026-11-15T12:00:00.000Z");
+  const equalElsewhere = {
+    title: "AI model predicts drug toxicity before clinical trials",
+    lead:
+      "The machine learning system ranks candidate molecules and reduces late-stage failures; " +
+      "researchers say it was trained on public chemistry datasets.",
+    publishedAt: new Date(NOW.getTime() - 3600_000),
+  };
+
+  it("assigns every verified non-channel source to the requested tier", () => {
+    for (const source of NEW_TIER1_SOURCES) expect(sourceTier(source)).toBe(1);
+    for (const source of NEW_TIER2_SOURCES) expect(sourceTier(source)).toBe(2);
+    for (const source of NEW_TIER3_SOURCES) expect(sourceTier(source)).toBe(3);
+  });
+
+  it("gives a new TIER1 source a bigger score than a new TIER3 source, all else equal", () => {
+    expect(sourceAuthorityPoints("npj-computational-materials")).toBe(45);
+    expect(sourceAuthorityPoints("techcrunch-ai")).toBe(15);
+    expect(sourceAuthorityPoints("npj-computational-materials")).toBeGreaterThan(
+      sourceAuthorityPoints("techcrunch-ai"),
+    );
+
+    const tier1 = prefilterCandidate(
+      { ...equalElsewhere, source: "npj-computational-materials" },
+      { now: NOW },
+    );
+    const tier3 = prefilterCandidate(
+      { ...equalElsewhere, source: "techcrunch-ai" },
+      { now: NOW },
+    );
+    expect(tier1.keep && tier3.keep).toBe(true);
+    expect(tier1.score).toBeGreaterThan(tier3.score);
+  });
+
+  it("lets an AI-signal drugdiscoverytrends material clear the 35 publication floor", () => {
+    const floorScore = scienceSourceScore("drugdiscoverytrends");
+    expect(floorScore).toBeGreaterThanOrEqual(PUBLISH_SCORE_FLOOR);
+    // Tier-2 authority (30) + explicit AI×science relevance (20) = 50.
+    expect(floorScore).toBe(50);
+  });
+
+  it("evaluates an AI-signal drugdiscoverytrends page above the publication floor end-to-end", async () => {
+    const page =
+      "<html><body><article>" +
+      "Artificial intelligence screens chemical libraries for new antibiotics. " +
+      "The machine learning model ranked molecules and predicted which compounds " +
+      "would survive early safety tests in the laboratory." +
+      "</article></body></html>";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        const body = url.includes("hn.algolia.com")
+          ? JSON.stringify({ hits: [] })
+          : page;
+        return {
+          ok: true,
+          status: 200,
+          text: async () => body,
+          json: async () => JSON.parse(body),
+        } as unknown as Response;
+      }),
+    );
+
+    const result = await evaluate({
+      id: 1,
+      title: "AI drug discovery platform finds a new antibiotic candidate",
+      lead:
+        "A machine learning model screened chemical libraries and identified a compound " +
+        "that kills resistant bacteria in early tests.",
+      originalUrl: "https://www.drugdiscoverytrends.com/ai-antibiotic-candidate/",
+      source: "drugdiscoverytrends",
+      isScience: true,
+      metrics: {},
+    });
+
+    expect(result.breakdown).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ criterion: "tier2-source", points: 30 }),
+      ]),
+    );
+    expect(result.score).toBeGreaterThanOrEqual(PUBLISH_SCORE_FLOOR);
+  });
+});
+
+describe("YouTube channel authority tiers", () => {
+  const descriptionOnlyBase = {
+    title: "New AI model predicts protein structures",
+    lead:
+      "The large language model reads amino-acid sequences and predicts folding; " +
+      "researchers describe the neural network and its training data.",
+    originalUrl: "https://www.youtube.com/watch?v=verified-demo",
+    isScience: false,
+    metrics: { origin: "youtube-api", durationSeconds: 12 * 60 },
+  };
+
+  it("scores a TIER1 channel above a TIER3 channel for the same AI-signal video", async () => {
+    const tier1 = await evaluate({
+      ...descriptionOnlyBase,
+      id: 11,
+      source: "youtube-google-deepmind",
+    });
+    const tier3 = await evaluate({
+      ...descriptionOnlyBase,
+      id: 12,
+      source: "youtube-ai-dot-engineer",
+    });
+
+    expect(tier1.score).toBeGreaterThan(tier3.score);
+    expect(tier3.score).toBeGreaterThanOrEqual(PUBLISH_SCORE_FLOOR);
   });
 });

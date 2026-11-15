@@ -72,7 +72,13 @@ import { resolveSection } from "../../api/lib/section-resolve";
 
 import { SCORE_GATE } from "./pipeline-config";
 import { hasExplicitAiSignal } from "../../api/lib/classify";
-import { prefilterCandidate, type PrefilterInput, type PrefilterResult } from "./prefilter";
+import {
+  SOURCE_TIER_POINTS,
+  prefilterCandidate,
+  sourceTier,
+  type PrefilterInput,
+  type PrefilterResult,
+} from "./prefilter";
 import { JUDGE_CONFIDENCE_THRESHOLD, judgeRelevance, type Judgement } from "./judge";
 import { directionById, sectionById, type DirectionId, type SectionId } from "./topics";
 import {
@@ -107,26 +113,27 @@ const UA = process.env.AGENT_UA || "science-agent/2.0";
 
 // ─── Source tiers for Science scoring ───────────────────────────────────────
 
-const TIER1_SCIENCE = new Set([
-  "nature",
-  "science",
-  "lancet",
-  "cell",
-  "openai-blog",
-  "anthropic-blog",
-  "google-ai-blog",
-  "deepmind-blog",
-]);
+/**
+ * Authority points of a configured source (RSS feed or YouTube channel).
+ * The tier sets and the +45/+30/+15 scale live in prefilter.ts, so stage A and
+ * the publication score can never disagree about which tier a source is in.
+ */
+export function sourceAuthorityPoints(source: string): number {
+  const tier = sourceTier(source);
+  return tier === null ? 0 : SOURCE_TIER_POINTS[tier];
+}
 
-const TIER2_SCIENCE = new Set([
-  "mit-tech-review",
-  "huggingface-blog",
-  // arXiv/conference names detected by content regex, not source slug
-  "arxiv",
-  "arxiv-cs-ai",
-  "arxiv-cs-et",
-  "naked-science",
-]);
+/** Explicit AI×science relevance bonus, granted after the hard AI gate. */
+export const SCIENCE_AI_RELEVANCE_POINTS = 20;
+
+/**
+ * Points an AI-signal science material earns from its source: authority tier
+ * plus the AI×science relevance bonus. Tier-3 sources land exactly on the 35
+ * publication floor (15 + 20); tier-2 drug-discovery outlets clear it (30 + 20).
+ */
+export function scienceSourceScore(source: string): number {
+  return sourceAuthorityPoints(source) + SCIENCE_AI_RELEVANCE_POINTS;
+}
 
 const OPEN_LICENSES = new Set(["MIT", "Apache-2.0"]);
 
@@ -406,10 +413,23 @@ async function altmetricScore(doi: string): Promise<number | null> {
 // ─── Core evaluator ─────────────────────────────────────────────────────────
 
 function isScienceSource(source: string): boolean {
-  return TIER1_SCIENCE.has(source) || TIER2_SCIENCE.has(source);
+  return sourceTier(source) !== null;
 }
 
-async function evaluate(article: {
+/**
+ * Authority points for a tiered YouTube channel; undefined for a legacy
+ * channel, which youtube-policy then scores at the curated-channel default.
+ */
+function youtubeAuthorityPoints(source: string): number | undefined {
+  const tier = sourceTier(source);
+  return tier === null ? undefined : SOURCE_TIER_POINTS[tier];
+}
+
+/**
+ * Deterministic page scoring for one candidate. Exported for the tier/floor
+ * regression tests: they must exercise the real scoring path, not a copy.
+ */
+export async function evaluate(article: {
   id: number;
   title: string;
   /** RSS lead saved at collection time; used for section routing, never the page. */
@@ -488,17 +508,19 @@ async function evaluate(article: {
         return { id: article.id, title: article.title, score: 0, breakdown, metrics };
       }
 
+      const authorityPoints = youtubeAuthorityPoints(article.source);
       const decision = scoreYoutubeCandidate({
         hasTranscript: false,
         descriptionOnly: true,
         durationSeconds,
         dedicatedChannel: DEDICATED_AI_YOUTUBE_SOURCES.has(article.source),
         aiRelevant,
+        authorityPoints,
       });
 
       breakdown.push({
         criterion: "youtube-curated-channel",
-        points: 45,
+        points: authorityPoints ?? 45,
         evidence: `source=${article.source}`,
       });
       breakdown.push({
@@ -570,16 +592,18 @@ async function evaluate(article: {
       });
       return { id: article.id, title: article.title, score: 0, breakdown, metrics };
     }
+    const authorityPoints = youtubeAuthorityPoints(article.source);
     const decision = scoreYoutubeCandidate({
       hasTranscript: true,
       durationSeconds: transcript.durationSeconds,
       dedicatedChannel,
       aiRelevant,
+      authorityPoints,
     });
 
     breakdown.push({
       criterion: "youtube-curated-channel",
-      points: 45,
+      points: authorityPoints ?? 45,
       evidence: `source=${article.source}`,
     });
     if (aiRelevant) {
@@ -750,13 +774,37 @@ async function evaluate(article: {
   if (article.isScience || isScienceSource(article.source)) {
     // ── Science scoring ──
 
-    // Source tier
-    if (TIER1_SCIENCE.has(article.source)) {
-      score += 45;
-      breakdown.push({ criterion: "tier1-source", points: 45, evidence: `source=${article.source}` });
-    } else if (TIER2_SCIENCE.has(article.source) || hasAny(evidenceText, /\bNeurIPS\b|\bCVPR\b|\bICLR\b/)) {
-      score += 30;
-      breakdown.push({ criterion: "tier2-source", points: 30, evidence: `source=${article.source}` });
+    // Source tier (one authority award per source, strongest tier wins)
+    const tier = sourceTier(article.source);
+    if (tier === 1) {
+      score += SOURCE_TIER_POINTS[1];
+      breakdown.push({
+        criterion: "tier1-source",
+        points: SOURCE_TIER_POINTS[1],
+        evidence: `source=${article.source}`,
+      });
+    } else if (tier === 2) {
+      score += SOURCE_TIER_POINTS[2];
+      breakdown.push({
+        criterion: "tier2-source",
+        points: SOURCE_TIER_POINTS[2],
+        evidence: `source=${article.source}`,
+      });
+    } else if (tier === 3) {
+      score += SOURCE_TIER_POINTS[3];
+      breakdown.push({
+        criterion: "tier3-source",
+        points: SOURCE_TIER_POINTS[3],
+        evidence: `source=${article.source}`,
+      });
+    } else if (hasAny(evidenceText, /\bNeurIPS\b|\bCVPR\b|\bICLR\b/)) {
+      // Conference mention is the fallback for an untiered source.
+      score += SOURCE_TIER_POINTS[2];
+      breakdown.push({
+        criterion: "tier2-source",
+        points: SOURCE_TIER_POINTS[2],
+        evidence: "conference mention: NeurIPS/CVPR/ICLR",
+      });
     }
 
     // Explicit AI signal is the product's core criterion. Scored here so
@@ -768,10 +816,10 @@ async function evaluate(article: {
     const scienceFloorEligible =
       section === "science" || section === "invention-tools" || article.isScience;
     if (scienceFloorEligible) {
-      score += 20;
+      score += SCIENCE_AI_RELEVANCE_POINTS;
       breakdown.push({
         criterion: "science-ai-relevance",
-        points: 20,
+        points: SCIENCE_AI_RELEVANCE_POINTS,
         evidence: "explicit AI/ML signal in science-resolved content",
       });
     }

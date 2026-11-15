@@ -13,7 +13,7 @@
  */
 
 import { hasExplicitAiSignal } from "../../api/lib/classify";
-import { DEDICATED_AI_YOUTUBE_SOURCES } from "./youtube-sources";
+import { DEDICATED_AI_YOUTUBE_SOURCES, youtubeSourceTier } from "./youtube-sources";
 
 export interface PrefilterInput {
   title: string;
@@ -36,10 +36,22 @@ const MAX_AGE_MS = 72 * 3600_000;
 const CLOCK_SKEW_MS = 6 * 3600_000;
 
 /**
- * Authority tiers. Deliberately the same outlets evaluate-news scores
- * (TIER1/TIER2_SCIENCE there); until ticket 03 rewires evaluation onto this
- * module the list is duplicated — keep the two in sync when adding a source.
+ * Authority tiers. This is the single source of truth for the final scoring
+ * too: evaluate-news.ts asks `sourceTier()` and applies SOURCE_TIER_POINTS,
+ * so a newly added source gets its authority weight in one place.
+ *
+ * `SOURCE_TIER_POINTS` is the publication-score scale (+45/+30/+15). Stage A
+ * uses its own, deliberately flatter WEIGHT for ranking (30/20/10): it only
+ * orders candidates before the paid judge, it is not the publication score.
  */
+export type SourceTier = 1 | 2 | 3;
+
+export const SOURCE_TIER_POINTS: Record<SourceTier, number> = {
+  1: 45,
+  2: 30,
+  3: 15,
+};
+
 const TIER1_SOURCES = new Set([
   "nature",
   "science",
@@ -49,6 +61,9 @@ const TIER1_SOURCES = new Set([
   "anthropic-blog",
   "google-ai-blog",
   "deepmind-blog",
+  // Owner-verified 2026-11-15:
+  "npj-computational-materials",
+  "quanta",
 ]);
 
 const TIER2_SOURCES = new Set([
@@ -58,13 +73,43 @@ const TIER2_SOURCES = new Set([
   "arxiv-cs-ai",
   "arxiv-cs-et",
   "naked-science",
+  // Owner-verified 2026-11-15:
+  "sciencedaily-ai",
+  "sciencedaily-chemistry",
+  "genengnews",
+  "labiotech",
+  "drugdiscoverytrends",
+  "syncedreview",
 ]);
+
+const TIER3_SOURCES = new Set([
+  // Owner-verified 2026-11-15. More marketing than the tiers above, but they
+  // still break real releases often enough to keep, at a lower authority.
+  "techcrunch-ai",
+  "verge-ai",
+  "marktechpost",
+  "kdnuggets",
+  "mozilla-ai",
+]);
+
+/**
+ * Tier of a configured source, or null if it is untiered. YouTube channel
+ * names are looked up in youtube-sources.ts; both kinds share one scale.
+ */
+export function sourceTier(source: string): SourceTier | null {
+  const name = (source ?? "").trim();
+  if (TIER1_SOURCES.has(name)) return 1;
+  if (TIER2_SOURCES.has(name)) return 2;
+  if (TIER3_SOURCES.has(name)) return 3;
+  return youtubeSourceTier(name);
+}
 
 const WEIGHT = {
   aiInTitle: 40,
   aiInLeadOnly: 25,
   tier1Source: 30,
   tier2Source: 20,
+  tier3Source: 10,
   curatedYoutube: 10,
   freshUnder6h: 15,
   freshUnder24h: 10,
@@ -123,12 +168,16 @@ export function prefilterCandidate(
     parts.push("ai=lead");
   }
 
-  if (TIER1_SOURCES.has(source)) {
+  const tier = sourceTier(source);
+  if (tier === 1) {
     score += WEIGHT.tier1Source;
     parts.push("source=tier1");
-  } else if (TIER2_SOURCES.has(source)) {
+  } else if (tier === 2) {
     score += WEIGHT.tier2Source;
     parts.push("source=tier2");
+  } else if (tier === 3) {
+    score += WEIGHT.tier3Source;
+    parts.push("source=tier3");
   } else if (input.isYoutube && DEDICATED_AI_YOUTUBE_SOURCES.has(source)) {
     score += WEIGHT.curatedYoutube;
     parts.push("source=curated-youtube");

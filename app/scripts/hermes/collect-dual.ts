@@ -62,7 +62,7 @@ const MAX_AGE_MS = MAX_AGE_HOURS_DEFAULT * 3600_000;
  * date no older than 72h. Missing or unparseable date => REJECTED (fail-closed).
  * Runs at collection time, BEFORE dedup/scoring — no exceptions for any source.
  */
-function isFresh(publishedAt: Date | null | undefined, maxAgeMs = MAX_AGE_MS, minAgeMs = 0): boolean {
+export function isFresh(publishedAt: Date | null | undefined, maxAgeMs = MAX_AGE_MS, minAgeMs = 0): boolean {
   if (!publishedAt) return false;
   const ts = publishedAt.getTime?.();
   if (!ts || Number.isNaN(ts)) return false;
@@ -719,6 +719,89 @@ export const SCIENCE_FEEDS: ScienceFeed[] = [
   // Second-priority Russian-language science source, tagged `ru` like
   // naked-science so the existing language marker can down-weight it.
   { url: "https://nplus1.ru/rss", name: "n-plus-one", field: "multidisciplinary", language: "ru" },
+  // Owner-verified on 2026-11-15: every URL answered HTTP 200 and returned
+  // records. They go through the same collectScience() path, so the strict 72h
+  // Time Guard and semantic dedup are unchanged. `field` is the customer
+  // direction exactly as specified; `name` is unique across all feeds because
+  // it doubles as `news.source` and the source-health row.
+  {
+    url: "https://www.sciencedaily.com/rss/computers_math/artificial_intelligence.xml",
+    name: "sciencedaily-ai",
+    field: "ai-news",
+    language: "en",
+  },
+  {
+    url: "https://www.sciencedaily.com/rss/matter_energy/chemistry.xml",
+    name: "sciencedaily-chemistry",
+    field: "chemistry",
+    language: "en",
+  },
+  {
+    url: "https://www.quantamagazine.org/feed/",
+    name: "quanta",
+    field: "multidisciplinary",
+    language: "en",
+  },
+  {
+    url: "https://www.genengnews.com/feed/",
+    name: "genengnews",
+    field: "biology",
+    language: "en",
+  },
+  {
+    url: "https://www.labiotech.eu/feed/",
+    name: "labiotech",
+    field: "biology",
+    language: "en",
+  },
+  {
+    url: "https://www.drugdiscoverytrends.com/feed/",
+    name: "drugdiscoverytrends",
+    field: "medicine",
+    language: "en",
+  },
+  {
+    url: "https://www.nature.com/npjcompumats.rss",
+    name: "npj-computational-materials",
+    field: "materials",
+    language: "en",
+  },
+  {
+    url: "https://syncedreview.com/feed/",
+    name: "syncedreview",
+    field: "ai-news",
+    language: "en",
+  },
+  {
+    url: "https://www.marktechpost.com/feed/",
+    name: "marktechpost",
+    field: "ai-news",
+    language: "en",
+  },
+  {
+    url: "https://techcrunch.com/category/artificial-intelligence/feed/",
+    name: "techcrunch-ai",
+    field: "ai-news",
+    language: "en",
+  },
+  {
+    url: "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
+    name: "verge-ai",
+    field: "ai-news",
+    language: "en",
+  },
+  {
+    url: "https://www.kdnuggets.com/feed",
+    name: "kdnuggets",
+    field: "ai-news",
+    language: "en",
+  },
+  {
+    url: "https://blog.mozilla.ai/rss/",
+    name: "mozilla-ai",
+    field: "ai-news",
+    language: "en",
+  },
 ];
 
 interface PubmedSummary {
