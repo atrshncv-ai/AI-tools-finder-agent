@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { Star, ArrowRight, Clock, ExternalLink } from "lucide-react";
+import { Star, ArrowRight, Calendar, ExternalLink } from "lucide-react";
 import { trpc } from "@/providers/trpc";
 import { useAuth } from "@/hooks/useAuth";
 import type { News } from "@db/schema";
@@ -125,21 +125,30 @@ export default function NewsCard({ article, isRead = false, showFavorite = true,
           </span>
 
           <p
-            className="mt-2 text-sm leading-relaxed line-clamp-3"
+            className="mt-2 text-sm leading-relaxed"
             style={{ color: "var(--color-text-body)" }}
           >
             {article.summary || article.content || "Описание статьи готовится"}
           </p>
 
-          <div className="flex items-center justify-between mt-4 text-[13px]" style={{ color: "var(--color-text-muted)" }}>
-            <div className="flex items-center gap-2">
-              <span>{new Date(article.platformPublishedAt ?? article.updatedAt).toLocaleDateString("ru-RU")}</span>
-              <span>·</span>
-              <span className="flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5" />
-                {Math.max(1, Math.ceil((article.summary?.length || 0) / 1000))} мин чтения
-              </span>
-            </div>
+          {/* Provenance under the summary: the summary is 400–500 characters
+              now, so the source and the publication date sit right below it.
+              The date is not repeated anywhere else in the card. */}
+          <div
+            className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px]"
+            style={{ color: "var(--color-text-muted)" }}
+          >
+            <span className="font-medium" style={{ color: "var(--color-text-body)" }}>
+              {article.source}
+            </span>
+            <span aria-hidden="true">·</span>
+            <span className="flex items-center gap-1">
+              <Calendar className="w-3.5 h-3.5" />
+              {new Date(article.platformPublishedAt ?? article.updatedAt).toLocaleDateString("ru-RU")}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-end mt-4 text-[13px]" style={{ color: "var(--color-text-muted)" }}>
             <div className="flex items-center gap-3">
               <button
                 onClick={(e) => {

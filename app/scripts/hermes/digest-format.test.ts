@@ -5,7 +5,9 @@ import {
   buildOwnerReport,
   fitSummary,
   formatItem,
+  resolveRecipients,
   splitTelegramText,
+  SUMMARY_MAX_CHARS,
   type DigestItem,
 } from "./digest-format";
 import {
@@ -104,6 +106,19 @@ describe("fitSummary (R09)", () => {
   it("collapses whitespace and leaves short summaries untouched", () => {
     expect(fitSummary("  два   пробела  ")).toBe("два пробела");
     expect(fitSummary("Короткая выжимка.")).toBe("Короткая выжимка.");
+  });
+
+  it("stays at 180 characters for the longer 400–500 character card summary", () => {
+    // The dashboard card now carries a longer summary; the Telegram copy is
+    // still the agreed 180 characters and still ends on a whole word.
+    expect(SUMMARY_MAX_CHARS).toBe(180);
+    const cardSummary = "нейросеть предсказывает свойства новых материалов ".repeat(12).trim();
+    expect(cardSummary.length).toBeGreaterThan(400);
+    const fitted = fitSummary(cardSummary);
+    expect(fitted.length).toBeLessThanOrEqual(180);
+    expect(fitted.length).toBeGreaterThan(160);
+    expect(cardSummary.startsWith(fitted)).toBe(true);
+    expect(cardSummary[fitted.length]).toBe(" ");
   });
 });
 
@@ -211,5 +226,31 @@ describe("Telegram splitting", () => {
     for (const part of parts.slice(1)) expect(part).not.toContain("🌅");
     expect(parts[1].startsWith("▫️ ")).toBe(true);
     expect(parts.join("\n")).toBe(GOLDEN_CLIENT_DIGEST);
+  });
+});
+
+describe("recipients: env lists plus database subscribers", () => {
+  it("adds subscribers to the client list without duplicates", () => {
+    const recipients = resolveRecipients(
+      { TELEGRAM_CLIENT_CHAT_IDS: "111, 222", TELEGRAM_OWNER_CHAT_IDS: "999" },
+      ["222", "333", "333"],
+    );
+    // Env order stays stable; the subscriber that repeats an env id is skipped.
+    expect(recipients.client).toEqual(["111", "222", "333"]);
+    expect(recipients.owner).toEqual(["999"]);
+  });
+
+  it("delivers to a subscriber when no client id is configured at all", () => {
+    expect(resolveRecipients({}, ["42"]).client).toEqual(["42"]);
+  });
+
+  it("never turns a subscriber into an owner", () => {
+    const recipients = resolveRecipients({ TELEGRAM_OWNER_CHAT_IDS: "999" }, ["42"]);
+    expect(recipients.owner).toEqual(["999"]);
+    expect(recipients.client).toEqual(["42"]);
+  });
+
+  it("keeps the legacy shared list as the client fallback", () => {
+    expect(resolveRecipients({ TELEGRAM_CHAT_IDS: "'5'" }, ["5", "6"]).client).toEqual(["5", "6"]);
   });
 });

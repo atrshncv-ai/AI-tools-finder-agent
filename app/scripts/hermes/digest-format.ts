@@ -10,8 +10,10 @@
  *   - `buildOwnerReport` — the owner-only service message with collected /
  *     rejected / published, top-3 rejection reasons and errors.
  *
- * Pure module: no DB, no network, no env. The caller decides what to send and
- * to whom. Markdown escaping, section order and the 7-card limit stay here.
+ * Pure module: no DB, no network. The caller decides what to send and to whom;
+ * `resolveRecipients` only merges the lists it is given (env by default, plus
+ * the subscribers the welcome flow stored in the database). Markdown escaping,
+ * section order and the 7-card limit stay here.
  */
 
 import { SECTIONS, type SectionId, type SectionSpec } from "./topics";
@@ -45,6 +47,60 @@ export interface DigestOptions {
 export interface OwnerReportOptions extends DigestOptions {
   /** Pipeline health line (built by pipeline-health.ts), owner-only. */
   healthLine?: string;
+}
+
+/** Who receives what: clients get the clean digest, owners the copy + report. */
+export interface DigestRecipients {
+  /** Client chat IDs — clean digest only. */
+  client: string[];
+  /** Owner chat IDs — the same digest as a copy plus the service report. */
+  owner: string[];
+}
+
+/**
+ * Parse a comma-separated chat-id list. Surrounding quotes are stripped per id:
+ * cron sources `.env` via bash (`set -a; . ./.env`), which — unlike dotenv —
+ * keeps literal quotes, and a quoted id makes Telegram reject the chat
+ * ("chat not found").
+ */
+export function parseChatIds(raw: string | undefined): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((s) => s.trim().replace(/^["']+|["']+$/g, ""))
+    .filter(Boolean);
+}
+
+/** First occurrence wins, so the env-defined order stays stable. */
+function uniqueChatIds(ids: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const id of ids) {
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    result.push(id);
+  }
+  return result;
+}
+
+/**
+ * Client and owner recipients. A new subscriber writes `/start` to the bot and
+ * is stored in `agent_state` (`.env` is edited by hand, so the list cannot live
+ * there); those IDs join the env client list without duplicates. The legacy
+ * shared TELEGRAM_CHAT_IDS / TELEGRAM_CHAT_ID list stays a client fallback, so
+ * an existing deployment keeps delivering; the owner copy is opt-in and never
+ * comes from subscribers.
+ */
+export function resolveRecipients(
+  env: NodeJS.ProcessEnv = process.env,
+  subscribers: readonly string[] = [],
+): DigestRecipients {
+  return {
+    client: uniqueChatIds([
+      ...parseChatIds(env.TELEGRAM_CLIENT_CHAT_IDS || env.TELEGRAM_CHAT_IDS || env.TELEGRAM_CHAT_ID),
+      ...subscribers.map((id) => id.trim()).filter(Boolean),
+    ]),
+    owner: uniqueChatIds(parseChatIds(env.TELEGRAM_OWNER_CHAT_IDS || env.TELEGRAM_OWNER_CHAT_ID)),
+  };
 }
 
 /** Tokens one paid stage spent. */
