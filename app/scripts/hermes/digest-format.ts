@@ -9,6 +9,9 @@
  *     codes, no funnel counters.
  *   - `buildOwnerReport` — the owner-only service message with collected /
  *     rejected / published, top-3 rejection reasons and errors.
+ *   - `buildPreviewDigest` — the client text wrapped into the owner preview
+ *     envelope (an hour-ahead warning and a "check it" line). It never alters
+ *     the client message itself: the owner sees exactly what the client will.
  *
  * Pure module: no DB, no network. The caller decides what to send and to whom;
  * `resolveRecipients` only merges the lists it is given (env by default, plus
@@ -260,6 +263,21 @@ function formatSection(section: SectionSpec, items: DigestItem[], maxItems: numb
   if (rest > 0) lines.push(`Ещё ${rest} ${materialWord(rest)} — в дашборде.`);
   lines.push("");
   return lines;
+}
+
+/**
+ * Owner preview envelope (owner decision 2026-11-15): an hour before the client
+ * release the owner receives the very same text, bracketed by two plain lines so
+ * it is obvious that this copy is not the customer's and that there is still
+ * time to switch the sending off. The client text itself is not re-rendered:
+ * `buildClientDigest` stays the single source of the approved form.
+ */
+export const PREVIEW_HEADER = "⏰ Предпросмотр: через час этот выпуск уйдёт клиенту";
+export const PREVIEW_FOOTER = "Проверь и, если что-то не так, отключи отправку до 09:00";
+
+/** Wrap the exact client text into the owner preview envelope. */
+export function buildPreviewDigest(clientText: string): string {
+  return [PREVIEW_HEADER, "", clientText, "", PREVIEW_FOOTER].join("\n");
 }
 
 /**

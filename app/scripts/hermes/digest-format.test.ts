@@ -3,12 +3,15 @@ import {
   buildClientDigest,
   buildEmptyClientDigest,
   buildOwnerReport,
+  buildPreviewDigest,
   digestMaxPerSection,
   DIGEST_MAX_PER_SECTION_MAX,
   DIGEST_MAX_PER_SECTION_MIN,
   fitSummary,
   formatItem,
   MAX_ITEMS_PER_SECTION,
+  PREVIEW_FOOTER,
+  PREVIEW_HEADER,
   resolveRecipients,
   splitTelegramText,
   SUMMARY_MAX_CHARS,
@@ -124,6 +127,35 @@ describe("client digest is clean of service data (R17i)", () => {
     expect(text).not.toContain("конвейер");
     expect(text).not.toContain("Конвейер");
     expect(text).toContain(DIGEST_DASHBOARD_URL);
+  });
+});
+
+describe("owner preview envelope", () => {
+  it("wraps exactly the client text between the hour-ahead warning and the check line", () => {
+    const clientText = buildClientDigest(GOLDEN_ITEMS, opts);
+    const preview = buildPreviewDigest(clientText);
+    expect(PREVIEW_HEADER).toBe("⏰ Предпросмотр: через час этот выпуск уйдёт клиенту");
+    expect(PREVIEW_FOOTER).toBe("Проверь и, если что-то не так, отключи отправку до 09:00");
+    expect(preview.startsWith(PREVIEW_HEADER)).toBe(true);
+    expect(preview.endsWith(PREVIEW_FOOTER)).toBe(true);
+    expect(preview).toContain(clientText);
+  });
+
+  it("keeps every card of the release untouched inside the envelope", () => {
+    const clientText = buildClientDigest(GOLDEN_ITEMS, opts);
+    const preview = buildPreviewDigest(clientText);
+    const cards = clientText.split("\n").filter((line) => line.startsWith("▫️ "));
+    expect(cards.length).toBeGreaterThan(0);
+    for (const card of cards) expect(preview).toContain(card);
+    // The preview is the same release, not a re-render: no card is lost.
+    expect(preview.split("\n").filter((line) => line.startsWith("▫️ "))).toEqual(cards);
+  });
+
+  it("wraps an empty-day release the same way", () => {
+    const preview = buildPreviewDigest(buildEmptyClientDigest(opts));
+    expect(preview.startsWith(PREVIEW_HEADER)).toBe(true);
+    expect(preview).toContain("новых публикаций нет");
+    expect(preview.endsWith(PREVIEW_FOOTER)).toBe(true);
   });
 });
 

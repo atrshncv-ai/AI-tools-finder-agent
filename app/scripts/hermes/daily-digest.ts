@@ -26,8 +26,16 @@
  *     stay available through the dashboard link.
  *   PAYMENT_MANAGER_CHAT_ID / PAYMENT_DUE_AT — server-payment reminders.
  *
+ * Preview (owner check an hour before the release): `--preview` or
+ * `DIGEST_PREVIEW=1`. The very same `buildClientDigest` text goes ONLY to
+ * TELEGRAM_OWNER_CHAT_IDS, wrapped into the preview envelope
+ * (`buildPreviewDigest`); client addresses get nothing and the service report is
+ * not sent — it goes out with the real release. Without the flag nothing
+ * changes.
+ *
  * Usage:
  *   npx tsx scripts/hermes/daily-digest.ts
+ *   npx tsx scripts/hermes/daily-digest.ts --preview
  */
 
 import "dotenv/config";
@@ -39,12 +47,14 @@ import {
   buildClientDigest,
   buildEmptyClientDigest,
   buildOwnerReport,
+  buildPreviewDigest,
   digestMaxPerSection,
   DIGEST_WINDOW_HOURS,
   resolveRecipients,
   splitTelegramText,
   type CycleStats,
   type DigestItem,
+  type DigestRecipients,
 } from "./digest-format";
 import { loadSubscriptionState, type Subscriber } from "./telegram-subscribe";
 import { news } from "@db/schema";
@@ -244,7 +254,98 @@ async function sendParts(parts: string[], chatIds: string[]): Promise<DeliveryRe
   return { ok: okCount, total: chatIds.length };
 }
 
+/** One chat fan-out: who receives which parts. Empty `parts` means "nobody". */
+export interface PlannedMessage {
+  chatIds: string[];
+  parts: string[];
+}
+
+/**
+ * What one run sends where. `ownerReport` is `null` exactly when the service
+ * report must not leave the process (preview mode, or no owner address).
+ */
+export interface DigestDeliveryPlan {
+  preview: boolean;
+  /** The clean client release; in preview deliberately addressed to nobody. */
+  client: PlannedMessage;
+  /** The owner's copy: the same release, or the preview envelope in preview. */
+  ownerCopy: PlannedMessage;
+  ownerReport: PlannedMessage | null;
+}
+
+export interface DigestDeliveryInput {
+  recipients: DigestRecipients;
+  /** Already split, so preview re-wrapping can be split again on the same rules. */
+  clientParts: string[];
+  report: string;
+  preview: boolean;
+}
+
+const PREVIEW_TRUTHY = new Set(["1", "true", "yes", "on"]);
+
+function truthyFlag(value: string | undefined): boolean {
+  return PREVIEW_TRUTHY.has((value ?? "").trim().toLowerCase());
+}
+
+/**
+ * Preview mode from the CLI (`--preview`, or `--preview=1`) or from env
+ * (`DIGEST_PREVIEW=1`). An explicit false value (`--preview=0`,
+ * `DIGEST_PREVIEW=0`) keeps the normal run; anything unexpected is not a
+ * preview, so a typo never turns the client release into an owner-only one.
+ */
+export function previewRequested(
+  flags: readonly string[] = process.argv.slice(2),
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  for (const flag of flags) {
+    if (flag === "--preview") return true;
+    if (flag.startsWith("--preview=") && truthyFlag(flag.slice("--preview=".length))) return true;
+  }
+  return truthyFlag(env.DIGEST_PREVIEW);
+}
+
+/**
+ * The single decision of who gets what, kept pure so the preview guarantee is
+ * testable without Telegram or a database:
+ *   - preview: clients get nothing, the owner gets the exact client text inside
+ *     the preview envelope, and the service report waits for the real release;
+ *   - normal run: clients get the clean digest, the owner gets the same text as
+ *     a copy (only when not already a client, so no duplicate) plus the report.
+ */
+export function planDigestDelivery(input: DigestDeliveryInput): DigestDeliveryPlan {
+  const { recipients, clientParts, report, preview } = input;
+  if (preview) {
+    return {
+      preview: true,
+      client: { chatIds: [], parts: [] },
+      ownerCopy: {
+        chatIds: [...recipients.owner],
+        parts: splitTelegramText(buildPreviewDigest(clientParts.join("\n"))),
+      },
+      ownerReport: null,
+    };
+  }
+  return {
+    preview: false,
+    client: { chatIds: [...recipients.client], parts: [...clientParts] },
+    ownerCopy: {
+      chatIds: recipients.owner.filter((id) => !recipients.client.includes(id)),
+      parts: [...clientParts],
+    },
+    ownerReport:
+      recipients.owner.length > 0
+        ? { chatIds: [...recipients.owner], parts: splitTelegramText(report) }
+        : null,
+  };
+}
+
 async function main() {
+  const preview = previewRequested(process.argv.slice(2), process.env);
+  if (preview) {
+    console.error(
+      "[daily-digest] PREVIEW: the client release goes only to TELEGRAM_OWNER_CHAT_IDS; clients get nothing",
+    );
+  }
   const db = getDb();
   const since = new Date(Date.now() - DIGEST_WINDOW_HOURS * 3600_000);
 
@@ -341,7 +442,7 @@ async function main() {
     envErrors.push("счётчики дня недоступны");
   }
 
-  if (recipients.client.length === 0) {
+  if (!preview && recipients.client.length === 0) {
     envErrors.push("нет клиентских chat_id — клиентский дайджест некому отправить");
   }
 
@@ -371,61 +472,92 @@ async function main() {
       ? buildClientDigest(items, { date: now, dashboardUrl: DASHBOARD_URL, maxItemsPerSection })
       : buildEmptyClientDigest({ date: now, dashboardUrl: DASHBOARD_URL }),
   );
+  const plan = planDigestDelivery({ recipients, clientParts, report, preview });
+  if (preview && plan.ownerCopy.chatIds.length === 0) {
+    console.error(
+      "[daily-digest] preview requested but no TELEGRAM_OWNER_CHAT_IDS — the preview cannot be delivered",
+    );
+  }
 
   if (!BOT_TOKEN || (recipients.client.length === 0 && recipients.owner.length === 0)) {
     console.error("[daily-digest] STUB MODE (no TELEGRAM_BOT_TOKEN / recipients) — printing messages:");
-    console.log(
-      [
-        "=== КЛИЕНТСКОЕ СООБЩЕНИЕ ===",
-        ...clientParts,
-        "",
-        "=== СЛУЖЕБНЫЙ ОТЧЁТ ВЛАДЕЛЬЦУ ===",
-        report,
-      ].join("\n"),
-    );
+    if (preview) {
+      console.log(["=== ПРЕДПРОСМОТР ДЛЯ ВЛАДЕЛЬЦА ===", ...plan.ownerCopy.parts].join("\n"));
+    } else {
+      console.log(
+        [
+          "=== КЛИЕНТСКОЕ СООБЩЕНИЕ ===",
+          ...clientParts,
+          "",
+          "=== СЛУЖЕБНЫЙ ОТЧЁТ ВЛАДЕЛЬЦУ ===",
+          report,
+        ].join("\n"),
+      );
+    }
   } else {
     // Owner first: a broken release must reach the owner before the client (R17).
-    let reportOk = false;
-    if (recipients.owner.length > 0) {
-      const reportDelivery = await sendParts(splitTelegramText(report), recipients.owner);
-      reportOk = reportDelivery.ok === reportDelivery.total;
+    const reportDelivery: DeliveryResult = plan.ownerReport
+      ? await sendParts(plan.ownerReport.parts, plan.ownerReport.chatIds)
+      : { ok: 0, total: 0 };
+    const reportOk = plan.ownerReport != null && reportDelivery.ok === reportDelivery.total;
+    if (plan.ownerReport) {
       console.error(`[daily-digest] owner report → ${reportDelivery.ok}/${reportDelivery.total}`);
-    } else {
+    } else if (!preview) {
       console.error("[daily-digest] no TELEGRAM_OWNER_CHAT_IDS — service report is not delivered");
     }
 
     const clientDelivery: DeliveryResult =
-      recipients.client.length > 0 ? await sendParts(clientParts, recipients.client) : { ok: 0, total: 0 };
-    // The owner's id may also be listed among clients; sending the copy again
-    // would duplicate the message, so only the missing ids get it.
-    const copyIds = recipients.owner.filter((id) => !recipients.client.includes(id));
+      plan.client.chatIds.length > 0
+        ? await sendParts(plan.client.parts, plan.client.chatIds)
+        : { ok: 0, total: 0 };
     const copyDelivery: DeliveryResult =
-      copyIds.length > 0 ? await sendParts(clientParts, copyIds) : { ok: 0, total: 0 };
+      plan.ownerCopy.chatIds.length > 0
+        ? await sendParts(plan.ownerCopy.parts, plan.ownerCopy.chatIds)
+        : { ok: 0, total: 0 };
 
     const clientOk = clientDelivery.total > 0 && clientDelivery.ok === clientDelivery.total;
-    const ownerOk =
-      recipients.owner.length === 0 || (reportOk && copyDelivery.ok === copyDelivery.total);
+    const ownerOk = plan.ownerReport ? reportOk && copyDelivery.ok === copyDelivery.total : true;
+    // Preview leaves the clients out on purpose, so the owner preview itself is
+    // what must succeed; the normal run still fails when clients get nothing.
+    const previewOk = copyDelivery.total > 0 && copyDelivery.ok === copyDelivery.total;
     const delivered = clientDelivery.ok + copyDelivery.ok;
-    const status = clientOk && ownerOk ? "sent" : delivered > 0 || reportOk ? "partial" : "failed";
+    const status = preview
+      ? previewOk
+        ? "sent"
+        : delivered > 0
+          ? "partial"
+          : "failed"
+      : clientOk && ownerOk
+        ? "sent"
+        : delivered > 0 || reportOk
+          ? "partial"
+          : "failed";
     console.log(
       JSON.stringify({
         status,
+        ...(preview ? { preview: true } : {}),
         items: items.length,
         recipients: {
           client: { ok: clientDelivery.ok, total: clientDelivery.total },
           ownerCopy: { ok: copyDelivery.ok, total: copyDelivery.total },
         },
-        ownerReport: recipients.owner.length === 0 ? "skipped" : reportOk ? "sent" : "failed",
+        ownerReport: plan.ownerReport ? (reportOk ? "sent" : "failed") : "skipped",
       }),
     );
     // Total client-delivery failure (or no client recipients at all) must be
-    // visible in the cron log.
-    if (!clientOk) process.exit(1);
+    // visible in the cron log; in preview the owner delivery carries that role.
+    if (preview ? !previewOk : !clientOk) process.exit(1);
   }
 
   if (PAYMENT_MANAGER_CHAT_ID && isPaymentReminderDay(new Date())) {
-    const reminderOk = !BOT_TOKEN || (await sendTelegram(paymentReminderText(), PAYMENT_MANAGER_CHAT_ID));
-    console.error(`[daily-digest] payment reminder → manager: ${reminderOk ? "sent" : "FAILED"}`);
+    // Preview is an extra run: the reminder belongs to the real release, so a
+    // preview must not page the manager a second time that day.
+    if (preview) {
+      console.error("[daily-digest] preview — payment reminder skipped");
+    } else {
+      const reminderOk = !BOT_TOKEN || (await sendTelegram(paymentReminderText(), PAYMENT_MANAGER_CHAT_ID));
+      console.error(`[daily-digest] payment reminder → manager: ${reminderOk ? "sent" : "FAILED"}`);
+    }
   }
   process.exit(0);
 }

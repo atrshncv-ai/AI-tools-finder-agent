@@ -1,6 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isPaymentReminderDay, paymentReminderText, resolveRecipients, sendTelegram } from "./daily-digest";
-import { buildClientDigest, buildEmptyClientDigest, type DigestItem } from "./digest-format";
+import {
+  isPaymentReminderDay,
+  paymentReminderText,
+  planDigestDelivery,
+  previewRequested,
+  resolveRecipients,
+  sendTelegram,
+} from "./daily-digest";
+import {
+  buildClientDigest,
+  buildEmptyClientDigest,
+  PREVIEW_FOOTER,
+  PREVIEW_HEADER,
+  splitTelegramText,
+  type DigestItem,
+} from "./digest-format";
 import { formatHealthLine, type PipelineStats } from "./pipeline-health";
 
 const opts = {
@@ -249,5 +263,116 @@ describe("digest markdown safety (Telegram parse_mode=Markdown)", () => {
     expect(stars % 2).toBe(0);
     expect(underscores % 2).toBe(0);
     expect(backticks % 2).toBe(0);
+  });
+});
+
+describe("owner preview before the client release (--preview, DIGEST_PREVIEW=1)", () => {
+  const recipients = { client: ["111", "222"], owner: ["999"] };
+  const releaseItems: DigestItem[] = [
+    item({
+      id: 1,
+      title: "ИИ-новость",
+      originalUrl: "https://example.com/news",
+      summary: "Краткое описание новости.",
+    }),
+    item({
+      id: 2,
+      title: "Научный инструмент",
+      originalUrl: "https://example.com/science",
+      isScience: true,
+      section: "science",
+      summary: "Краткое описание научного инструмента.",
+    }),
+    item({
+      id: 3,
+      title: "Инструмент для изобретений",
+      originalUrl: "https://example.com/invention",
+      section: "invention-tools",
+      summary: "Краткое описание инструмента для изобретений.",
+    }),
+  ];
+  const releaseText = buildClientDigest(releaseItems, opts);
+  const releaseParts = splitTelegramText(releaseText);
+  const report = "🧾 *Служебный отчёт* · собрано: 10 · отсеяно: 4 · опубликовано: 3";
+  const cardsOf = (text: string) => text.split("\n").filter((line) => line.startsWith("▫️ "));
+
+  it("turns on with --preview or DIGEST_PREVIEW=1 and stays off otherwise", () => {
+    expect(previewRequested(["--preview"], {})).toBe(true);
+    expect(previewRequested(["--dry-run", "--preview"], {})).toBe(true);
+    expect(previewRequested([], { DIGEST_PREVIEW: "1" })).toBe(true);
+    expect(previewRequested([], { DIGEST_PREVIEW: " 1 " })).toBe(true);
+    expect(previewRequested([], {})).toBe(false);
+    expect(previewRequested(["--preview=0"], {})).toBe(false);
+    expect(previewRequested([], { DIGEST_PREVIEW: "0" })).toBe(false);
+  });
+
+  it("sends the release to no client address and skips the service report", () => {
+    const plan = planDigestDelivery({ recipients, clientParts: releaseParts, report, preview: true });
+    expect(plan.preview).toBe(true);
+    expect(plan.client.chatIds).toEqual([]);
+    expect(plan.client.parts).toEqual([]);
+    expect(plan.ownerReport).toBeNull();
+  });
+
+  it("gives the owner the same cards as the release plus the preview markers", () => {
+    const normal = planDigestDelivery({ recipients, clientParts: releaseParts, report, preview: false });
+    const preview = planDigestDelivery({ recipients, clientParts: releaseParts, report, preview: true });
+
+    expect(preview.ownerCopy.chatIds).toEqual(["999"]);
+    const previewText = preview.ownerCopy.parts.join("\n");
+    expect(previewText).toBe(`${PREVIEW_HEADER}\n\n${releaseText}\n\n${PREVIEW_FOOTER}`);
+
+    const releaseCards = cardsOf(normal.client.parts.join("\n"));
+    expect(releaseCards).toHaveLength(3);
+    for (const card of releaseCards) expect(previewText).toContain(card);
+    expect(cardsOf(previewText)).toEqual(releaseCards);
+  });
+
+  it("keeps the normal run unchanged when the flag is absent", () => {
+    const plan = planDigestDelivery({ recipients, clientParts: releaseParts, report, preview: false });
+    expect(plan.preview).toBe(false);
+    expect(plan.client.chatIds).toEqual(["111", "222"]);
+    expect(plan.client.parts).toEqual(releaseParts);
+    expect(plan.ownerCopy.chatIds).toEqual(["999"]);
+    expect(plan.ownerCopy.parts).toEqual(releaseParts);
+    expect(plan.ownerReport?.chatIds).toEqual(["999"]);
+    expect(plan.ownerReport?.parts.join("\n")).toBe(report);
+    // Nothing of the preview envelope leaks into the customer's text.
+    expect(plan.client.parts.join("\n")).not.toContain(PREVIEW_HEADER);
+    expect(plan.client.parts.join("\n")).not.toContain(PREVIEW_FOOTER);
+  });
+
+  it("never duplicates the clean digest when the owner is also a client", () => {
+    const plan = planDigestDelivery({
+      recipients: { client: ["999"], owner: ["999", "777"] },
+      clientParts: releaseParts,
+      report,
+      preview: false,
+    });
+    expect(plan.ownerCopy.chatIds).toEqual(["777"]);
+    expect(plan.ownerReport?.chatIds).toEqual(["999", "777"]);
+  });
+
+  it("keeps both markers when a long release has to be split into parts", () => {
+    const longItems = Array.from({ length: 40 }, (_, index) =>
+      item({
+        id: index + 1,
+        title: `Материал ${index + 1}`,
+        originalUrl: `https://example.com/materials/${index + 1}`,
+        summary: "Подробная выжимка материала с описанием метода, результатов и ограничений исследования. ".repeat(3),
+      }),
+    );
+    const longText = buildClientDigest(longItems, { ...opts, maxItemsPerSection: 20 });
+    expect(longText.length).toBeGreaterThan(4000);
+    const parts = splitTelegramText(longText);
+    const plan = planDigestDelivery({ recipients, clientParts: parts, report, preview: true });
+    const previewText = plan.ownerCopy.parts.join("\n");
+
+    expect(plan.ownerCopy.parts.length).toBeGreaterThan(1);
+    expect(previewText.startsWith(PREVIEW_HEADER)).toBe(true);
+    expect(previewText.endsWith(PREVIEW_FOOTER)).toBe(true);
+    expect(previewText).toContain("🌅 *Утренний дайджест научного агента*");
+    for (const card of cardsOf(parts.join("\n"))) expect(previewText).toContain(card);
+    for (const part of plan.ownerCopy.parts) expect(part.length).toBeLessThanOrEqual(4000);
   });
 });
