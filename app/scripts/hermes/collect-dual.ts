@@ -8,8 +8,11 @@
  *       Hacker News (Algolia API), GitHub (REST search API), Reddit (public JSON)
  *
  * Science stream:
- *   - Tier-1 journals RSS: Nature, Science, Lancet, Cell
- *   - MIT Technology Review, arXiv API, Naked Science (ru)
+ *   - Tier-1 journals RSS: Nature, Science, Cell
+ *   - AI × science journals (Nature Machine Intelligence/Methods, Cell Systems,
+ *     Patterns) and targeted AI PubMed searches — the general feeds carry few
+ *     AI papers, so the AI gate used to starve the «Наука» section
+ *   - MIT Technology Review, arXiv API (categories + AI-filtered), Naked Science (ru)
  *
  * Every candidate passes the Semantic Deduplication Guard (dedup.ts) BEFORE
  * insertion: exact URL check, then Levenshtein >= 0.85 against last 20 titles.
@@ -613,7 +616,9 @@ async function collectReddit(): Promise<Candidate[]> {
 export const SCIENCE_FEEDS: ScienceFeed[] = [
   { url: "https://www.nature.com/nature.rss", name: "nature", field: "multidisciplinary", language: "en" },
   { url: "https://www.science.org/rss/news_current.xml", name: "science", field: "multidisciplinary", language: "en" },
-  // NOTE: Lancet killed its own RSS feeds (410 Gone) — collected via PubMed eutils below.
+  // NOTE: Lancet killed its own RSS feeds (410 Gone). PubMed is no longer
+  // queried per journal: the targeted AI searches below replace the single
+  // Lancet query and follow the customer's topics across all of PubMed.
   { url: "https://www.cell.com/cell/current.rss", name: "cell", field: "biology", language: "en" },
   { url: "https://www.technologyreview.com/feed/", name: "mit-tech-review", field: "technology", language: "en" },
   {
@@ -657,6 +662,30 @@ export const SCIENCE_FEEDS: ScienceFeed[] = [
   { url: "https://www.nature.com/nbt.rss", name: "nature-biotechnology", field: "biology", language: "en" },
   { url: "https://www.nature.com/nchem.rss", name: "nature-chemistry", field: "chemistry", language: "en" },
   { url: "https://www.nature.com/nmat.rss", name: "nature-materials", field: "materials", language: "en" },
+  // Dedicated AI × science outlets: general Nature/Cell feeds publish few AI
+  // papers, and the hard AI gate then rejects most of them (customer report:
+  // 11 science materials per day against a 5+/5+/5+ target). These journals
+  // publish AI methods by definition, so most items clear the gate. Every URL
+  // was probed with curl and returned HTTP 200 before it was configured.
+  {
+    url: "https://www.nature.com/natmachintell.rss",
+    name: "nature-machine-intelligence",
+    field: "science",
+    language: "en",
+  },
+  { url: "https://www.nature.com/nmeth.rss", name: "nature-methods", field: "biology", language: "en" },
+  {
+    url: "https://www.cell.com/cell-systems/current.rss",
+    name: "cell-systems",
+    field: "biology",
+    language: "en",
+  },
+  {
+    url: "https://www.cell.com/patterns/current.rss",
+    name: "patterns",
+    field: "multidisciplinary",
+    language: "en",
+  },
   // arXiv category feeds request the recent stream directly (no inventionOnly
   // keyword filter): the customer wants these directions represented as-is.
   {
@@ -671,47 +700,200 @@ export const SCIENCE_FEEDS: ScienceFeed[] = [
     field: "materials",
     language: "en",
   },
+  // Same two arXiv categories, but constrained to AI papers. The bare category
+  // feeds above are dominated by non-AI work that the AI gate drops, which is
+  // exactly why the science stream under-delivered. URLs verified with curl:
+  // both return 20 entries.
+  {
+    url: "http://export.arxiv.org/api/query?search_query=all:%22machine+learning%22+AND+cat:q-bio.BM&sortBy=submittedDate&sortOrder=descending&max_results=20",
+    name: "arxiv-ai-q-bio-bm",
+    field: "biology",
+    language: "en",
+  },
+  {
+    url: "http://export.arxiv.org/api/query?search_query=all:%22deep+learning%22+AND+cat:cond-mat.mtrl-sci&sortBy=submittedDate&sortOrder=descending&max_results=20",
+    name: "arxiv-ai-mtrl-sci",
+    field: "materials",
+    language: "en",
+  },
   // Second-priority Russian-language science source, tagged `ru` like
   // naked-science so the existing language marker can down-weight it.
   { url: "https://nplus1.ru/rss", name: "n-plus-one", field: "multidisciplinary", language: "ru" },
 ];
 
 interface PubmedSummary {
-  result: Record<string, { title?: string; fulljournalname?: string; pubdate?: string; elocationid?: string } | undefined>;
+  result: Record<
+    string,
+    { title?: string; epubdate?: string; pubdate?: string; elocationid?: string } | undefined
+  >;
 }
 
-/** Lancet (and other journals without RSS) via NCBI PubMed eutils. */
-async function collectPubmedLancet(): Promise<Candidate[]> {
-  const search = await fetchJson<{ esearchresult?: { idlist?: string[] } }>(
-    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=%22Lancet%22%5Bjournal%5D+AND+(%22artificial+intelligence%22+OR+%22machine+learning%22+OR+%22deep+learning%22)&sort=pub+date&retmax=10&retmode=json",
-  );
-  const ids = search?.esearchresult?.idlist ?? [];
-  if (ids.length === 0) {
-    console.error("[collect] lancet(pubmed): 0 items (esearch empty or blocked)");
-    void recordFeedHealth("lancet", "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi", false, 0, "esearch empty or blocked");
-    return [];
+/**
+ * A targeted AI search over PubMed. `name` doubles as `news.source` and as the
+ * `sources`/`source_health` row, so it must stay unique across every feed.
+ */
+export interface PubmedQuery {
+  name: string;
+  /** Science direction stored on every hit of this query. */
+  field: string;
+  /** PubMed esearch term (raw: URL-encoded when the request is built). */
+  term: string;
+}
+
+/** Customer spec: ten results per targeted query. */
+export const PUBMED_RESULTS_PER_QUERY = 10;
+
+/**
+ * The old collector reduced the whole of PubMed to one journal (Lancet). These
+ * three searches follow the directions the customer asked for (AI in drug
+ * discovery, genomics/proteomics, medical imaging) across every journal, which
+ * is what the «ИИ для науки» section actually needs. Each term was probed via
+ * esearch (HTTP 200, >1000 hits) before being configured.
+ */
+export const PUBMED_QUERIES: PubmedQuery[] = [
+  {
+    name: "pubmed-ai-drug-discovery",
+    field: "medicine",
+    term: '("artificial intelligence" OR "machine learning" OR "deep learning") AND (drug discovery OR pharmacology)',
+  },
+  {
+    name: "pubmed-ai-genomics",
+    field: "medicine",
+    term: '("artificial intelligence" OR "deep learning") AND (genomics OR proteomics)',
+  },
+  {
+    name: "pubmed-ai-imaging",
+    field: "medicine",
+    term: '("artificial intelligence") AND (medical imaging OR radiology)',
+  },
+];
+
+/** NCBI allows ~3 requests/s without an API key; esearch+esummary is one pair. */
+const PUBMED_THROTTLE_MS = 400;
+
+/**
+ * esearch URL for one targeted query (JSON, 10 results).
+ *
+ * No `sort` parameter on purpose: esearch's default order is "most recent"
+ * (newly indexed records), while `sort=pub+date` orders by the journal issue
+ * date. Broad queries span thousands of journals, many of which schedule
+ * issues months ahead, so `pub date` sorting returned only "2027 Apr"-style
+ * records whose dates the fail-closed 72h Time Guard rejects. Probed both
+ * ways: the default returned 11/30 hits inside the 72h window, `pub date`
+ * returned 0.
+ */
+export function pubmedSearchUrl(term: string): string {
+  const params = new URLSearchParams({
+    db: "pubmed",
+    term,
+    retmax: String(PUBMED_RESULTS_PER_QUERY),
+    retmode: "json",
+  });
+  return `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?${params.toString()}`;
+}
+
+const PUBMED_MONTHS: Record<string, number> = {
+  jan: 0,
+  feb: 1,
+  mar: 2,
+  apr: 3,
+  may: 4,
+  jun: 5,
+  jul: 6,
+  aug: 7,
+  sep: 8,
+  oct: 9,
+  nov: 10,
+  dec: 11,
+};
+
+/** PubMed date strings are date-only: "2026 Nov 14", "2026 Nov", "2026". */
+const PUBMED_DATE_RE = /^(\d{4})(?: ([A-Z][a-z]{2}))?(?: (\d{1,2}))?$/;
+
+/**
+ * Published date of a PubMed record.
+ *
+ * `epubdate` (the online-first date) wins over `pubdate`: PubMed stores the
+ * print/issue date in `pubdate`, and journals schedule issues months ahead, so
+ * a record indexed today can carry "2027 Apr". The fail-closed 72h Time Guard
+ * rejects any date in the future, which is why reading `pubdate` alone used to
+ * discard nearly every hit of a broad query. Ranges ("2026 Jan-Dec") are not a
+ * date and are rejected instead of being guessed: no date means the Time Guard
+ * cannot verify freshness.
+ */
+export function pubmedPublishedAt(rec: {
+  epubdate?: string | null;
+  pubdate?: string | null;
+}): Date | null {
+  for (const raw of [rec.epubdate, rec.pubdate]) {
+    const text = (raw ?? "").trim();
+    const match = PUBMED_DATE_RE.exec(text);
+    if (!match) continue;
+    let month = 0;
+    if (match[2]) {
+      month = PUBMED_MONTHS[match[2].toLowerCase()];
+      if (month === undefined) continue;
+    }
+    const day = match[3] ? Number(match[3]) : 1;
+    const date = new Date(Date.UTC(Number(match[1]), month, day));
+    if (!Number.isNaN(date.getTime())) return date;
   }
-  const summary = await fetchJson<PubmedSummary>(
-    `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${ids.join(",")}&retmode=json`,
-  );
+  return null;
+}
+
+/**
+ * Targeted AI searches via NCBI PubMed eutils (esearch + esummary).
+ * Replaces the per-journal Lancet search: journal-restricted queries see one
+ * outlet, while the topics the customer filters by span all of PubMed.
+ */
+async function collectPubmed(): Promise<Candidate[]> {
   const out: Candidate[] = [];
-  for (const pmid of ids) {
-    const rec = summary?.result?.[pmid];
-    if (!rec?.title) continue;
-    const doi = rec.elocationid?.match(/10\.\d{4,9}\/[-._;()/:A-Z0-9]+/i)?.[0];
-    out.push({
-      title: rec.title.replace(/\.$/, ""),
-      url: doi ? `https://doi.org/${doi}` : `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`,
-      source: "lancet",
-      publishedAt: rec.pubdate ? new Date(rec.pubdate) : new Date(),
-      language: "en",
-      isScience: true,
-      scienceField: "medicine",
-      metrics: { origin: "pubmed-eutils", pmid, doi: doi ?? null },
-    });
+  for (let i = 0; i < PUBMED_QUERIES.length; i++) {
+    const query = PUBMED_QUERIES[i];
+    const searchUrl = pubmedSearchUrl(query.term);
+    const search = await fetchJson<{ esearchresult?: { idlist?: string[] } }>(searchUrl);
+    const ids = search?.esearchresult?.idlist ?? [];
+    if (ids.length === 0) {
+      console.error(`[collect] ${query.name}(pubmed): 0 items (esearch empty or blocked)`);
+      void recordFeedHealth(query.name, searchUrl, false, 0, "esearch empty or blocked");
+      continue;
+    }
+    const summary = await fetchJson<PubmedSummary>(
+      `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${ids.join(",")}&retmode=json`,
+    );
+    let collected = 0;
+    for (const pmid of ids) {
+      const rec = summary?.result?.[pmid];
+      if (!rec?.title) continue;
+      const publishedAt = pubmedPublishedAt(rec);
+      // Fail-closed, same rule as an RSS item without a date: an undated record
+      // cannot pass the Time Guard and must not be presented as fresh.
+      if (!publishedAt) continue;
+      const doi = rec.elocationid?.match(/10\.\d{4,9}\/[-._;()/:A-Z0-9]+/i)?.[0];
+      out.push({
+        title: rec.title.replace(/\.$/, ""),
+        url: doi ? `https://doi.org/${doi}` : `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`,
+        source: query.name,
+        publishedAt,
+        language: "en",
+        isScience: true,
+        scienceField: query.field,
+        metrics: { origin: "pubmed-eutils", pmid, doi: doi ?? null, query: query.name },
+      });
+      collected++;
+    }
+    console.error(`[collect] ${query.name}(pubmed): ${collected} items`);
+    void recordFeedHealth(
+      query.name,
+      searchUrl,
+      summary !== null,
+      collected,
+      summary === null ? "esummary unreachable" : undefined,
+    );
+    if (i < PUBMED_QUERIES.length - 1) {
+      await new Promise((resolve) => setTimeout(resolve, PUBMED_THROTTLE_MS));
+    }
   }
-  console.error(`[collect] lancet(pubmed): ${out.length} items`);
-  void recordFeedHealth("lancet", "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi", true, out.length);
   return out;
 }
 
@@ -746,7 +928,7 @@ async function collectScience(): Promise<Candidate[]> {
       void recordFeedHealth(feed.name, feed.url, false, 0, (err as Error).message);
     }
   }
-  out.push(...(await collectPubmedLancet()));
+  out.push(...(await collectPubmed()));
   return out;
 }
 
