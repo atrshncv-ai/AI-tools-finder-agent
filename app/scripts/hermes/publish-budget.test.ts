@@ -102,7 +102,6 @@ describe("publication: the floor decides what actually goes out", () => {
       ready: [ready(1, 40)],
       budget: 8,
       publishedToday: 0,
-      releaseCommitted: false,
       scoreFloor: PUBLISH_SCORE_FLOOR,
     });
     expect(plan.allowed).toBe(true);
@@ -114,7 +113,6 @@ describe("publication: the floor decides what actually goes out", () => {
       ready: [ready(2, 20)],
       budget: 8,
       publishedToday: 0,
-      releaseCommitted: false,
       scoreFloor: PUBLISH_SCORE_FLOOR,
     });
     expect(plan.allowed).toBe(false);

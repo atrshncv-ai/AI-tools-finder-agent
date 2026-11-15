@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# cron.sh — install the two jobs the server must run without a human.
+# cron.sh — install the jobs the server must run without a human.
 #
-#   06:00 UTC  daily-digest.ts  — the release goes to the client and the owner
-#   03:30 UTC  backup-offsite.sh — the database dump leaves the server
+#   06:00 UTC       daily-digest.ts        — the Telegram digest to client and owner
+#   every 5 minutes telegram-subscribe.ts — a new /start gets today's cards at once
+#   03:30 UTC       backup-offsite.sh     — the database dump leaves the server
 #
-# Both are plain cron entries under /etc/cron.d/news-agent, so they survive a
+# All are plain cron entries under /etc/cron.d/news-agent, so they survive a
 # reboot and do not depend on PM2 being up. PM2 owns the web process and the
-# pipeline loop; cron owns the clock (docs/DEPLOY.md §8).
+# pipeline loop; cron owns the clock (docs/DEPLOY.md §8). Cards themselves are
+# published by the loop as soon as they are summarized — the digest is the only
+# daily Telegram job.
 #
 # The host timezone is set to UTC by scripts/deploy/install.sh, so "06:00" here
 # is 06:00 UTC = 09:00 Moscow. Change the timezone and the schedule moves with
@@ -81,6 +84,10 @@ cat >> "$CRON_FILE" <<EOF
 
 # Morning digest: client copy + owner copy + service report (docs/DEPLOY.md §8).
 0 6 * * * ${APP_USER} cd "${APP_DIR}/app" && "${NPX}" tsx scripts/hermes/daily-digest.ts >> "${LOG_DIR}/digest.log" 2>&1
+
+# New subscriber intake: polls getUpdates (timeout=0) and welcomes a /start
+# within five minutes instead of waiting for the 06:00 digest.
+*/5 * * * * ${APP_USER} cd "${APP_DIR}/app" && "${NPX}" tsx scripts/hermes/telegram-subscribe.ts >> "${LOG_DIR}/subscribe.log" 2>&1
 
 # Offsite database dump: fails loudly when the storage is not configured.
 30 3 * * * ${APP_USER} bash "${APP_DIR}/scripts/backup-offsite.sh" >> "${LOG_DIR}/backup.log" 2>&1

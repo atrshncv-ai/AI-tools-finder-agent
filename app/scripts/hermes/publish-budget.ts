@@ -9,12 +9,14 @@
  *
  * `pipeline_state.metrics` is the day's ledger: one row per UTC calendar day
  * (`cycle-YYYY-MM-DD`), so a retry after a failure continues the same cycle and
- * a second run after the release is committed can see it.
+ * the counters of an earlier run stay visible. Publication itself is immediate:
+ * a card summarized at 17:00 is published at 17:00, and only the remaining
+ * daily budget limits the batch.
  */
 
 import "dotenv/config";
 import { getDb } from "../../api/queries/connection";
-import { instantParam, publishedAtSql } from "../../api/queries/newsDateRules";
+import { instantParam, platformPublishedAtSql } from "../../api/queries/newsDateRules";
 import { news, pipelineState } from "@db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import {
@@ -32,7 +34,7 @@ export const DAILY_BUDGET_DEFAULT = 8;
 export const CYCLE_STAGE = {
   /** Stage A/B + scoring finished; counters for the day are in place. */
   evaluated: "evaluated",
-  /** The day's release is published; a second run must not publish again. */
+  /** At least one card was published in this cycle; a later cycle may publish more. */
   published: "published",
 } as const;
 
@@ -455,7 +457,7 @@ export async function countPublishedToday(now: Date = new Date()): Promise<numbe
     .where(
       and(
         eq(news.status, "published"),
-        sql`${publishedAtSql()} >= ${instantParam(dayStart)}`,
+        sql`${platformPublishedAtSql()} >= ${instantParam(dayStart)}`,
       ),
     );
   return row?.n ?? 0;
@@ -473,12 +475,9 @@ export async function recordCycle(
   const db = getDb();
   const existing = await readCycle(cycleId);
   const metrics = mergeCycleMetrics(existing?.metrics ?? emptyCycleMetrics(), delta);
-  // A committed release is final for the day: a later stage must never move the
-  // row back to "evaluated" and reopen publishing.
-  const nextStage =
-    existing?.stage === CYCLE_STAGE.published && stage !== CYCLE_STAGE.published
-      ? CYCLE_STAGE.published
-      : (stage ?? existing?.stage ?? CYCLE_STAGE.evaluated);
+  // The stage is a record of the last step, not a lock: publication is
+  // incremental, so a later evaluation of the same day may follow a publication.
+  const nextStage = stage ?? existing?.stage ?? CYCLE_STAGE.evaluated;
 
   if (existing) {
     await db
@@ -508,11 +507,11 @@ export async function recordCycle(
 export interface CycleStatus {
   cycleId: string;
   stage: string;
-  /** The day's release is committed: a second run must not publish again. */
-  released: boolean;
   /** Published articles of the current UTC day (authoritative cap input). */
   published: number;
   budget: number;
+  /** Slots left for immediate publication today, never negative. */
+  remainingBudget: number;
   metrics: CycleMetrics;
   /** The day's hard token limit and what it has already spent. */
   dailyTokenBudget: number;
@@ -521,7 +520,7 @@ export interface CycleStatus {
   tokenBudgetExceeded: boolean;
 }
 
-/** Read-only state for the loop: "has today's release happened?" and the counters. */
+/** Read-only state for the loop: the day's budget, its remainder and the counters. */
 export async function cycleStatus(now: Date = new Date()): Promise<CycleStatus> {
   const budget = dailyBudget();
   const tokenBudget = dailyTokenBudget();
@@ -533,9 +532,9 @@ export async function cycleStatus(now: Date = new Date()): Promise<CycleStatus> 
   return {
     cycleId,
     stage: cycle?.stage ?? "idle",
-    released: cycle?.stage === CYCLE_STAGE.published,
     published,
     budget,
+    remainingBudget: Math.max(0, budget - published),
     metrics,
     dailyTokenBudget: tokenBudget,
     tokensSpent,

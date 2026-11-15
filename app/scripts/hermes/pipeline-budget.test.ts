@@ -227,17 +227,18 @@ function ready(id: number, score: number, confidence: number, iso = "2026-11-10T
 }
 
 /**
- * Publication cap: a direct deploy call cannot push the day over DAILY_BUDGET,
- * and a second run after the day's release is committed publishes nothing
- * (R08, R19). The DB is not involved — the decision is pure.
+ * Publication cap: a direct deploy call cannot push the day over DAILY_BUDGET.
+ * There is no "one release per day" gate any more — a card summarized at 17:00
+ * goes out at 17:00, and only the remaining daily slots limit the batch
+ * (owner: дашборд обновляется сразу, ежедневным остаётся только дайджест).
+ * The DB is not involved — the decision is pure.
  */
-describe("planPublication (budget and one release per day)", () => {
+describe("planPublication (immediate publication within the daily budget)", () => {
   it("publishes every ready article while the day's budget allows", () => {
     const plan = planPublication({
       ready: [ready(1, 70, 0.9), ready(2, 60, 0.8), ready(3, 55, 0.75)],
       budget: 8,
       publishedToday: 0,
-      releaseCommitted: false,
     });
     expect(plan.allowed).toBe(true);
     expect(plan.reason).toBeNull();
@@ -245,15 +246,14 @@ describe("planPublication (budget and one release per day)", () => {
     expect(plan.remainingBudget).toBe(8);
   });
 
-  it("refuses a publication that would exceed the budget, with a reason", () => {
+  it("refuses with budget-exhausted when 8 of 8 slots are already published", () => {
     const plan = planPublication({
       ready: [ready(1, 90, 0.99)],
       budget: 8,
       publishedToday: 8,
-      releaseCommitted: false,
     });
     expect(plan.allowed).toBe(false);
-    expect(plan.reason).toBe("daily-budget-exhausted");
+    expect(plan.reason).toBe("budget-exhausted");
     expect(plan.items).toEqual([]);
     expect(plan.remainingBudget).toBe(0);
   });
@@ -263,23 +263,26 @@ describe("planPublication (budget and one release per day)", () => {
       ready: [ready(1, 50, 0.7), ready(2, 90, 0.95), ready(3, 60, 0.8)],
       budget: 8,
       publishedToday: 6,
-      releaseCommitted: false,
     });
     expect(plan.allowed).toBe(true);
     expect(plan.remainingBudget).toBe(2);
     expect(plan.items.map((item) => item.id)).toEqual([2, 3]);
   });
 
-  it("refuses a second release in the same day even when budget is left", () => {
+  it("publishes 7 more when 1 of 8 slots is already out", () => {
+    const readyArticles = Array.from({ length: 10 }, (_, index) =>
+      ready(index + 1, 100 - index, 0.9),
+    );
     const plan = planPublication({
-      ready: [ready(1, 90, 0.99)],
+      ready: readyArticles,
       budget: 8,
-      publishedToday: 3,
-      releaseCommitted: true,
+      publishedToday: 1,
     });
-    expect(plan.allowed).toBe(false);
-    expect(plan.reason).toBe("already-published-today");
-    expect(plan.items).toEqual([]);
+    expect(plan.allowed).toBe(true);
+    expect(plan.reason).toBeNull();
+    expect(plan.remainingBudget).toBe(7);
+    expect(plan.items).toHaveLength(7);
+    expect(plan.items.map((item) => item.id)).toEqual([1, 2, 3, 4, 5, 6, 7]);
   });
 
   it("respects the batch size on top of the budget", () => {
@@ -287,7 +290,6 @@ describe("planPublication (budget and one release per day)", () => {
       ready: [ready(1, 90, 0.9), ready(2, 80, 0.9), ready(3, 70, 0.9)],
       budget: 8,
       publishedToday: 0,
-      releaseCommitted: false,
       batchSize: 2,
     });
     expect(plan.items.map((item) => item.id)).toEqual([1, 2]);
@@ -298,7 +300,6 @@ describe("planPublication (budget and one release per day)", () => {
       ready: [],
       budget: 8,
       publishedToday: 2,
-      releaseCommitted: false,
     });
     expect(plan.allowed).toBe(false);
     expect(plan.reason).toBe("no-ready-articles");
@@ -313,9 +314,51 @@ describe("planPublication (budget and one release per day)", () => {
       ready: readyArticles,
       budget: 8,
       publishedToday: 0,
-      releaseCommitted: false,
     });
     expect(plan.items.map((item) => item.id)).toEqual([20, 19, 18, 17, 16, 15, 14, 13]);
+  });
+});
+
+/**
+ * The gate is deleted, not hidden: a source guard keeps it from coming back,
+ * because the pure test alone passes as soon as the caller stops setting the
+ * flag (the old loop set it from `pipeline_state.stage`).
+ */
+describe("deploy-ready: no one-release-per-day gate", () => {
+  const source = fs.readFileSync(
+    path.resolve(import.meta.dirname, "deploy-ready.ts"),
+    "utf-8",
+  );
+
+  it("has no already-published-today refusal and no releaseCommitted input", () => {
+    expect(source).not.toContain("already-published-today");
+    expect(source).not.toContain("releaseCommitted");
+  });
+});
+
+/**
+ * Operator promise: cards publish as soon as they are summarized, so the loop
+ * cycles continuously and pauses LINEAR_WORKER_INTERVAL_MS between cycles
+ * instead of sleeping until the next UTC day.
+ */
+describe("ralph-loop: continuous cycles, no sleep until the next UTC day", () => {
+  const source = fs.readFileSync(
+    path.resolve(import.meta.dirname, "ralph-loop.sh"),
+    "utf-8",
+  );
+
+  it("has no wait until the next UTC day", () => {
+    expect(source).not.toContain("secs_until_utc_midnight");
+    expect(source).not.toMatch(/next UTC day/i);
+  });
+
+  it("pauses LINEAR_WORKER_INTERVAL_MS (15 minutes by default) between cycles", () => {
+    expect(source).toContain("LINEAR_WORKER_INTERVAL_MS:-900000");
+  });
+
+  it("logs the published count and the remaining daily budget", () => {
+    expect(source).toContain("remainingBudget");
+    expect(source).toMatch(/published today/i);
   });
 });
 

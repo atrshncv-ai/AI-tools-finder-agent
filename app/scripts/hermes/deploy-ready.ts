@@ -5,20 +5,20 @@
  * Usage:
  *   npx tsx scripts/hermes/deploy-ready.ts [--batch-size <n>]
  *
- * The publication stage is the LAST place the day's budget is enforced
- * (interfaces.md §1): a manifest can be edited by hand and save-summary can be
- * called directly, so a publication that would exceed DAILY_BUDGET is refused
- * with a reason instead of passing silently. The same is true of the score:
- * nothing below PUBLISH_SCORE_FLOOR is published, while a judge-approved
- * thematic material at 35..49 is not cut by the old 50-point gate. One release
- * per UTC day: after the day's release is committed to `pipeline_state`
- * (stage `published`), a second run publishes nothing.
+ * A card publishes as soon as it is summarized — a card ready at 17:00 is
+ * published at 17:00, not once a day. The only cap is the day's budget: the
+ * publication stage is the LAST place `DAILY_BUDGET` is enforced
+ * (interfaces.md §1), because a manifest can be edited by hand and save-summary
+ * can be called directly, so a publication that would exceed the budget is
+ * refused with a reason instead of passing silently. The same is true of the
+ * score: nothing below PUBLISH_SCORE_FLOOR is published, while a judge-approved
+ * thematic material at 35..49 is not cut by the old 50-point gate.
  *
  * Output (one JSON line on stdout) is the loop's contract:
  *   { status, cycleId, budget, ready, publishedToday, planned, published,
- *     reason, released, done }
- * `done` means "nothing more will be published today", so the loop can wait for
- * the next day instead of retrying.
+ *     remainingBudget, reason, done }
+ * `done` means "the day's budget is spent, nothing more can go out today"; the
+ * loop still keeps cycling, and only the Telegram digest stays daily.
  *
  * Exit codes: 0 = success or a documented refusal, 1 = error (including a bad
  * DAILY_BUDGET: a configuration error at start-up, not a silent default).
@@ -35,7 +35,6 @@ import {
   dailyBudget,
   judgeConfidenceOf,
   publishScoreFloor,
-  readCycle,
   recordCycle,
   selectForPublication,
   type Candidate,
@@ -58,8 +57,7 @@ export interface ReadyArticle extends Candidate {
 
 /** Why the publication stage did not publish. */
 export type PublicationRefusal =
-  | "already-published-today"
-  | "daily-budget-exhausted"
+  | "budget-exhausted"
   | "no-ready-articles"
   | "below-publish-floor";
 
@@ -74,15 +72,14 @@ export interface PublicationPlan {
 /**
  * Pure decision for one publication call; the DB is read by `main()`.
  *
- * Order of the checks matters: a committed release wins over the budget (the
- * budget number alone cannot tell "already released" from "not yet reached"),
- * and an empty queue is reported instead of exiting silently.
+ * The daily budget is the only cap: `remaining = budget − publishedToday`, and
+ * the best of the ready queue fills those remaining slots. There is no
+ * "already released today" input any more — publication is immediate.
  */
 export function planPublication(input: {
   ready: readonly ReadyArticle[];
   budget: number;
   publishedToday: number;
-  releaseCommitted: boolean;
   batchSize?: number;
   /** Publication floor; the live release passes `PUBLISH_SCORE_FLOOR` (env). */
   scoreFloor?: number;
@@ -93,11 +90,8 @@ export function planPublication(input: {
     : 0;
   const remainingBudget = Math.max(0, budget - publishedToday);
 
-  if (input.releaseCommitted) {
-    return { allowed: false, reason: "already-published-today", items: [], remainingBudget };
-  }
   if (remainingBudget === 0) {
-    return { allowed: false, reason: "daily-budget-exhausted", items: [], remainingBudget };
+    return { allowed: false, reason: "budget-exhausted", items: [], remainingBudget };
   }
   if (input.ready.length === 0) {
     return { allowed: false, reason: "no-ready-articles", items: [], remainingBudget };
@@ -114,8 +108,8 @@ export function planPublication(input: {
       : 0;
   const items = selectForPublication(input.ready, limit, { floor });
   if (items.length === 0) {
-    // Everything ready is below the floor: not a release, and the owner report
-    // must see why the day's queue produced nothing.
+    // Everything ready is below the floor: not a publication, and the owner
+    // report must see why the day's queue produced nothing.
     return { allowed: false, reason: "below-publish-floor", items: [], remainingBudget };
   }
   return { allowed: true, reason: null, items, remainingBudget };
@@ -152,7 +146,6 @@ async function main(): Promise<void> {
   const now = new Date();
   const cycleId = cycleIdFor(now);
 
-  const cycle = await readCycle(cycleId);
   const ready = await loadReady(batchSize, budget);
   const publishedToday = await countPublishedToday(now);
 
@@ -160,7 +153,6 @@ async function main(): Promise<void> {
     ready,
     budget,
     publishedToday,
-    releaseCommitted: cycle?.stage === CYCLE_STAGE.published,
     batchSize,
     // The live release always applies the floor; the pure helper keeps a
     // floorless default for callers that rank their own already-filtered rows.
@@ -177,9 +169,9 @@ async function main(): Promise<void> {
         publishedToday,
         planned: 0,
         published: 0,
+        remainingBudget: plan.remainingBudget,
         reason: plan.reason,
-        released: plan.reason === "already-published-today",
-        done: plan.reason !== "no-ready-articles",
+        done: plan.reason === "budget-exhausted",
       }),
     );
     console.error(
@@ -229,9 +221,9 @@ async function main(): Promise<void> {
       publishedToday: publishedTotal,
       planned: plan.items.length,
       published: deployed,
+      remainingBudget: Math.max(0, budget - publishedTotal),
       reason: null,
-      released: complete,
-      done: complete,
+      done: publishedTotal >= budget,
     }),
   );
   console.error(
