@@ -13,7 +13,7 @@
  * Pure module: no DB, no network. The caller decides what to send and to whom;
  * `resolveRecipients` only merges the lists it is given (env by default, plus
  * the subscribers the welcome flow stored in the database). Markdown escaping,
- * section order and the 7-card limit stay here.
+ * section order and the configurable per-section card limit stay here.
  */
 
 import { SECTIONS, type SectionId, type SectionSpec } from "./topics";
@@ -22,10 +22,47 @@ import { SECTIONS, type SectionId, type SectionSpec } from "./topics";
 export const TELEGRAM_MAX_LEN = 4000;
 /** The digest covers the last 24 hours; the text and the query share it. */
 export const DIGEST_WINDOW_HOURS = 24;
-/** Reference form: at most seven cards per section, the rest in the dashboard. */
-export const MAX_ITEMS_PER_SECTION = 7;
+/**
+ * Default number of cards per section. Owner decision 2026-11-15: 7 is too few
+ * for a 50-card day, but a 50-card Telegram wall is unreadable, so the default
+ * is 10 and `DIGEST_MAX_PER_SECTION` may widen or narrow it within 3..20.
+ */
+export const MAX_ITEMS_PER_SECTION = 10;
+/** Allowed range for the configurable per-section card limit. */
+export const DIGEST_MAX_PER_SECTION_MIN = 3;
+export const DIGEST_MAX_PER_SECTION_MAX = 20;
 /** R09: a summary is at most 180 characters and never cut mid-word. */
 export const SUMMARY_MAX_CHARS = 180;
+
+/** Bad digest configuration is an error, never a silent default. */
+export class DigestConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DigestConfigError";
+  }
+}
+
+/**
+ * `DIGEST_MAX_PER_SECTION` from env: cards per section in the client digest.
+ * Empty = 10; the allowed range is 3..20. A typo must fail the morning run
+ * loudly instead of silently shipping a one-card or a hundred-card section.
+ */
+export function digestMaxPerSection(raw: string | undefined = process.env.DIGEST_MAX_PER_SECTION): number {
+  const value = (raw ?? "").trim();
+  if (!value) return MAX_ITEMS_PER_SECTION;
+  if (!/^\d+$/.test(value)) {
+    throw new DigestConfigError(
+      `DIGEST_MAX_PER_SECTION must be an integer between ${DIGEST_MAX_PER_SECTION_MIN} and ${DIGEST_MAX_PER_SECTION_MAX}, got "${value}"`,
+    );
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (parsed < DIGEST_MAX_PER_SECTION_MIN || parsed > DIGEST_MAX_PER_SECTION_MAX) {
+    throw new DigestConfigError(
+      `DIGEST_MAX_PER_SECTION must be between ${DIGEST_MAX_PER_SECTION_MIN} and ${DIGEST_MAX_PER_SECTION_MAX}, got ${parsed}`,
+    );
+  }
+  return parsed;
+}
 
 export interface DigestItem {
   id: number;
@@ -42,6 +79,11 @@ export interface DigestOptions {
   /** Publication day; rendered in Moscow time, as the approved sample. */
   date: Date;
   dashboardUrl: string;
+  /**
+   * Cards per section for this message. Defaults to `MAX_ITEMS_PER_SECTION`;
+   * `daily-digest.ts` passes `digestMaxPerSection()` so the env applies.
+   */
+  maxItemsPerSection?: number;
 }
 
 export interface OwnerReportOptions extends DigestOptions {
@@ -202,10 +244,19 @@ function sectionOf(item: DigestItem): SectionId {
   return item.isScience ? "science" : "ai-news";
 }
 
-function formatSection(section: SectionSpec, items: DigestItem[]): string[] {
+/** A positive integer section limit; a broken caller value falls back to the default. */
+function sectionLimit(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 1) {
+    return MAX_ITEMS_PER_SECTION;
+  }
+  return Math.floor(value);
+}
+
+function formatSection(section: SectionSpec, items: DigestItem[], maxItems: number): string[] {
+  const shown = items.slice(0, maxItems);
   const lines = [`${section.emoji} *${esc(section.label)}* — ${items.length}`];
-  for (const item of items.slice(0, MAX_ITEMS_PER_SECTION)) lines.push(formatItem(item));
-  const rest = items.length - MAX_ITEMS_PER_SECTION;
+  for (const item of shown) lines.push(formatItem(item));
+  const rest = items.length - shown.length;
   if (rest > 0) lines.push(`Ещё ${rest} ${materialWord(rest)} — в дашборде.`);
   lines.push("");
   return lines;
@@ -223,6 +274,7 @@ export function buildClientDigest(items: DigestItem[], opts: DigestOptions): str
     if (bucket) bucket.push(item);
     else bySection.set(id, [item]);
   }
+  const maxItems = sectionLimit(opts.maxItemsPerSection);
 
   const lines = [
     "🌅 *Утренний дайджест научного агента*",
@@ -233,7 +285,9 @@ export function buildClientDigest(items: DigestItem[], opts: DigestOptions): str
   ];
   for (const section of SECTIONS) {
     const sectionItems = bySection.get(section.id);
-    if (sectionItems && sectionItems.length > 0) lines.push(...formatSection(section, sectionItems));
+    if (sectionItems && sectionItems.length > 0) {
+      lines.push(...formatSection(section, sectionItems, maxItems));
+    }
   }
   lines.push("📊 Дашборд доступен по кнопке ниже", opts.dashboardUrl);
   return lines.join("\n");

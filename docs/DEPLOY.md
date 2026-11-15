@@ -142,11 +142,14 @@ sudo -u deploy nano app/.env      # DATABASE_URL, GIGACHAT_*, TELEGRAM_*, BACKUP
   иначе дайджест печатается в лог вместо отправки;
 - `BACKUP_S3_*` — иначе ночной бэкап честно падает (§9).
 
-`DAILY_BUDGET` — 5..10, по умолчанию 8; это предел публикаций. Скачивание и
-скоринг страниц ограничены отдельным `SCORE_DAILY_CAP` — 8..200, по умолчанию
-40 (иначе оценённых материалов хватает лишь на 2–3 карточки вместо 5–8).
-Значение любой из двух переменных вне диапазона останавливает конвейер на
-старте, а не подменяется молча.
+`DAILY_BUDGET` — 1..50, по умолчанию 50: это жёсткий потолок публикаций, а не
+план. Минимума нет — 20–30 карточек отличный день, 5 тоже нормально; тематику и
+раздел каждой карточки решает судья. Скачивание и скоринг страниц ограничены
+отдельным `SCORE_DAILY_CAP` — 8..400, по умолчанию 200 (судья отсеивает около 70%,
+поэтому на потолок 50 нужно ~200 оценённых страниц). `DIGEST_MAX_PER_SECTION` —
+3..20, по умолчанию 10 карточек на раздел дайджеста. Значение любой переменной
+вне диапазона останавливает конвейер или утренний дайджест на старте, а не
+подменяется молча.
 
 Сборка, миграции и сиды (миграции — `app/db/migrations`, актуально `0011`):
 
@@ -482,7 +485,7 @@ sudo ss -tlnp | grep -E ':(3000|5432)'                              # 3000/5432 
    `cd /srv/news-agent/app && bash scripts/hermes/ralph-loop.sh`, после проверки
    — `pm2 start hermes-ralph-loop`.
    В логе: `Configuration OK`, `Cycle #1 started`, `Manifest: N articles within
-   the day budget`, `deploy-ready: published=N/8 today`.
+   the day budget`, `[deploy-ready] Published N/M (today: X/50)`.
 3. Счётчики цикла (имена колонок — camelCase, в кавычках):
    `select "cycleId", stage, metrics from pipeline_state order by "createdAt" desc limit 1;`
    В `metrics` — `collected / prefiltered / judged / approved / published` и

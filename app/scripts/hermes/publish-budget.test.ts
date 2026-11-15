@@ -14,15 +14,19 @@ import {
   DAILY_TOKEN_BUDGET,
   JUDGE_MAX_CANDIDATES,
   PUBLISH_SCORE_FLOOR,
+  SCORE_DAILY_CAP,
   SCORE_GATE,
 } from "./pipeline-config";
 import {
+  DAILY_BUDGET_DEFAULT,
+  dailyBudget,
   dailyTokenBudget,
   emptyCycleMetrics,
   judgeMaxCandidates,
   mergeCycleMetrics,
   normalizeCycleMetrics,
   publishScoreFloor,
+  scoreDailyCap,
   selectForPublication,
   tokenBudgetExceeded,
   tokenBudgetSpent,
@@ -44,6 +48,17 @@ describe("pipeline configuration: token budget and publish floor", () => {
     expect(PUBLISH_SCORE_FLOOR).toBe(35);
     expect(DAILY_TOKEN_BUDGET).toBe(800_000);
     expect(JUDGE_MAX_CANDIDATES).toBe(200);
+  });
+
+  it("raises the daily ceilings to 50 publications and 200 scored pages", () => {
+    // Owner decision 2026-11-15: потолок 50 публикаций, минимума нет; судья
+    // отсеивает около 70%, поэтому оценивать нужно до 200 страниц.
+    expect(DAILY_BUDGET_DEFAULT).toBe(50);
+    expect(dailyBudget("50")).toBe(50);
+    expect(() => dailyBudget("51")).toThrow(/DAILY_BUDGET/);
+    expect(SCORE_DAILY_CAP).toBe(200);
+    expect(scoreDailyCap("200")).toBe(200);
+    expect(() => scoreDailyCap("401")).toThrow(/SCORE_DAILY_CAP/);
   });
 
   it("reads the daily token budget from env, with 800k as the default", () => {

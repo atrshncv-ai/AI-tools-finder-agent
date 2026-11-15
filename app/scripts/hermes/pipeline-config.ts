@@ -8,7 +8,7 @@
  * as on-topic is published from this score up even when it does not reach
  * SCORE_GATE: the judge already proved relevance, and the score only ranks
  * importance. Without this split, a gate of 50 cut judge-approved 40-45 items
- * and a whole day produced one card instead of five to ten.
+ * and a whole day produced one card instead of the day's release.
  *
  * DAILY_TOKEN_BUDGET is the hard daily LLM spend (input + output tokens): the
  * evaluate stage stops paying for new judge calls once it is reached, so a
@@ -19,10 +19,10 @@
  *
  * SCORE_DAILY_CAP caps page downloads + deterministic scoring per UTC day. It
  * is deliberately separate from DAILY_BUDGET: scoring one page is cheap (one
- * HTTP request), while only about a third of scored materials pass the gate.
- * Tying the two together meant an 8-publication day could score only 8 pages,
- * so the release shipped 2–3 cards instead of 5–8. Publication remains bounded
- * by DAILY_BUDGET alone.
+ * HTTP request), while the judge rejects roughly 70% of judged candidates.
+ * With the owner's publication ceiling of 50, a 200-page scoring cap leaves
+ * enough approved materials to fill a good day. Publication remains bounded by
+ * DAILY_BUDGET alone.
  *
  * The exported constants are the defaults. The environment override lives next
  * to the rest of the budget parsing in publish-budget.ts (`dailyTokenBudget()`,
@@ -46,11 +46,11 @@ export const JUDGE_MAX_CANDIDATES = 200;
 
 /** Allowed range for the separate daily page-scoring cap. */
 export const SCORE_DAILY_CAP_MIN = 8;
-export const SCORE_DAILY_CAP_MAX = 200;
+export const SCORE_DAILY_CAP_MAX = 400;
 
 /**
  * Default number of pages downloaded and scored per UTC day. Separate from
  * DAILY_BUDGET on purpose (see the module comment): scoring is cheap, and the
- * publication budget alone cannot feed a 5–8-card day.
+ * judge drops about 70%, so 200 scored pages can feed the 50-card ceiling.
  */
-export const SCORE_DAILY_CAP = 40;
+export const SCORE_DAILY_CAP = 200;

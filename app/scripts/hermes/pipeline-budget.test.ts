@@ -29,35 +29,37 @@ import { buildNewsRow } from "./collect-dual";
 import { applyDailyBudget } from "./manifest-gen";
 
 /**
- * Day budget: the single allowed source is DAILY_BUDGET, 5..10, default 8
- * (owner: «5–10 в день, жёсткий дневной бюджет»). A value outside the range is
- * a configuration error at start-up, not a silently clamped number.
+ * Day budget: the single allowed source is DAILY_BUDGET, 1..50, default 50
+ * (owner decision 2026-11-15: потолок 50, минимума нет — 20–30 хороший день,
+ * 5 тоже нормально). A value outside the range is a configuration error at
+ * start-up, not a silently clamped number.
  */
 describe("dailyBudget (DAILY_BUDGET)", () => {
-  it("defaults to 8 when the variable is unset or empty", () => {
-    expect(DAILY_BUDGET_DEFAULT).toBe(8);
-    expect(dailyBudget(undefined)).toBe(8);
-    expect(dailyBudget("")).toBe(8);
-    expect(dailyBudget("   ")).toBe(8);
+  it("defaults to 50 when the variable is unset or empty", () => {
+    expect(DAILY_BUDGET_DEFAULT).toBe(50);
+    expect(dailyBudget(undefined)).toBe(50);
+    expect(dailyBudget("")).toBe(50);
+    expect(dailyBudget("   ")).toBe(50);
   });
 
-  it("accepts every value of the 5..10 range, including its edges", () => {
+  it("accepts every value of the 1..50 range, including its edges", () => {
     for (let value = DAILY_BUDGET_MIN; value <= DAILY_BUDGET_MAX; value++) {
       expect(dailyBudget(String(value))).toBe(value);
     }
-    expect(dailyBudget("5")).toBe(5);
-    expect(dailyBudget("10")).toBe(10);
-    expect(dailyBudget(" 9 ")).toBe(9);
+    expect(dailyBudget("1")).toBe(1);
+    expect(dailyBudget("50")).toBe(50);
+    expect(dailyBudget(" 49 ")).toBe(49);
   });
 
-  it("rejects values below 5 and above 10 as a configuration error", () => {
-    for (const raw of ["4", "0", "1", "11", "50", "-8"]) {
+  it("rejects values below 1 and above 50 as a configuration error", () => {
+    for (const raw of ["0", "-1", "-8", "51", "100"]) {
       expect(() => dailyBudget(raw)).toThrow(BudgetConfigError);
     }
     // The message names the variable and the allowed range — the owner must see
     // what to fix, without reading the source.
-    expect(() => dailyBudget("11")).toThrow(/DAILY_BUDGET/);
-    expect(() => dailyBudget("11")).toThrow(/5\D+10/);
+    expect(() => dailyBudget("51")).toThrow(/DAILY_BUDGET/);
+    expect(() => dailyBudget("51")).toThrow(/1\D+50/);
+    expect(() => dailyBudget("51")).toThrow(/got 51/);
   });
 
   it("rejects non-integer values instead of parsing a prefix", () => {
@@ -69,39 +71,39 @@ describe("dailyBudget (DAILY_BUDGET)", () => {
 
 /**
  * SCORE_DAILY_CAP is the separate daily cap on page downloads + deterministic
- * scoring. It is deliberately NOT DAILY_BUDGET: only ~a third of scored
- * materials pass, so tying scoring to the publication budget starved the day
- * (2–3 publications instead of 5–8). Publication stays DAILY_BUDGET.
+ * scoring. It is deliberately NOT DAILY_BUDGET: the judge drops roughly 70% of
+ * judged candidates, so a 50-card ceiling needs about 200 scored pages.
+ * Publication stays DAILY_BUDGET.
  */
 describe("scoreDailyCap (SCORE_DAILY_CAP)", () => {
-  it("defaults to 40, not to the publication budget", () => {
-    expect(SCORE_DAILY_CAP).toBe(40);
-    expect(scoreDailyCap(undefined)).toBe(40);
-    expect(scoreDailyCap("")).toBe(40);
-    expect(scoreDailyCap("   ")).toBe(40);
-    expect(scoreDailyCap("40")).toBe(40);
-    // The two limits are independent: an 8-publication day may score 40 pages.
-    expect(scoreDailyCap("40")).not.toBe(dailyBudget("8"));
+  it("defaults to 200, not to the publication budget", () => {
+    expect(SCORE_DAILY_CAP).toBe(200);
+    expect(scoreDailyCap(undefined)).toBe(200);
+    expect(scoreDailyCap("")).toBe(200);
+    expect(scoreDailyCap("   ")).toBe(200);
+    expect(scoreDailyCap("200")).toBe(200);
+    // The two limits are independent: a 50-publication day may score 200 pages.
+    expect(scoreDailyCap("200")).not.toBe(dailyBudget("50"));
   });
 
-  it("accepts every value of the 8..200 range, including its edges", () => {
+  it("accepts every value of the 8..400 range, including its edges", () => {
     for (let value = SCORE_DAILY_CAP_MIN; value <= SCORE_DAILY_CAP_MAX; value++) {
       expect(scoreDailyCap(String(value))).toBe(value);
     }
     expect(scoreDailyCap("8")).toBe(8);
-    expect(scoreDailyCap("200")).toBe(200);
-    expect(scoreDailyCap(" 40 ")).toBe(40);
+    expect(scoreDailyCap("400")).toBe(400);
+    expect(scoreDailyCap(" 200 ")).toBe(200);
   });
 
-  it("rejects values below 8 and above 200 as a configuration error", () => {
-    for (const raw of ["7", "0", "1", "201", "500", "-8"]) {
+  it("rejects values below 8 and above 400 as a configuration error", () => {
+    for (const raw of ["7", "0", "1", "401", "500", "-8"]) {
       expect(() => scoreDailyCap(raw)).toThrow(BudgetConfigError);
     }
     // The message names the variable and the allowed range — the owner must see
     // what to fix without reading the source.
     expect(() => scoreDailyCap("7")).toThrow(/SCORE_DAILY_CAP/);
-    expect(() => scoreDailyCap("7")).toThrow(/8\D+200/);
-    expect(() => scoreDailyCap("201")).toThrow(/8\D+200/);
+    expect(() => scoreDailyCap("7")).toThrow(/8\D+400/);
+    expect(() => scoreDailyCap("401")).toThrow(/8\D+400/);
   });
 
   it("rejects non-integer values instead of parsing a prefix", () => {
@@ -310,16 +312,18 @@ describe("planPublication (immediate publication within the daily budget)", () =
     expect(plan.remainingBudget).toBe(8);
   });
 
-  it("keeps publication at DAILY_BUDGET even when SCORE_DAILY_CAP is 40", () => {
+  it("keeps publication at DAILY_BUDGET even when SCORE_DAILY_CAP is 200", () => {
     const plan = planPublication({
-      ready: Array.from({ length: 10 }, (_, index) => ready(index + 1, 100 - index, 0.9)),
-      budget: dailyBudget("8"),
+      ready: Array.from({ length: 60 }, (_, index) => ready(index + 1, 100 - index, 0.9)),
+      budget: dailyBudget("50"),
       publishedToday: 0,
     });
-    expect(scoreDailyCap("40")).toBe(40);
+    expect(scoreDailyCap("200")).toBe(200);
     expect(plan.allowed).toBe(true);
-    expect(plan.items).toHaveLength(8);
-    expect(plan.items.map((item) => item.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(plan.items).toHaveLength(50);
+    expect(plan.items.map((item) => item.id)).toEqual(
+      Array.from({ length: 50 }, (_, index) => index + 1),
+    );
   });
 
   it("refuses with budget-exhausted when 8 of 8 slots are already published", () => {

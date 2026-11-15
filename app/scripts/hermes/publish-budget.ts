@@ -29,10 +29,15 @@ import {
   SCORE_DAILY_CAP_MIN,
 } from "./pipeline-config";
 
-/** Allowed range for the hard daily publication budget (owner: «5–10 в день»). */
-export const DAILY_BUDGET_MIN = 5;
-export const DAILY_BUDGET_MAX = 10;
-export const DAILY_BUDGET_DEFAULT = 8;
+/**
+ * Allowed range for the hard daily publication budget. Owner decision
+ * 2026-11-15: the ceiling is 50 publications a day; there is no minimum —
+ * 20–30 is a great day and 5 is fine. Quality is decided by the judge, not by
+ * the counter. A value outside 1..50 is a configuration error at start-up.
+ */
+export const DAILY_BUDGET_MIN = 1;
+export const DAILY_BUDGET_MAX = 50;
+export const DAILY_BUDGET_DEFAULT = 50;
 
 /** Cycle stages written to `pipeline_state.stage`. */
 export const CYCLE_STAGE = {
@@ -112,7 +117,7 @@ export type CycleCounters = {
 
 export type CycleMetrics = CycleCounters;
 
-/** `DAILY_BUDGET` from env: default 8, allowed 5..10, anything else is a config error. */
+/** `DAILY_BUDGET` from env: default 50, allowed 1..50, anything else is a config error. */
 export function dailyBudget(raw: string | undefined = process.env.DAILY_BUDGET): number {
   const value = (raw ?? "").trim();
   if (!value) return DAILY_BUDGET_DEFAULT;
@@ -132,11 +137,13 @@ export function dailyBudget(raw: string | undefined = process.env.DAILY_BUDGET):
 
 /**
  * `SCORE_DAILY_CAP` from env: pages downloaded and scored per UTC day.
- * Default 40, allowed 8..200, anything else is a configuration error.
+ * Default 200, allowed 8..400, anything else is a configuration error.
  *
+ * Why 200 against a 50-publication ceiling: the judge rejects roughly 70% of
+ * judged candidates, so ~200 scored pages are needed to fill a good day of 50.
  * A bad value is a start-up error, exactly like DAILY_BUDGET: silently
- * clamping it would either starve scoring (the production 2–3-card day) or
- * turn a typo into unbounded page downloads.
+ * clamping it would either starve scoring or turn a typo into unbounded page
+ * downloads.
  */
 export function scoreDailyCap(raw: string | undefined = process.env.SCORE_DAILY_CAP): number {
   const value = (raw ?? "").trim();

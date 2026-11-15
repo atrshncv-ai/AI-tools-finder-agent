@@ -50,14 +50,14 @@ Docker (`docker-compose.yml`, `Dockerfile`) — legacy-путь без конв�
 | Факт | Значение |
 |---|---|
 | `SCORE_GATE` | 50 |
-| `DAILY_BUDGET` | 5..10, default 8 |
+| `DAILY_BUDGET` | 1..50, default 50 |
 | `GIGACHAT_MODEL` | GigaChat |
 | `ZEN_GO_MODEL` | mimo-v2.5 |
 | `ZEN_MODEL_LEGACY` | zen-default |
 | `DIRECTIONS` | 6 |
 | `SECTIONS` | 3 |
 | `JUDGE_CONFIDENCE_THRESHOLD` | 0.7 |
-| `MAX_ITEMS_PER_SECTION` | 7 |
+| `MAX_ITEMS_PER_SECTION` | 10 |
 | `SUMMARY_MAX_CHARS` | 180 |
 <!-- checked-facts:end -->
 
@@ -68,7 +68,8 @@ Docker (`docker-compose.yml`, `Dockerfile`) — legacy-путь без конв�
 `app/api/ai/providers/zen.ts` (legacy-модель),
 `app/scripts/hermes/topics.ts` (`SECTIONS`, `DIRECTIONS`),
 `app/scripts/hermes/judge.ts` (`JUDGE_CONFIDENCE_THRESHOLD`),
-`app/scripts/hermes/digest-format.ts` (`MAX_ITEMS_PER_SECTION`, `SUMMARY_MAX_CHARS`).
+`app/scripts/hermes/digest-format.ts` (`MAX_ITEMS_PER_SECTION`,
+`DIGEST_MAX_PER_SECTION`, `SUMMARY_MAX_CHARS`).
 
 ---
 
@@ -156,9 +157,10 @@ provider/model`); повторно за того же кандидата суд�
 ### 6.3. Бюджет скачиваний и балл
 
 Страница скачивается только для кандидатов, прошедших префильтр, судью и дневной
-лимит оценок (число = остаток `SCORE_DAILY_CAP`, 8..200, по умолчанию 40, на
-сегодня). Это отдельный лимит, не `DAILY_BUDGET`: оценка дешёвая, а публикаций
-всё равно не больше бюджета дня. Скоринг —
+лимит оценок (число = остаток `SCORE_DAILY_CAP`, 8..400, по умолчанию 200, на
+сегодня). Это отдельный лимит, не `DAILY_BUDGET`: оценка дешёвая, судья отсеивает
+около 70% кандидатов, поэтому на потолок 50 публикаций нужно ~200 оценённых
+страниц. Скоринг —
 детерминированный, без LLM: авторитет источника, arXiv + открытый артефакт,
 altmetric, GitHub/HN-цифры, YouTube-бонусы. Прошедшие `SCORE_GATE` (50) остаются
 `pending` с баллом, остальные — `rejected`. `metrics.decision` фиксирует
@@ -166,9 +168,11 @@ altmetric, GitHub/HN-цифры, YouTube-бонусы. Прошедшие `SCORE
 
 ### 6.4. Бюджет дня и выпуск (`publish-budget.ts`, `manifest-gen.ts`, `deploy-ready.ts`)
 
-`DAILY_BUDGET` (5..10, по умолчанию 8) — **жёсткий** предел публикаций за UTC-сутки.
-Скачивание и скоринг им не ограничены: для них есть отдельный `SCORE_DAILY_CAP`
-(8..200, по умолчанию 40), иначе оценённых страниц хватало бы только на 2–3 карточки.
+`DAILY_BUDGET` (1..50, по умолчанию 50) — **жёсткий потолок** публикаций за
+UTC-сутки. Минимума нет: 20–30 карточек — отличный день, 5 — тоже нормально;
+качество и раздел каждой карточки решает судья, а не счётчик. Скачивание и
+скоринг им не ограничены: для них есть отдельный `SCORE_DAILY_CAP` (8..400, по
+умолчанию 200), потому что судья отсеивает около 70% кандидатов.
 Порядок отбора: балл desc → уверенность судьи desc → свежесть desc → id.
 Бюджет проверяется дважды: `manifest-gen.ts` берёт лучшие в пределах бюджета,
 `deploy-ready.ts` через `planPublication()` отказывает, если публикация превысила
@@ -232,8 +236,12 @@ content`, `ProviderError`).
   вид, без служебных строк), `buildEmptyClientDigest()`, `buildOwnerReport()`
   (служебный отчёт), `formatItem()`, `fitSummary(text, 180)` (обрезка по границе
   слова), `splitTelegramText(text, 4000)`.
-- Лимиты: 7 карточек на раздел, остаток — строкой «Ещё N материалов», выжимка
-  ≤ 180 знаков, сообщение ≤ 4000 знаков.
+- Лимиты: 10 карточек на раздел по умолчанию (`DIGEST_MAX_PER_SECTION`, 3..20) —
+  при 50 публикациях 7 мало, но 50 карточек подряд Telegram не читает; остаток —
+  строкой «Ещё N материалов», выжимка ≤ 180 знаков, сообщение ≤ 4000 знаков.
+- Каждая карточка идёт строго в свой блок: «ИИ-новости» / «ИИ для науки» /
+  «Инструменты для изобретений». Раздел определяет судья (`metrics.judge.section`),
+  а не порядок в очереди или подсчёт слов.
 - **Три раздела, фиксированный порядок:** 🛠 «ИИ-новости» → 🔬 «ИИ для науки» →
   🧪 «Инструменты для изобретений». Совпадают в дашборде и Telegram.
 

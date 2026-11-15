@@ -15,9 +15,11 @@ export const DIGEST_DATE = new Date("2026-08-26T09:00:00+03:00");
 export const DIGEST_DASHBOARD_URL = "https://nauchny-agent.ru/dashboard";
 
 /**
- * Twelve AI-news items: seven cards plus "Ещё 5 материалов — в дашборде",
- * two "AI for science" and one "invention tools" — all three sections present,
- * fixed order, non-zero counters.
+ * Twelve AI-news items: ten cards plus "Ещё 2 материала — в дашборде", two
+ * "AI for science" and one "invention tools" — all three sections present,
+ * fixed order, non-zero counters. The section limit was raised from 7 to 10 on
+ * 2026-11-15 with the publication ceiling (owner: 50 cards a day, no minimum,
+ * the judge decides the section).
  */
 export const GOLDEN_ITEMS: DigestItem[] = [
   {
@@ -187,7 +189,10 @@ export const GOLDEN_CLIENT_DIGEST = [
   "▫️ [Mistral открыла веса модели для кода](https://mistral.example/news/code) — Модель обучена на 80 языках программирования.",
   "▫️ [Китай вводит обязательную маркировку ИИ-контента](https://regulator.example/ai-label) — Требование вступает в силу с 1 сентября.",
   "▫️ [GitHub: Copilot перешёл на новый движок](https://github.example/blog/copilot) — Автодополнение стало точнее на 20% по внутренним тестам.",
-  "Ещё 5 материалов — в дашборде.",
+  "▫️ [Хабр разобрал, как устроен RAG на ста строках](https://habr.example/rag-100) — Автор показывает минимальный конвейер без фреймворков.",
+  "▫️ [Вышла книга о безопасности ИИ-агентов](https://book.example/ai-agent-security) — Авторы разбирают атаки на инструменты и защиту от них.",
+  "▫️ [Nvidia показала чип для обучения моделей](https://nvidia.example/chip) — Ускоритель обещает вдвое больше памяти на ту же плату.",
+  "Ещё 2 материала — в дашборде.",
   "",
   "🔬 *ИИ для науки* — 2",
   "▫️ [ИИ предсказывает структуру белков без выравнивания](https://nature.example/protein) — Подход ускоряет поиск лекарств на порядок, утверждают авторы.",
@@ -207,11 +212,11 @@ export const GOLDEN_CYCLE_STATS: CycleStats = {
   rejectedByPrefilter: 95,
   rejectedByJudge: 27,
   published: 8,
-  // The two independent daily caps: 18 of 40 pages scored, 8 of 8 published.
+  // The two independent daily caps: 18 of 200 pages scored, 8 of 50 published.
   scoredToday: 18,
-  scoreDailyCap: 40,
+  scoreDailyCap: 200,
   publishedToday: 8,
-  dailyBudget: 8,
+  dailyBudget: 50,
   rejectedByReason: {
     "no-ai-signal": 71,
     stale: 32,
@@ -228,7 +233,7 @@ export const GOLDEN_OWNER_REPORT = [
   "🧾 *Служебный отчёт* · 26 августа 2026 г.",
   "",
   "Собрано: 130 · отсеяно: 122 · опубликовано: 8",
-  "Оценено: 18 из 40 · опубликовано: 8 из 8",
+  "Оценено: 18 из 200 · опубликовано: 8 из 50",
   "Отсеяно префильтром: 95 · судьёй: 27",
   "Причины отказа: no-ai-signal — 71 · stale — 32 · low-confidence — 19",
   "",

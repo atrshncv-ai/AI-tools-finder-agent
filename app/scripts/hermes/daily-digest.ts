@@ -22,6 +22,8 @@
  *     clean digest plus the service report. Missing owner address does not
  *     stop the client delivery.
  *   DIGEST_DASHBOARD_URL — dashboard base URL (default http://localhost:3000).
+ *   DIGEST_MAX_PER_SECTION — cards per section (3..20, default 10); the rest
+ *     stay available through the dashboard link.
  *   PAYMENT_MANAGER_CHAT_ID / PAYMENT_DUE_AT — server-payment reminders.
  *
  * Usage:
@@ -37,6 +39,7 @@ import {
   buildClientDigest,
   buildEmptyClientDigest,
   buildOwnerReport,
+  digestMaxPerSection,
   DIGEST_WINDOW_HOURS,
   resolveRecipients,
   splitTelegramText,
@@ -325,6 +328,7 @@ async function main() {
   const tokenLimit = dailyTokenBudget();
   const publicationBudget = dailyBudget();
   const scoreCap = scoreDailyCap();
+  const maxItemsPerSection = digestMaxPerSection();
   let scoredToday = 0;
   let publishedToday = 0;
   try {
@@ -364,7 +368,7 @@ async function main() {
   const report = buildOwnerReport(stats, { date: now, dashboardUrl: DASHBOARD_URL, healthLine });
   const clientParts = splitTelegramText(
     items.length > 0
-      ? buildClientDigest(items, { date: now, dashboardUrl: DASHBOARD_URL })
+      ? buildClientDigest(items, { date: now, dashboardUrl: DASHBOARD_URL, maxItemsPerSection })
       : buildEmptyClientDigest({ date: now, dashboardUrl: DASHBOARD_URL }),
   );
 

@@ -3,8 +3,12 @@ import {
   buildClientDigest,
   buildEmptyClientDigest,
   buildOwnerReport,
+  digestMaxPerSection,
+  DIGEST_MAX_PER_SECTION_MAX,
+  DIGEST_MAX_PER_SECTION_MIN,
   fitSummary,
   formatItem,
+  MAX_ITEMS_PER_SECTION,
   resolveRecipients,
   splitTelegramText,
   SUMMARY_MAX_CHARS,
@@ -49,6 +53,41 @@ describe("client digest form (R21)", () => {
   it("ends with the dashboard address and never with a service line", () => {
     const text = buildClientDigest(GOLDEN_ITEMS, opts);
     expect(text.endsWith(`📊 Дашборд доступен по кнопке ниже\n${DIGEST_DASHBOARD_URL}`)).toBe(true);
+  });
+});
+
+describe("digest section limit (DIGEST_MAX_PER_SECTION)", () => {
+  it("keeps at most 10 cards per section and puts the rest in the dashboard line", () => {
+    expect(MAX_ITEMS_PER_SECTION).toBe(10);
+    const text = buildClientDigest(GOLDEN_ITEMS, opts);
+    const aiNews = text.slice(text.indexOf("🛠 *ИИ-новости*"), text.indexOf("🔬 *ИИ для науки*"));
+    expect(aiNews.match(/^▫️ /gm)).toHaveLength(10);
+    expect(aiNews).toContain("Ещё 2 материала — в дашборде.");
+  });
+
+  it("defaults to 10, accepts 3..20 and rejects a value outside the range", () => {
+    expect(digestMaxPerSection(undefined)).toBe(10);
+    expect(digestMaxPerSection("")).toBe(10);
+    expect(digestMaxPerSection("  ")).toBe(10);
+    expect(digestMaxPerSection("3")).toBe(3);
+    expect(digestMaxPerSection("15")).toBe(15);
+    expect(digestMaxPerSection("20")).toBe(20);
+    for (const raw of ["2", "0", "21", "abc", "7.5"]) {
+      expect(() => digestMaxPerSection(raw)).toThrow(/DIGEST_MAX_PER_SECTION/);
+    }
+    expect(DIGEST_MAX_PER_SECTION_MIN).toBe(3);
+    expect(DIGEST_MAX_PER_SECTION_MAX).toBe(20);
+  });
+
+  it("lets one run override the section size without touching the split", () => {
+    const text = buildClientDigest(GOLDEN_ITEMS, { ...opts, maxItemsPerSection: 3 });
+    const aiNews = text.slice(text.indexOf("🛠 *ИИ-новости*"), text.indexOf("🔬 *ИИ для науки*"));
+    expect(aiNews.match(/^▫️ /gm)).toHaveLength(3);
+    expect(aiNews).toContain("Ещё 9 материалов — в дашборде.");
+    // The 4000-char split is unchanged: the long message still splits at lines.
+    const parts = splitTelegramText(text, 800);
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts.join("\n")).toBe(text);
   });
 });
 
@@ -156,7 +195,9 @@ describe("owner report (R17, R18)", () => {
 
   it("shows both daily counters: scored of SCORE_DAILY_CAP and published of DAILY_BUDGET", () => {
     const report = buildOwnerReport(GOLDEN_CYCLE_STATS, opts);
-    expect(report).toContain("Оценено: 18 из 40 · опубликовано: 8 из 8");
+    expect(report).toContain("Оценено: 18 из 200 · опубликовано: 8 из 50");
+    expect(report).toMatch(/оценено: \d+ из \d+/i);
+    expect(report).toMatch(/опубликовано: \d+ из \d+/i);
     // A legacy caller without the caps keeps the old report shape.
     const legacy = buildOwnerReport(
       { collected: 10, rejected: 2, published: 1 },
