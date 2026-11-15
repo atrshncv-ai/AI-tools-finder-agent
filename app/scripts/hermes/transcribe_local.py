@@ -41,6 +41,29 @@ def log(message: str) -> None:
     print(f"[transcribe-local] {message}", file=sys.stderr, flush=True)
 
 
+def patch_av_open_compat() -> None:
+    """Drop the `metadata_errors` kwarg that PyAV 19 no longer accepts.
+
+    faster-whisper 1.2.1 calls `av.open(..., metadata_errors="ignore")`, but the
+    installed PyAV 19 does not know that argument, so decoding fails with
+    `TypeError: open() got an unexpected keyword argument 'metadata_errors'`.
+    Downgrading to av<15 does not build (no wheels for Python 3.12), so we strip
+    the unsupported kwarg before the real `av.open` runs. Remove this shim once
+    faster-whisper supports PyAV 19.
+    """
+    try:
+        import av
+    except ImportError:
+        return  # PyAV is absent entirely — nothing to patch.
+    original_av_open = av.open
+
+    def av_open_compat(*args, **kwargs):
+        kwargs.pop("metadata_errors", None)
+        return original_av_open(*args, **kwargs)
+
+    av.open = av_open_compat
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="transcribe_local.py",
@@ -82,6 +105,9 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.WARNING,
         format="[%(name)s] %(levelname)s: %(message)s",
     )
+
+    # Must run before faster_whisper touches PyAV (see patch_av_open_compat).
+    patch_av_open_compat()
 
     try:
         from faster_whisper import WhisperModel
