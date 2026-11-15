@@ -207,6 +207,11 @@ export const GOLDEN_CYCLE_STATS: CycleStats = {
   rejectedByPrefilter: 95,
   rejectedByJudge: 27,
   published: 8,
+  // The two independent daily caps: 18 of 40 pages scored, 8 of 8 published.
+  scoredToday: 18,
+  scoreDailyCap: 40,
+  publishedToday: 8,
+  dailyBudget: 8,
   rejectedByReason: {
     "no-ai-signal": 71,
     stale: 32,
@@ -223,6 +228,7 @@ export const GOLDEN_OWNER_REPORT = [
   "🧾 *Служебный отчёт* · 26 августа 2026 г.",
   "",
   "Собрано: 130 · отсеяно: 122 · опубликовано: 8",
+  "Оценено: 18 из 40 · опубликовано: 8 из 8",
   "Отсеяно префильтром: 95 · судьёй: 27",
   "Причины отказа: no-ai-signal — 71 · stale — 32 · low-confidence — 19",
   "",

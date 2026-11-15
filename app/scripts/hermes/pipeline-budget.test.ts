@@ -12,9 +12,16 @@ import {
   judgeConfidenceOf,
   mergeCycleMetrics,
   normalizeCycleMetrics,
+  remainingScoreBudget,
+  scoreDailyCap,
   selectForPublication,
   type Candidate,
 } from "./publish-budget";
+import {
+  SCORE_DAILY_CAP,
+  SCORE_DAILY_CAP_MAX,
+  SCORE_DAILY_CAP_MIN,
+} from "./pipeline-config";
 import { planPublication, type ReadyArticle } from "./deploy-ready";
 import { runEvaluationCycle, updateForOutcome, type EvaluationCandidate } from "./evaluate-news";
 import { ProviderError } from "../../api/ai/providers/types";
@@ -57,6 +64,63 @@ describe("dailyBudget (DAILY_BUDGET)", () => {
     for (const raw of ["abc", "7.5", "8abc", "eight", "0x8"]) {
       expect(() => dailyBudget(raw)).toThrow(BudgetConfigError);
     }
+  });
+});
+
+/**
+ * SCORE_DAILY_CAP is the separate daily cap on page downloads + deterministic
+ * scoring. It is deliberately NOT DAILY_BUDGET: only ~a third of scored
+ * materials pass, so tying scoring to the publication budget starved the day
+ * (2–3 publications instead of 5–8). Publication stays DAILY_BUDGET.
+ */
+describe("scoreDailyCap (SCORE_DAILY_CAP)", () => {
+  it("defaults to 40, not to the publication budget", () => {
+    expect(SCORE_DAILY_CAP).toBe(40);
+    expect(scoreDailyCap(undefined)).toBe(40);
+    expect(scoreDailyCap("")).toBe(40);
+    expect(scoreDailyCap("   ")).toBe(40);
+    expect(scoreDailyCap("40")).toBe(40);
+    // The two limits are independent: an 8-publication day may score 40 pages.
+    expect(scoreDailyCap("40")).not.toBe(dailyBudget("8"));
+  });
+
+  it("accepts every value of the 8..200 range, including its edges", () => {
+    for (let value = SCORE_DAILY_CAP_MIN; value <= SCORE_DAILY_CAP_MAX; value++) {
+      expect(scoreDailyCap(String(value))).toBe(value);
+    }
+    expect(scoreDailyCap("8")).toBe(8);
+    expect(scoreDailyCap("200")).toBe(200);
+    expect(scoreDailyCap(" 40 ")).toBe(40);
+  });
+
+  it("rejects values below 8 and above 200 as a configuration error", () => {
+    for (const raw of ["7", "0", "1", "201", "500", "-8"]) {
+      expect(() => scoreDailyCap(raw)).toThrow(BudgetConfigError);
+    }
+    // The message names the variable and the allowed range — the owner must see
+    // what to fix without reading the source.
+    expect(() => scoreDailyCap("7")).toThrow(/SCORE_DAILY_CAP/);
+    expect(() => scoreDailyCap("7")).toThrow(/8\D+200/);
+    expect(() => scoreDailyCap("201")).toThrow(/8\D+200/);
+  });
+
+  it("rejects non-integer values instead of parsing a prefix", () => {
+    for (const raw of ["abc", "40.5", "40abc", "forty", "0x28"]) {
+      expect(() => scoreDailyCap(raw)).toThrow(BudgetConfigError);
+    }
+  });
+});
+
+describe("remainingScoreBudget (score slots left in the UTC day)", () => {
+  it("keeps scoring after DAILY_BUDGET is spent: 8 of 40 leaves 32 pages", () => {
+    expect(remainingScoreBudget(40, 8)).toBe(32);
+    expect(remainingScoreBudget(40, 0)).toBe(40);
+  });
+
+  it("reaches zero exactly at the cap and never goes negative", () => {
+    expect(remainingScoreBudget(40, 40)).toBe(0);
+    expect(remainingScoreBudget(40, 41)).toBe(0);
+    expect(remainingScoreBudget(0, 0)).toBe(0);
   });
 });
 
@@ -244,6 +308,18 @@ describe("planPublication (immediate publication within the daily budget)", () =
     expect(plan.reason).toBeNull();
     expect(plan.items.map((item) => item.id)).toEqual([1, 2, 3]);
     expect(plan.remainingBudget).toBe(8);
+  });
+
+  it("keeps publication at DAILY_BUDGET even when SCORE_DAILY_CAP is 40", () => {
+    const plan = planPublication({
+      ready: Array.from({ length: 10 }, (_, index) => ready(index + 1, 100 - index, 0.9)),
+      budget: dailyBudget("8"),
+      publishedToday: 0,
+    });
+    expect(scoreDailyCap("40")).toBe(40);
+    expect(plan.allowed).toBe(true);
+    expect(plan.items).toHaveLength(8);
+    expect(plan.items.map((item) => item.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
   it("refuses with budget-exhausted when 8 of 8 slots are already published", () => {
@@ -457,6 +533,53 @@ describe("evaluate-news cycle: page download only for the day budget", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("evaluate-news cycle: SCORE_DAILY_CAP, not DAILY_BUDGET, bounds scoring", () => {
+  it("keeps scoring at scoredToday=8 when the score cap is 40", async () => {
+    const result = await runEvaluationCycle({
+      candidates: [newsCandidate(1), newsCandidate(2), newsCandidate(3)],
+      // The regression: 8 scored today is exactly the publication budget, but
+      // only a fifth of the 40-page score cap.
+      budget: remainingScoreBudget(scoreDailyCap("40"), 8),
+      deps: {
+        now: CYCLE_NOW,
+        completeJson: verdictReply(0.9) as never,
+        score: async (item) => ({
+          id: item.id,
+          title: item.title,
+          score: 60,
+          breakdown: [],
+          metrics: {},
+        }),
+      },
+    });
+    expect(result.scored).toBe(3);
+    expect(result.outcomes.every((outcome) => outcome.decision !== "deferred-budget")).toBe(true);
+    expect(result.counters.approved).toBe(3);
+  });
+
+  it("stops at scoredToday=40 with score-cap-reached, not download-budget", async () => {
+    let scored = 0;
+    const result = await runEvaluationCycle({
+      candidates: [newsCandidate(1)],
+      budget: remainingScoreBudget(scoreDailyCap("40"), 40),
+      deps: {
+        now: CYCLE_NOW,
+        completeJson: verdictReply(0.9) as never,
+        score: async (item) => {
+          scored++;
+          return { id: item.id, title: item.title, score: 60, breakdown: [], metrics: {} };
+        },
+      },
+    });
+    expect(scored).toBe(0);
+    expect(result.scored).toBe(0);
+    expect(result.outcomes).toHaveLength(1);
+    expect(result.outcomes[0].decision).toBe("deferred-budget");
+    expect(result.outcomes[0].metrics.deferReason).toBe("score-cap-reached");
+    expect(result.outcomes[0].metrics.deferReason).not.toBe("download-budget");
   });
 });
 

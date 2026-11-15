@@ -17,10 +17,17 @@
  * JUDGE_MAX_CANDIDATES caps how many prefilter survivors reach the paid judge;
  * they are chosen by prefilter score, best first.
  *
+ * SCORE_DAILY_CAP caps page downloads + deterministic scoring per UTC day. It
+ * is deliberately separate from DAILY_BUDGET: scoring one page is cheap (one
+ * HTTP request), while only about a third of scored materials pass the gate.
+ * Tying the two together meant an 8-publication day could score only 8 pages,
+ * so the release shipped 2–3 cards instead of 5–8. Publication remains bounded
+ * by DAILY_BUDGET alone.
+ *
  * The exported constants are the defaults. The environment override lives next
  * to the rest of the budget parsing in publish-budget.ts (`dailyTokenBudget()`,
- * `judgeMaxCandidates()`, `publishScoreFloor()`), which keeps this module free
- * of `process.env` reads at import time.
+ * `judgeMaxCandidates()`, `publishScoreFloor()`, `scoreDailyCap()`), which keeps
+ * this module free of `process.env` reads at import time.
  *
  * Content relevance is enforced separately by the hard AI-signal gate in
  * evaluate-news.ts and the AI requirement in invention-classify.ts; the score
@@ -36,3 +43,14 @@ export const DAILY_TOKEN_BUDGET = 800_000;
 
 /** At most this many prefilter survivors are sent to the paid judge per cycle. */
 export const JUDGE_MAX_CANDIDATES = 200;
+
+/** Allowed range for the separate daily page-scoring cap. */
+export const SCORE_DAILY_CAP_MIN = 8;
+export const SCORE_DAILY_CAP_MAX = 200;
+
+/**
+ * Default number of pages downloaded and scored per UTC day. Separate from
+ * DAILY_BUDGET on purpose (see the module comment): scoring is cheap, and the
+ * publication budget alone cannot feed a 5–8-card day.
+ */
+export const SCORE_DAILY_CAP = 40;

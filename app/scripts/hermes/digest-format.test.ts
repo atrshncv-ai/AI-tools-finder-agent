@@ -154,6 +154,17 @@ describe("owner report (R17, R18)", () => {
     );
   });
 
+  it("shows both daily counters: scored of SCORE_DAILY_CAP and published of DAILY_BUDGET", () => {
+    const report = buildOwnerReport(GOLDEN_CYCLE_STATS, opts);
+    expect(report).toContain("Оценено: 18 из 40 · опубликовано: 8 из 8");
+    // A legacy caller without the caps keeps the old report shape.
+    const legacy = buildOwnerReport(
+      { collected: 10, rejected: 2, published: 1 },
+      opts,
+    );
+    expect(legacy).not.toContain("Оценено:");
+  });
+
   it("keeps only the top three rejection reasons", () => {
     const report = buildOwnerReport(GOLDEN_CYCLE_STATS, opts);
     expect(report).toContain("no-ai-signal — 71");

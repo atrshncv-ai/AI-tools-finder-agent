@@ -1,13 +1,15 @@
 #!/usr/bin/env tsx
 /**
- * evaluate-news.ts — two-stage selection, deterministic scoring, day budget.
+ * evaluate-news.ts — two-stage selection, deterministic scoring, score cap.
  *
  * Stage A (prefilter.ts) is free: title + RSS lead, no network. Stage B
  * (judge.ts) is one cheap LLM call on the SAME title + lead — never on the
  * page: 100 candidates a day against a budget of 8 means 90% of the work would
  * be wasted otherwise (R18.1). Only after a candidate is confirmed on-topic by
- * the judge does it compete for the day's download budget, and only the best
- * DAILY_BUDGET of them get their page fetched and scored here.
+ * the judge does it compete for the day's SCORE_DAILY_CAP, and only the best
+ * remaining slots get their page fetched and scored here. That cap is separate
+ * from DAILY_BUDGET (publication): scoring is one cheap request and only a
+ * fraction passes, so publication is not a sane bound for it.
  *
  * The LLM is NOT qualified to judge "scientific value" — so it doesn't.
  * Stage B decides topic only; the score below is deterministic:
@@ -42,10 +44,11 @@
  * is approved from PUBLISH_SCORE_FLOOR (35) up, so thematic 40-45 materials
  * reach the manifest queue instead of being cut by a ranking number. Below the
  * floor a material is rejected.
- * Budget: DAILY_BUDGET (5..10, default 8) is the hard publication budget, read
- * from the environment; this stage never downloads more pages than the budget.
- * Paid LLM work is bounded twice: only the top JUDGE_MAX_CANDIDATES prefilter
- * survivors are judged, and no new judge call starts after DAILY_TOKEN_BUDGET.
+ * Budgets: DAILY_BUDGET (5..10, default 8) remains the hard publication budget;
+ * this stage bounds downloads by SCORE_DAILY_CAP (8..200, default 40) instead,
+ * so an 8-publication day can still score 40 pages. Paid LLM work is bounded
+ * twice: only the top JUDGE_MAX_CANDIDATES prefilter survivors are judged, and
+ * no new judge call starts after DAILY_TOKEN_BUDGET.
  *
  * Usage:
  *   npx tsx scripts/hermes/evaluate-news.ts --batch
@@ -74,6 +77,7 @@ import { JUDGE_CONFIDENCE_THRESHOLD, judgeRelevance, type Judgement } from "./ju
 import { directionById, sectionById, type DirectionId, type SectionId } from "./topics";
 import {
   CYCLE_STAGE,
+  countScoredToday,
   cycleIdFor,
   dailyBudget,
   dailyTokenBudget,
@@ -84,6 +88,8 @@ import {
   publishScoreFloor,
   readCycle,
   recordCycle,
+  remainingScoreBudget,
+  scoreDailyCap,
   selectForPublication,
   tokenBudgetSpent,
   type CycleMetrics,
@@ -247,7 +253,7 @@ export interface EvaluationOutcome {
 export interface EvaluationCycleResult {
   outcomes: EvaluationOutcome[];
   counters: CycleMetrics;
-  /** Candidates whose page was fetched and scored (the day's download budget). */
+  /** Candidates whose page was fetched and scored (the day's score cap). */
   scored: number;
   /** Judge LLM calls actually made (reused verdicts cost nothing). */
   judgeCalls: number;
@@ -952,9 +958,9 @@ function prefilterScoreOf(item: { prefilter: PrefilterResult }): number {
  * judge-call tests observe.
  *
  * Order is the contract: prefilter (`title` + saved lead) → judge (same two
- * fields) → day budget → page download and scoring. A page is never fetched
- * for a candidate the prefilter dropped, the judge rejected, or the budget did
- * not reach.
+ * fields) → day's score budget → page download and scoring. A page is never
+ * fetched for a candidate the prefilter dropped, the judge rejected, or the
+ * score cap did not reach.
  *
  * Two hard stop-lines guard the paid stage: only the top `JUDGE_MAX_CANDIDATES`
  * prefilter survivors by prefilter score are judged, and once the day's
@@ -1110,7 +1116,7 @@ export async function runEvaluationCycle(input: {
   const deferredOutcome = (
     item: { candidate: EvaluationCandidate; prefilter: PrefilterResult },
     verdict: JudgeVerdict | null,
-    reason: "download-budget" | "token-budget" | "candidate-cap",
+    reason: "score-cap-reached" | "token-budget" | "candidate-cap",
   ): EvaluationOutcome => ({
     candidate: item.candidate,
     decision: "deferred-budget",
@@ -1226,9 +1232,9 @@ export async function runEvaluationCycle(input: {
   let scored = 0;
   for (const item of onTopic) {
     if (!selectedIds.has(item.candidate.id)) {
-      // On topic but outside the download budget: stays pending with its
+      // On topic but outside the day's SCORE_DAILY_CAP: stays pending with its
       // verdict, so a later cycle can score it without paying the judge again.
-      outcomes.push(deferredOutcome(item, item.verdict, "download-budget"));
+      outcomes.push(deferredOutcome(item, item.verdict, "score-cap-reached"));
       continue;
     }
 
@@ -1389,8 +1395,8 @@ export function updateForOutcome(outcome: EvaluationOutcome): Record<string, unk
     return set;
   }
   if (outcome.decision === "deferred-budget") {
-    // Passed the judge, lost the download budget: stays pending (score NULL) so
-    // a later cycle can score it without paying the judge twice.
+    // Passed the judge, lost the day's SCORE_DAILY_CAP: stays pending (score
+    // NULL) so a later cycle can score it without paying the judge twice.
     return set;
   }
   if (outcome.decision === "provider-error") {
@@ -1405,7 +1411,10 @@ export function updateForOutcome(outcome: EvaluationOutcome): Record<string, unk
 
 async function main() {
   const { id, batch } = parseArgs();
+  // Two independent daily limits: publication (DAILY_BUDGET) and page scoring
+  // (SCORE_DAILY_CAP). This stage only spends the latter.
   const budget = dailyBudget();
+  const scoreCap = scoreDailyCap();
   const tokenBudget = dailyTokenBudget();
   const judgeLimit = judgeMaxCandidates();
   const now = new Date();
@@ -1452,17 +1461,12 @@ async function main() {
     process.exit(0);
   }
 
-  // The day's download allowance is per DAY, not per run: retries after a
-  // failure continue the same budget instead of buying more pages, and the
-  // "page only for the budget" rule holds for the whole day.
-  const dayStart = new Date(now);
-  dayStart.setUTCHours(0, 0, 0, 0);
-  const [scoredTodayRow] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(news)
-    .where(sql`${news.metrics}->>'scoredAt' >= ${dayStart.toISOString()}`);
-  const scoredToday = scoredTodayRow?.n ?? 0;
-  const downloadBudget = id ? 1 : Math.max(0, budget - scoredToday);
+  // The day's score allowance is per DAY, not per run: retries after a failure
+  // continue the same cap instead of buying more pages, and the "page only for
+  // the score cap" rule holds for the whole day. It is NOT DAILY_BUDGET: an
+  // 8-publication day may score 40 pages, and only about a third of them pass.
+  const scoredToday = await countScoredToday(now);
+  const downloadBudget = id ? 1 : remainingScoreBudget(scoreCap, scoredToday);
 
   // The token limit is per DAY too: the ledger already holds the spend of the
   // previous runs of this cycle, and a retry must continue it instead of
@@ -1471,9 +1475,10 @@ async function main() {
   const spentTokens = tokenBudgetSpent(priorCycle?.metrics.usage);
 
   console.error(
-    `[evaluate-news] ${targets.length} candidates, day budget=${budget}, ` +
-      `judge cap=${judgeLimit}, tokens ${spentTokens}/${tokenBudget}, ` +
-      `pages left today=${downloadBudget} (${scoredToday} already downloaded)`,
+    `[evaluate-news] ${targets.length} candidates, score cap=${scoreCap} ` +
+      `(publish budget=${budget}), judge cap=${judgeLimit}, ` +
+      `tokens ${spentTokens}/${tokenBudget}, ` +
+      `pages left today=${downloadBudget} (${scoredToday} already scored)`,
   );
 
   // Provider chain (GigaChat → OpenCode, error classification from task 02).
@@ -1485,7 +1490,7 @@ async function main() {
   const cycle = await runEvaluationCycle({
     candidates: targets.map(toCandidate),
     // A manual `--id` run is one article: it must not be blocked by the day's
-    // download budget, but it still never fetches more than one page.
+    // score cap, but it still never fetches more than one page.
     budget: downloadBudget,
     deps: {
       now,
@@ -1519,6 +1524,7 @@ async function main() {
     status: cycle.providerErrors.length > 0 ? "provider-error" : "ok",
     cycleId,
     budget,
+    scoreDailyCap: scoreCap,
     downloadBudget,
     scoredToday,
     tokenBudget,

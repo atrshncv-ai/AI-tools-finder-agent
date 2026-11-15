@@ -4,14 +4,14 @@
 # Continuous cycle: collect → prefilter → judge → day budget → manifest →
 # per-article fetch/summarize → publication → pause → repeat. A card publishes
 # as soon as it is summarized (ready at 17:00 — published and on the dashboard
-# at 17:00); the only cap is DAILY_BUDGET. A cycle that finds nothing to
-# publish just pauses LINEAR_WORKER_INTERVAL_MS (15 minutes by default) and
-# collects again — the morning Telegram digest stays the only daily job
-# (cron, 06:00 UTC).
+# at 17:00); publication is capped by DAILY_BUDGET, scoring by the separate
+# SCORE_DAILY_CAP. A cycle that finds nothing to publish just pauses
+# LINEAR_WORKER_INTERVAL_MS (15 minutes by default) and collects again — the
+# morning Telegram digest stays the only daily job (cron, 06:00 UTC).
 #
 # Response to "куча данных обрабатывалась впустую": evaluation downloads a page
 # only for the candidates that passed the cheap prefilter, the LLM judge and
-# the day's download budget — see evaluate-news.ts.
+# the day's SCORE_DAILY_CAP — see evaluate-news.ts.
 #
 # Designed to run under PM2 (interpreter: bash) or as a plain daemon.
 
@@ -63,15 +63,15 @@ publish_ready() {
 
 log "Ralph Loop started (continuous publication, pause=${PAUSE_SECS}s, manifest limit=${LIMIT})"
 
-# Fail fast: a DAILY_BUDGET outside 5..10 is a configuration error, and so is an
-# unreachable database. Exit and let PM2 surface the restart instead of running
-# a cycle with a silent default (ticket 03 acceptance).
+# Fail fast: a DAILY_BUDGET outside 5..10 or a SCORE_DAILY_CAP outside 8..200 is
+# a configuration error, and so is an unreachable database. Exit and let PM2
+# surface the restart instead of running a cycle with a silent default.
 if ! STARTUP_STATUS=$(npx tsx scripts/hermes/publish-budget.ts --status 2>/dev/null); then
-  log "ERROR: pipeline configuration is invalid (DAILY_BUDGET range or database access)"
+  log "ERROR: pipeline configuration is invalid (DAILY_BUDGET/SCORE_DAILY_CAP range or database access)"
   npx tsx scripts/hermes/publish-budget.ts --status
   exit 1
 fi
-log "Configuration OK (cycle $(json_field "$STARTUP_STATUS" cycleId), budget=$(json_field "$STARTUP_STATUS" budget))"
+log "Configuration OK (cycle $(json_field "$STARTUP_STATUS" cycleId), publish budget=$(json_field "$STARTUP_STATUS" budget), score cap=$(json_field "$STARTUP_STATUS" scoreDailyCap))"
 
 CYCLE=0
 while true; do
@@ -83,8 +83,9 @@ while true; do
   fi
 
   BUDGET=$(json_field "$STATUS" budget)
+  SCORE_CAP=$(json_field "$STATUS" scoreDailyCap)
   CYCLE=$((CYCLE + 1))
-  log "=== Cycle #${CYCLE} started (stage=$(json_field "$STATUS" stage), published $(json_field "$STATUS" published)/${BUDGET} today, remaining $(json_field "$STATUS" remainingBudget)) ==="
+  log "=== Cycle #${CYCLE} started (stage=$(json_field "$STATUS" stage), published $(json_field "$STATUS" published)/${BUDGET} today, scored $(json_field "$STATUS" scoredToday)/${SCORE_CAP}, remaining $(json_field "$STATUS" remainingBudget)) ==="
 
   # Step 0a: Dual-pipeline collection (tech + science streams, dedup guarded).
   # The RSS lead is stored in news.summary — stage A and the judge read it.

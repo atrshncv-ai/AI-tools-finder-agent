@@ -16,7 +16,7 @@
 | **Судья** | LLM-проверка «материал действительно про эту тему». Возвращает `{onTopic, section, direction, confidence, reason}` и работает fail-closed: сомнение = отказ | `app/scripts/hermes/judge.ts` |
 | **Вердикт** | Сохранённый ответ судьи в `news.metrics.judge` (`onTopic/section/direction/confidence/reason/provider/model`). Повторно за ту же статью судья не платит | `news.metrics` |
 | **Бюджет дня** | Жёсткий предел числа публикаций за UTC-сутки: 5..10, по умолчанию 8 (`DAILY_BUDGET`). Проверяется и при отборе, и при публикации | `app/scripts/hermes/publish-budget.ts` |
-| **Бюджет скачиваний** | Сколько страниц цикл ещё может скачать сегодня. Страница качается только для прошедших префильтр, судью и этот бюджет | `app/scripts/hermes/evaluate-news.ts` |
+| **Бюджет скачиваний** | Сколько страниц цикл ещё может скачать и оценить сегодня: остаток `SCORE_DAILY_CAP` (8..200, по умолчанию 40), отдельно от `DAILY_BUDGET`. Страница качается только для прошедших префильтр, судью и этот лимит; исчерпание — `score-cap-reached` | `app/scripts/hermes/evaluate-news.ts` |
 | **Балл** | Число 0..95 от детерминированного скоринга (источник, цифры GitHub/HN, arXiv, altmetric, видео). Гейт — `SCORE_GATE` (50) | `app/scripts/hermes/pipeline-config.ts` |
 | **Гейт** | Единственный порог публикации. Второе такое число в другом файле — дефект | `SCORE_GATE` в `pipeline-config.ts` |
 | **Цикл** | Один проход конвейера за UTC-сутки, `cycle-YYYY-MM-DD`. Повтор после сбоя продолжает тот же цикл | `pipeline_state.cycleId` |

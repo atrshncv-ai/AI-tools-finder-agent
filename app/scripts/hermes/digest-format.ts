@@ -129,6 +129,12 @@ export interface CycleStats {
   collected: number;
   rejected: number;
   published: number;
+  /** Pages scored today (downloads) and the separate daily scoring cap. */
+  scoredToday?: number | null;
+  scoreDailyCap?: number | null;
+  /** Articles published today and the hard daily publication budget. */
+  publishedToday?: number | null;
+  dailyBudget?: number | null;
   rejectedByPrefilter?: number;
   rejectedByJudge?: number;
   /** Rejection reason (machine code or judge reason) → count. */
@@ -291,6 +297,35 @@ function formatReasons(reasons: Record<string, number> | undefined): string {
 }
 
 /**
+ * The two independent daily counters: pages scored of SCORE_DAILY_CAP and
+ * articles published of DAILY_BUDGET. The owner must see both, otherwise
+ * "only 2 cards today" looks like a content problem when scoring actually hit
+ * its cap. A legacy caller without the score cap keeps the old report shape.
+ */
+function formatDailyLimits(stats: CycleStats): string | null {
+  const cap = stats.scoreDailyCap;
+  if (typeof cap !== "number" || !Number.isFinite(cap) || cap <= 0) return null;
+  const scored =
+    typeof stats.scoredToday === "number" && Number.isFinite(stats.scoredToday)
+      ? Math.max(0, Math.floor(stats.scoredToday))
+      : 0;
+  const published =
+    typeof stats.publishedToday === "number" && Number.isFinite(stats.publishedToday)
+      ? Math.max(0, Math.floor(stats.publishedToday))
+      : stats.published;
+  const budget =
+    typeof stats.dailyBudget === "number" &&
+    Number.isFinite(stats.dailyBudget) &&
+    stats.dailyBudget > 0
+      ? Math.floor(stats.dailyBudget)
+      : null;
+  return (
+    `Оценено: ${scored} из ${Math.floor(cap)} · ` +
+    `опубликовано: ${published} из ${budget ?? "—"}`
+  );
+}
+
+/**
  * Owner-only service report (R17, R18): funnel counters, top-3 rejection
  * reasons, errors and the pipeline health line. Never sent to a client.
  */
@@ -300,6 +335,8 @@ export function buildOwnerReport(stats: CycleStats, opts: OwnerReportOptions): s
     "",
     `Собрано: ${stats.collected} · отсеяно: ${stats.rejected} · опубликовано: ${stats.published}`,
   ];
+  const dailyLimits = formatDailyLimits(stats);
+  if (dailyLimits) lines.push(dailyLimits);
   if (stats.rejectedByPrefilter != null || stats.rejectedByJudge != null) {
     lines.push(
       `Отсеяно префильтром: ${stats.rejectedByPrefilter ?? "—"} · судьёй: ${stats.rejectedByJudge ?? "—"}`,

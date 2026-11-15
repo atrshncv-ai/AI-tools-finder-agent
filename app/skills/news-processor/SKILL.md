@@ -13,6 +13,9 @@
 >   fail-closed: невалидный JSON или `confidence < 0.7` = отказ.
 > - **Бюджет дня — жёсткий.** `DAILY_BUDGET` (5..10, по умолчанию 8) проверяется
 >   и при отборе, и при публикации.
+> - **Оценка отделена от публикации.** `SCORE_DAILY_CAP` (8..200, по умолчанию
+>   40) ограничивает скачивание и скоринг страниц; оценить можно больше, чем
+>   опубликовать.
 > - **Два провайдера.** GigaChat основной, OpenCode Go — фолбэк только на
 >   quota/transient; при 401/403 фолбэка нет, это ошибка конфигурации.
 > - **Клиент не видит служебку.** Клиентский выпуск и служебный отчёт — разные
@@ -75,9 +78,9 @@ cd app && npx tsx scripts/hermes/evaluate-news.ts --id 123     # одна ста
    `{onTopic, section, direction, confidence, reason}`; вердикт пишется в
    `news.metrics.judge`. Второй контрольный вопрос — только для `onTopic=true` и
    `confidence >= 0.7`.
-3. **Бюджет скачиваний:** остаток `DAILY_BUDGET` на сегодня; страница качается
-   только для прошедших шаги 1–2. Лишние остаются `pending` с вердиктом
-   (`deferred-budget`) — судья за них повторно не платит.
+3. **Лимит оценок:** остаток `SCORE_DAILY_CAP` на сегодня (не `DAILY_BUDGET`);
+   страница качается только для прошедших шаги 1–2. Лишние остаются `pending`
+   с вердиктом и причиной `score-cap-reached` — судья за них повторно не платит.
 4. **Скоринг** без LLM (источник, GitHub/HN, arXiv, altmetric, YouTube) и решение
    по гейту `SCORE_GATE` (50): `approved` или `rejected-low-score`.
 
@@ -150,7 +153,7 @@ approved pending → summarized (RU заголовок + выжимка) → pub
 |---|---|
 | `pending` + `score=NULL` | Собран, ждёт оценки |
 | `pending` + `score >= 50` | Одобрен, ждёт выжимки |
-| `pending` + вердикт, `deferred-budget` | Одобрен судьёй, но не влез в бюджет скачиваний |
+| `pending` + вердикт, `deferred-budget` | Одобрен судьёй, но не влез в `SCORE_DAILY_CAP` (`score-cap-reached`) |
 | `rejected` | Отказ префильтра/судьи/гейта/лимита; причина в `metrics` |
 | `summarized` | Русский заголовок и выжимка готовы |
 | `published` | Виден клиенту, попадает в дайджест |
@@ -177,6 +180,7 @@ approved pending → summarized (RU заголовок + выжимка) → pub
 DATABASE_URL=postgresql://…
 JWT_SECRET=                      # или legacy APP_SECRET
 DAILY_BUDGET=                    # 5..10, пусто = 8
+SCORE_DAILY_CAP=                 # 8..200, пусто = 40 (скачивание + скоринг)
 GIGACHAT_CLIENT_ID=
 GIGACHAT_CLIENT_SECRET=
 GIGACHAT_SCOPE=                  # GIGACHAT_API_PERS

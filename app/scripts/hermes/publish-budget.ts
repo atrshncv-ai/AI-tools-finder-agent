@@ -1,6 +1,7 @@
 /**
- * publish-budget.ts — the day's publication budget and the cycle counters that
- * prove it (R08, R08.1, R17, R18, R19; interfaces.md §9).
+ * publish-budget.ts — the day's publication budget, the separate page-scoring
+ * cap, and the cycle counters that prove them (R08, R08.1, R17, R18, R19;
+ * interfaces.md §9).
  *
  * Why budget and counters live together: "не больше бюджета в день" is only
  * verifiable if the cycle records what happened to every candidate — how many
@@ -23,6 +24,9 @@ import {
   DAILY_TOKEN_BUDGET,
   JUDGE_MAX_CANDIDATES,
   PUBLISH_SCORE_FLOOR,
+  SCORE_DAILY_CAP,
+  SCORE_DAILY_CAP_MAX,
+  SCORE_DAILY_CAP_MIN,
 } from "./pipeline-config";
 
 /** Allowed range for the hard daily publication budget (owner: «5–10 в день»). */
@@ -124,6 +128,42 @@ export function dailyBudget(raw: string | undefined = process.env.DAILY_BUDGET):
     );
   }
   return parsed;
+}
+
+/**
+ * `SCORE_DAILY_CAP` from env: pages downloaded and scored per UTC day.
+ * Default 40, allowed 8..200, anything else is a configuration error.
+ *
+ * A bad value is a start-up error, exactly like DAILY_BUDGET: silently
+ * clamping it would either starve scoring (the production 2–3-card day) or
+ * turn a typo into unbounded page downloads.
+ */
+export function scoreDailyCap(raw: string | undefined = process.env.SCORE_DAILY_CAP): number {
+  const value = (raw ?? "").trim();
+  if (!value) return SCORE_DAILY_CAP;
+  if (!/^\d+$/.test(value)) {
+    throw new BudgetConfigError(
+      `SCORE_DAILY_CAP must be an integer between ${SCORE_DAILY_CAP_MIN} and ${SCORE_DAILY_CAP_MAX}, got "${value}"`,
+    );
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (parsed < SCORE_DAILY_CAP_MIN || parsed > SCORE_DAILY_CAP_MAX) {
+    throw new BudgetConfigError(
+      `SCORE_DAILY_CAP must be between ${SCORE_DAILY_CAP_MIN} and ${SCORE_DAILY_CAP_MAX}, got ${parsed}`,
+    );
+  }
+  return parsed;
+}
+
+/**
+ * Page-scoring slots left today: `cap − scoredToday`, never negative. A retry
+ * after a failure continues the same day's allowance instead of buying pages
+ * again (each scored page is stamped with `metrics.scoredAt`).
+ */
+export function remainingScoreBudget(cap: number, scoredToday: number): number {
+  const limit = Number.isFinite(cap) ? Math.max(0, Math.floor(cap)) : 0;
+  const used = Number.isFinite(scoredToday) ? Math.max(0, Math.floor(scoredToday)) : 0;
+  return Math.max(0, limit - used);
 }
 
 /** Shared strict parser for the env-backed limits: empty = default, bad = config error. */
@@ -447,6 +487,21 @@ export async function readCycle(cycleId: string): Promise<CycleRecord | null> {
   return { cycleId: row.cycleId, stage: row.stage, metrics: normalizeCycleMetrics(row.metrics) };
 }
 
+/**
+ * Pages downloaded and scored in the current UTC day. `scoredAt` is written by
+ * evaluate-news for every scored page, including a failed download attempt, so
+ * this is the honest budget input.
+ */
+export async function countScoredToday(now: Date = new Date()): Promise<number> {
+  const db = getDb();
+  const dayStart = startOfUtcDay(now);
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(news)
+    .where(sql`${news.metrics}->>'scoredAt' >= ${dayStart.toISOString()}`);
+  return row?.n ?? 0;
+}
+
 /** Published articles of the current UTC day — the authoritative cap input. */
 export async function countPublishedToday(now: Date = new Date()): Promise<number> {
   const db = getDb();
@@ -512,6 +567,11 @@ export interface CycleStatus {
   budget: number;
   /** Slots left for immediate publication today, never negative. */
   remainingBudget: number;
+  /** Pages scored today and the separate daily scoring cap. */
+  scoredToday: number;
+  scoreDailyCap: number;
+  /** Scoring slots left today, never negative. */
+  remainingScoreBudget: number;
   metrics: CycleMetrics;
   /** The day's hard token limit and what it has already spent. */
   dailyTokenBudget: number;
@@ -520,13 +580,15 @@ export interface CycleStatus {
   tokenBudgetExceeded: boolean;
 }
 
-/** Read-only state for the loop: the day's budget, its remainder and the counters. */
+/** Read-only state for the loop: both daily budgets, their remainders and the counters. */
 export async function cycleStatus(now: Date = new Date()): Promise<CycleStatus> {
   const budget = dailyBudget();
+  const scoreCap = scoreDailyCap();
   const tokenBudget = dailyTokenBudget();
   const cycleId = cycleIdFor(now);
   const cycle = await readCycle(cycleId);
   const published = await countPublishedToday(now);
+  const scoredToday = await countScoredToday(now);
   const metrics = cycle?.metrics ?? emptyCycleMetrics();
   const tokensSpent = tokenBudgetSpent(metrics.usage);
   return {
@@ -535,6 +597,9 @@ export async function cycleStatus(now: Date = new Date()): Promise<CycleStatus> 
     published,
     budget,
     remainingBudget: Math.max(0, budget - published),
+    scoredToday,
+    scoreDailyCap: scoreCap,
+    remainingScoreBudget: remainingScoreBudget(scoreCap, scoredToday),
     metrics,
     dailyTokenBudget: tokenBudget,
     tokensSpent,

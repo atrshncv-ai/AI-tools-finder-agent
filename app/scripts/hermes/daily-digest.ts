@@ -48,10 +48,14 @@ import { news } from "@db/schema";
 import { and, desc, eq, gte, isNotNull, ne, sql } from "drizzle-orm";
 import { pathToFileURL } from "node:url";
 import {
+  countPublishedToday,
+  countScoredToday,
   cycleIdFor,
+  dailyBudget,
   dailyTokenBudget,
   emptyCycleMetrics,
   readCycle,
+  scoreDailyCap,
   type CycleMetrics,
   type UsageTotals,
 } from "./publish-budget";
@@ -315,10 +319,23 @@ async function main() {
     envErrors.push("счётчики цикла недоступны");
   }
   const cycleFields = ownerStatsFromCycle(cycleMetrics);
-  // The hard limit is configuration, not ledger state: it may have changed
-  // since the cycle wrote its usage, and the report compares today's spend
-  // with today's number.
+  // The hard limits are configuration, not ledger state: they may have changed
+  // since the cycle wrote its counters, and the report compares today with
+  // today's numbers. Scoring and publication have separate caps.
   const tokenLimit = dailyTokenBudget();
+  const publicationBudget = dailyBudget();
+  const scoreCap = scoreDailyCap();
+  let scoredToday = 0;
+  let publishedToday = 0;
+  try {
+    [scoredToday, publishedToday] = await Promise.all([
+      countScoredToday(now),
+      countPublishedToday(now),
+    ]);
+  } catch (err) {
+    console.error(`[daily-digest] daily counters skipped: ${(err as Error).message.slice(0, 120)}`);
+    envErrors.push("счётчики дня недоступны");
+  }
 
   if (recipients.client.length === 0) {
     envErrors.push("нет клиентских chat_id — клиентский дайджест некому отправить");
@@ -328,6 +345,10 @@ async function main() {
     collected: cycleFields.collected > 0 ? cycleFields.collected : (healthStats?.collected ?? items.length),
     rejected,
     published: items.length,
+    scoredToday,
+    scoreDailyCap: scoreCap,
+    publishedToday,
+    dailyBudget: publicationBudget,
     rejectedByPrefilter: cycleFields.rejectedByPrefilter,
     rejectedByJudge: cycleFields.rejectedByJudge,
     rejectedByReason,
