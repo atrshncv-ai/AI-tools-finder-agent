@@ -114,6 +114,14 @@ export const YOUTUBE_SOURCES: YoutubeSource[] = [
     tabs: ["videos", "shorts"],
     dedicatedAi: true,
   },
+  {
+    channelId: "UCoIE_EIoxTypMAILucbUIvw",
+    handle: "@Xenon_Lab",
+    name: "youtube-xenon-lab",
+    language: "ru",
+    tabs: ["videos"],
+    dedicatedAi: false,
+  },
 ];
 
 export const DEDICATED_AI_YOUTUBE_SOURCES = new Set(

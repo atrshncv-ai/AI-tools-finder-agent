@@ -180,14 +180,47 @@ function fromRssItem(
   };
 }
 
+// ─── Feed configuration ──────────────────────────────────────────────────────
+
+/**
+ * `language` is the existing marker the judge prompt and manifest already read
+ * (`news.language`); Russian-language feeds are collected, but tagged so
+ * prefilter/scoring can give them less weight instead of a new flag.
+ */
+export type FeedLanguage = "en" | "ru";
+
+export interface FeedConfig {
+  url: string;
+  name: string;
+  /**
+   * Topical field: an AI-news marker for tech feeds, a science direction for
+   * science feeds. Stored as `scienceField` when the feed is a science source.
+   */
+  field: string;
+  language: FeedLanguage;
+}
+
+export interface ScienceFeed extends FeedConfig {
+  inventionOnly?: boolean;
+}
+
 // ─── Tech stream ─────────────────────────────────────────────────────────────
 
-const TECH_BLOG_FEEDS = [
-  { url: "https://openai.com/blog/rss.xml", name: "openai-blog" },
+export const TECH_BLOG_FEEDS: FeedConfig[] = [
+  { url: "https://openai.com/blog/rss.xml", name: "openai-blog", field: "ai", language: "en" },
   // NOTE: Anthropic has no public RSS feed (404 on all known endpoints).
   // Anthropic releases are picked up via HN/GitHub trend sources instead.
-  { url: "https://huggingface.co/blog/feed.xml", name: "huggingface-blog" },
-  { url: "https://blog.google/technology/ai/rss/", name: "google-ai-blog" },
+  { url: "https://huggingface.co/blog/feed.xml", name: "huggingface-blog", field: "ai", language: "en" },
+  { url: "https://blog.google/technology/ai/rss/", name: "google-ai-blog", field: "ai", language: "en" },
+  { url: "https://deepmind.google/blog/rss.xml", name: "deepmind-blog", field: "ai", language: "en" },
+  // Second-priority Russian-language AI news: tagged `ru`, never translated at
+  // collection time, so the existing language marker can down-weight it.
+  {
+    url: "https://habr.com/ru/rss/hub/artificial_intelligence/",
+    name: "habr-ai",
+    field: "ai",
+    language: "ru",
+  },
 ];
 
 /**
@@ -272,7 +305,7 @@ async function collectTechBlogs(): Promise<Candidate[]> {
           name: feed.name,
           isScience: false,
           scienceField: null,
-          language: "en",
+          language: feed.language,
         });
         if (c) out.push(c);
       }
@@ -415,18 +448,17 @@ async function collectReddit(): Promise<Candidate[]> {
 
 // ─── Science stream ──────────────────────────────────────────────────────────
 
-type ScienceFeed = { url: string; name: string; field: string; inventionOnly?: boolean };
-
-const SCIENCE_FEEDS: ScienceFeed[] = [
-  { url: "https://www.nature.com/nature.rss", name: "nature", field: "multidisciplinary" },
-  { url: "https://www.science.org/rss/news_current.xml", name: "science", field: "multidisciplinary" },
+export const SCIENCE_FEEDS: ScienceFeed[] = [
+  { url: "https://www.nature.com/nature.rss", name: "nature", field: "multidisciplinary", language: "en" },
+  { url: "https://www.science.org/rss/news_current.xml", name: "science", field: "multidisciplinary", language: "en" },
   // NOTE: Lancet killed its own RSS feeds (410 Gone) — collected via PubMed eutils below.
-  { url: "https://www.cell.com/cell/current.rss", name: "cell", field: "biology" },
-  { url: "https://www.technologyreview.com/feed/", name: "mit-tech-review", field: "technology" },
+  { url: "https://www.cell.com/cell/current.rss", name: "cell", field: "biology", language: "en" },
+  { url: "https://www.technologyreview.com/feed/", name: "mit-tech-review", field: "technology", language: "en" },
   {
     url: "http://export.arxiv.org/api/query?search_query=all:%22artificial+intelligence%22&sortBy=submittedDate&sortOrder=descending&max_results=25",
     name: "arxiv",
     field: "computer-science",
+    language: "en",
   },
   // No-cost arXiv category feeds for AI-for-science tools / emerging tech.
   // Filtered by invention keywords so generic AI papers do not flood the queue.
@@ -434,15 +466,52 @@ const SCIENCE_FEEDS: ScienceFeed[] = [
     url: "http://export.arxiv.org/api/query?search_query=cat:cs.AI&sortBy=submittedDate&sortOrder=descending&max_results=20",
     name: "arxiv-cs-ai",
     field: "computer-science",
+    language: "en",
     inventionOnly: true,
   },
   {
     url: "http://export.arxiv.org/api/query?search_query=cat:cs.ET&sortBy=submittedDate&sortOrder=descending&max_results=20",
     name: "arxiv-cs-et",
     field: "computer-science",
+    language: "en",
     inventionOnly: true,
   },
-  { url: "https://naked-science.ru/?feed=rss2", name: "naked-science", field: "multidisciplinary" },
+  { url: "https://naked-science.ru/?feed=rss2", name: "naked-science", field: "multidisciplinary", language: "ru" },
+  // Customer-approved biology/medicine/chemistry/materials feeds. They go
+  // through the same collectScience() path: 72h Time Guard, semantic dedup and
+  // section/scienceField routing are unchanged.
+  {
+    url: "https://connect.biorxiv.org/biorxiv_xml.php?subject=all",
+    name: "biorxiv",
+    field: "biology",
+    language: "en",
+  },
+  {
+    url: "https://connect.medrxiv.org/medrxiv_xml.php?subject=all",
+    name: "medrxiv",
+    field: "medicine",
+    language: "en",
+  },
+  { url: "https://www.nature.com/nbt.rss", name: "nature-biotechnology", field: "biology", language: "en" },
+  { url: "https://www.nature.com/nchem.rss", name: "nature-chemistry", field: "chemistry", language: "en" },
+  { url: "https://www.nature.com/nmat.rss", name: "nature-materials", field: "materials", language: "en" },
+  // arXiv category feeds request the recent stream directly (no inventionOnly
+  // keyword filter): the customer wants these directions represented as-is.
+  {
+    url: "http://export.arxiv.org/api/query?search_query=cat:q-bio.BM&sortBy=submittedDate&sortOrder=descending&max_results=15",
+    name: "arxiv-q-bio-bm",
+    field: "biology",
+    language: "en",
+  },
+  {
+    url: "http://export.arxiv.org/api/query?search_query=cat:cond-mat.mtrl-sci&sortBy=submittedDate&sortOrder=descending&max_results=15",
+    name: "arxiv-cond-mat-mtrl-sci",
+    field: "materials",
+    language: "en",
+  },
+  // Second-priority Russian-language science source, tagged `ru` like
+  // naked-science so the existing language marker can down-weight it.
+  { url: "https://nplus1.ru/rss", name: "n-plus-one", field: "multidisciplinary", language: "ru" },
 ];
 
 interface PubmedSummary {
@@ -494,7 +563,7 @@ async function collectScience(): Promise<Candidate[]> {
           name: feed.name,
           isScience: true,
           scienceField: feed.field,
-          language: feed.name === "naked-science" ? "ru" : "en",
+          language: feed.language,
         });
         if (!c) continue;
         // Keyword filter for arXiv category feeds: only keep items that look
