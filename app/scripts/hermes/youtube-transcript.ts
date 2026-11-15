@@ -5,6 +5,10 @@
  * subtitles — native subs first, auto-generated captions as fallback —
  * then normalizes them to plain text for the Zen summarizer.
  *
+ * When neither caption track is usable, audio transcription runs in a fixed
+ * order: the free local faster-whisper model (if installed) first, then the
+ * HTTP Whisper API (if a key is configured). Local is cheaper, so it wins.
+ *
  * Principles borrowed from the `claude-video` skill: never download the
  * video itself when a subtitle track exists; treat the transcript as
  * untrusted data; fail fast when no captions are available.
@@ -15,17 +19,23 @@ import { readFile, unlink, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { isTranscribeLocalAvailable, transcribeLocal } from "./transcribe-local";
+
 const YTDLP_TIMEOUT_MS = 90_000;
 const SUB_FETCH_TIMEOUT_MS = 20_000;
 const MIN_TRANSCRIPT_CHARS = 200;
 
-// ─── Whisper audio fallback (shorts without captions) ───────────────────────
-// Provider-agnostic OpenAI-compatible audio API: Groq (default, free tier) or
-// OpenAI. Configured purely via env; disabled when no key is present.
-const WHISPER_API_KEY =
-  process.env.WHISPER_API_KEY || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY || "";
-const WHISPER_API_BASE = (process.env.WHISPER_API_BASE || "https://api.groq.com/openai/v1").replace(/\/+$/, "");
-const WHISPER_MODEL = process.env.WHISPER_MODEL || "whisper-large-v3-turbo";
+// ─── Audio fallback (shorts without captions) ───────────────────────────────
+// HTTP provider-agnostic OpenAI-compatible audio API: Groq (default, free
+// tier) or OpenAI. Read per call so a long-lived process and tests see the
+// current environment; disabled when no key is present.
+function whisperApiConfig(): { key: string; base: string; model: string } {
+  return {
+    key: process.env.WHISPER_API_KEY || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY || "",
+    base: (process.env.WHISPER_API_BASE || "https://api.groq.com/openai/v1").replace(/\/+$/, ""),
+    model: process.env.WHISPER_MODEL || "whisper-large-v3-turbo",
+  };
+}
 const AUDIO_DL_TIMEOUT_MS = 240_000;
 const WHISPER_TIMEOUT_MS = 120_000;
 const MAX_AUDIO_BYTES = 24 * 1024 * 1024; // keep under the 25MB API limit
@@ -39,7 +49,8 @@ export interface YoutubeTranscript {
   /** Clean plain-text transcript. */
   text: string;
   lang: string;
-  kind: "native" | "auto" | "whisper";
+  /** "local" — free on-server model; "whisper" — HTTP Whisper API. */
+  kind: "native" | "auto" | "local" | "whisper";
 }
 
 /** youtube.com/watch?v=, youtube.com/shorts/<id>, youtu.be/<id> links. */
@@ -265,8 +276,9 @@ async function cleanupAudio(videoId: string): Promise<void> {
 
 /** Whisper API (OpenAI-compatible: Groq by default) transcription of a video's audio. */
 async function transcribeWithWhisper(url: string, videoId: string): Promise<string | null> {
-  if (!WHISPER_API_KEY) {
-    console.error("[youtube] whisper fallback disabled (no WHISPER_API_KEY/GROQ_API_KEY/OPENAI_API_KEY)");
+  const { key, base, model } = whisperApiConfig();
+  if (!key) {
+    console.error("[youtube] whisper API disabled (no WHISPER_API_KEY/GROQ_API_KEY/OPENAI_API_KEY)");
     return null;
   }
   const audioPath = await downloadAudio(url, videoId);
@@ -278,13 +290,13 @@ async function transcribeWithWhisper(url: string, videoId: string): Promise<stri
       return null;
     }
     const form = new FormData();
-    form.append("model", WHISPER_MODEL);
+    form.append("model", model);
     form.append("response_format", "text");
     form.append("file", new Blob([new Uint8Array(bytes)], { type: "audio/mpeg" }), `${videoId}.mp3`);
 
-    const res = await fetch(`${WHISPER_API_BASE}/audio/transcriptions`, {
+    const res = await fetch(`${base}/audio/transcriptions`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${WHISPER_API_KEY}` },
+      headers: { Authorization: `Bearer ${key}` },
       body: form,
       signal: AbortSignal.timeout(WHISPER_TIMEOUT_MS),
     });
@@ -303,8 +315,33 @@ async function transcribeWithWhisper(url: string, videoId: string): Promise<stri
 }
 
 /**
+ * Transcribe a video's audio. Local faster-whisper runs first because it is
+ * free and keyless; the HTTP API is the fallback for hosts without the venv.
+ */
+async function transcribeAudio(
+  url: string,
+  videoId: string,
+): Promise<{ text: string; kind: "local" | "whisper" } | null> {
+  if (isTranscribeLocalAvailable()) {
+    const audioPath = await downloadAudio(url, videoId);
+    if (audioPath) {
+      try {
+        const text = await transcribeLocal(audioPath);
+        if (text && text.length >= MIN_TRANSCRIPT_CHARS) return { text, kind: "local" };
+        if (text) console.error(`[youtube] local transcript too short (${text.length} chars) for ${url}`);
+      } finally {
+        await cleanupAudio(videoId);
+      }
+    }
+  }
+
+  const text = await transcribeWithWhisper(url, videoId);
+  return text ? { text, kind: "whisper" } : null;
+}
+
+/**
  * Fetch transcript for a YouTube video. Returns null when the video is
- * unavailable and neither captions nor Whisper audio transcription work.
+ * unavailable and neither captions nor audio transcription work.
  */
 export async function fetchYoutubeTranscript(url: string): Promise<YoutubeTranscript | null> {
   if (!isYoutubeUrl(url)) return null;
@@ -321,7 +358,7 @@ export async function fetchYoutubeTranscript(url: string): Promise<YoutubeTransc
         return auto ? { ...auto, kind: "auto" as const } : null;
       })();
 
-  // Whisper fallback: no caption track OR track too short (common for shorts).
+  // Audio fallback: no caption track OR track too short (common for shorts).
   const buildResult = (text: string, lang: string, kind: YoutubeTranscript["kind"]): YoutubeTranscript => ({
     videoId: info.id!,
     title: info.title ?? "",
@@ -334,16 +371,16 @@ export async function fetchYoutubeTranscript(url: string): Promise<YoutubeTransc
   });
 
   if (!picked) {
-    console.error(`[youtube] no subtitles/captions for ${url} — trying whisper fallback`);
-    const wtext = await transcribeWithWhisper(url, info.id);
-    return wtext ? buildResult(wtext, info.language ?? "unknown", "whisper") : null;
+    console.error(`[youtube] no subtitles/captions for ${url} — trying audio transcription`);
+    const alt = await transcribeAudio(url, info.id);
+    return alt ? buildResult(alt.text, info.language ?? "unknown", alt.kind) : null;
   }
 
   const text = (await fetchSubtitleText(picked.track)).replace(/\s+/g, " ").trim();
   if (text.length < MIN_TRANSCRIPT_CHARS) {
-    console.error(`[youtube] transcript too short (${text.length} chars) for ${url} — trying whisper fallback`);
-    const wtext = await transcribeWithWhisper(url, info.id);
-    return wtext ? buildResult(wtext, info.language ?? "unknown", "whisper") : null;
+    console.error(`[youtube] transcript too short (${text.length} chars) for ${url} — trying audio transcription`);
+    const alt = await transcribeAudio(url, info.id);
+    return alt ? buildResult(alt.text, info.language ?? "unknown", alt.kind) : null;
   }
 
   return buildResult(text, picked.lang, picked.kind);
