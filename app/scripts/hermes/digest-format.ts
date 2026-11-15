@@ -47,6 +47,24 @@ export interface OwnerReportOptions extends DigestOptions {
   healthLine?: string;
 }
 
+/** Tokens one paid stage spent. */
+export interface StageUsage {
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/**
+ * Day's token spend: legacy totals plus the per-stage split written by the
+ * `evaluate-news` / `save-summary` ledger. Stages are optional so a legacy
+ * `metrics.usage` still renders the old one-line total.
+ */
+export interface CycleUsage extends StageUsage {
+  judge?: StageUsage | null;
+  review?: StageUsage | null;
+  summary?: StageUsage | null;
+}
+
 /**
  * Funnel counters for the owner report. Numbers come from the caller (the
  * pipeline / pipeline_state.metrics); this module only renders them.
@@ -60,7 +78,9 @@ export interface CycleStats {
   /** Rejection reason (machine code or judge reason) → count. */
   rejectedByReason?: Record<string, number>;
   /** Token spend of the day's cycle (`pipeline_state.metrics.usage`, R13). */
-  usage?: { calls: number; inputTokens: number; outputTokens: number } | null;
+  usage?: CycleUsage | null;
+  /** Hard daily token limit, so the report can print what is left. */
+  dailyTokenBudget?: number | null;
   /** Errors that happened during the cycle, one line each. */
   errors?: readonly string[];
 }
@@ -179,6 +199,30 @@ function callWord(count: number): string {
   return "вызовов";
 }
 
+const ZERO_STAGE: StageUsage = { calls: 0, inputTokens: 0, outputTokens: 0 };
+
+/** One paid stage as `судья 2 вызова · вход 900 · выход 250`. */
+function stageUsageLine(label: string, usage: StageUsage | null | undefined): string {
+  const value = usage ?? ZERO_STAGE;
+  return `${label} ${value.calls} ${callWord(value.calls)} · вход ${value.inputTokens} · выход ${value.outputTokens}`;
+}
+
+/**
+ * The per-stage split, when the cycle recorded one. A legacy usage payload
+ * without stages returns `null`, so the report keeps its old single line.
+ */
+function formatStageBreakdown(usage: CycleUsage): string | null {
+  if (!usage.judge && !usage.review && !usage.summary) return null;
+  return [
+    "По стадиям:",
+    stageUsageLine("судья", usage.judge),
+    "·",
+    stageUsageLine("проверка", usage.review),
+    "·",
+    stageUsageLine("выжимка", usage.summary),
+  ].join(" ");
+}
+
 function formatReasons(reasons: Record<string, number> | undefined): string {
   const entries = Object.entries(reasons ?? {})
     .filter(([, count]) => Number.isFinite(count) && count > 0)
@@ -211,6 +255,18 @@ export function buildOwnerReport(stats: CycleStats, opts: OwnerReportOptions): s
       `Токены за сутки: ${stats.usage.calls} ${callWord(stats.usage.calls)} · ` +
         `вход ${stats.usage.inputTokens} · выход ${stats.usage.outputTokens}`,
     );
+    const breakdown = formatStageBreakdown(stats.usage);
+    if (breakdown) lines.push(breakdown);
+
+    const limit = stats.dailyTokenBudget;
+    if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) {
+      const spent = stats.usage.inputTokens + stats.usage.outputTokens;
+      const remaining = Math.max(0, limit - spent);
+      lines.push(`Бюджет токенов: ${spent} / ${limit} · остаток ${remaining}`);
+      if (spent >= limit) {
+        lines.push("⚠️ Дневной лимит токенов исчерпан — новые вызовы судьи остановлены.");
+      }
+    }
   }
   lines.push(`Причины отказа: ${formatReasons(stats.rejectedByReason)}`);
   if (stats.collected === 0) {

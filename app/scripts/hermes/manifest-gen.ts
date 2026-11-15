@@ -5,10 +5,11 @@
  * Usage:
  *   npx tsx scripts/hermes/manifest-gen.ts [--output <path>] [--limit <n>] [--science-only]
  *
- * Reads articles from PostgreSQL with status='pending', content=NULL and
- * score >= SCORE_GATE (the shared evaluate-news gate, see pipeline-config.ts),
- * writes a structured manifest.json for Hermes to consume. Unevaluated rows
- * (score=NULL) NEVER reach the LLM.
+ * Reads articles from PostgreSQL with status='pending', content=NULL and an
+ * eligible score: >= SCORE_GATE on its own, or >= PUBLISH_SCORE_FLOOR with a
+ * judge verdict that confirmed the topic (the shared publish floor, see
+ * pipeline-config.ts), writes a structured manifest.json for Hermes to consume.
+ * Unevaluated rows (score=NULL) NEVER reach the LLM.
  *
  * DAY BUDGET (interfaces.md §2, spec §4): the manifest carries only the best
  * DAILY_BUDGET articles by score (ties: judge confidence, then freshness). The
@@ -22,14 +23,19 @@
 import "dotenv/config";
 import { getDb } from "../../api/queries/connection";
 import { news } from "@db/schema";
-import { eq, and, isNull, desc, gte } from "drizzle-orm";
+import { eq, and, isNull, desc, sql } from "drizzle-orm";
 import { SCORE_GATE } from "./pipeline-config";
-import { dailyBudget, judgeConfidenceOf, selectForPublication } from "./publish-budget";
+import {
+  dailyBudget,
+  judgeConfidenceOf,
+  publishScoreFloor,
+  selectForPublication,
+} from "./publish-budget";
 
-// Same gate as evaluate-news.ts (shared constant). gte(score, SCORE_GATE)
-// also excludes score=NULL rows: NULL comparisons are never true in SQL, so
-// unevaluated articles cannot slip into LLM processing (e.g. when
-// evaluate-news failed or its batch limit left a backlog).
+// Strong scores (>= SCORE_GATE) need no extra proof; judge-approved thematic
+// materials from the publication floor up must reach the summary queue too,
+// otherwise they could never be published. A score below the floor is not
+// "not yet", it is "never": the same floor guards the release in deploy-ready.
 
 interface ManifestArticle {
   id: number;
@@ -72,10 +78,13 @@ type BudgetableArticle = {
 /**
  * Keep the best `budget` approved articles: score desc → judge confidence desc
  * → publishedAt desc (R08.1). Pure, so the ranking is testable without a DB.
+ * A positive `floor` also drops judge-approved materials below the publish
+ * floor; callers that only rank (tests, legacy paths) may omit it.
  */
 export function applyDailyBudget<T extends BudgetableArticle>(
   articles: readonly T[],
   budget: number,
+  floor = 0,
 ): T[] {
   return selectForPublication(
     articles.map((article) => ({
@@ -83,6 +92,7 @@ export function applyDailyBudget<T extends BudgetableArticle>(
       confidence: judgeConfidenceOf(article.metrics),
     })),
     budget,
+    { floor },
   );
 }
 
@@ -114,9 +124,10 @@ function parseArgs(): { outputPath: string; limit: number; scienceOnly: boolean 
 async function main() {
   const { outputPath, limit, scienceOnly } = parseArgs();
   const budget = dailyBudget();
+  const floor = publishScoreFloor();
 
   console.log(
-    `[manifest-gen] Generating manifest (limit=${limit}, budget=${budget}, scienceOnly=${scienceOnly})...`,
+    `[manifest-gen] Generating manifest (limit=${limit}, budget=${budget}, floor=${floor}, scienceOnly=${scienceOnly})...`,
   );
 
   const db = getDb();
@@ -124,7 +135,10 @@ async function main() {
   const whereConditions = [
     eq(news.status, "pending"),
     isNull(news.content),
-    gte(news.score, SCORE_GATE),
+    // NULL scores never match (SQL NULL comparison): unevaluated rows cannot
+    // slip into LLM processing. A 35..49 row is eligible only with a judge
+    // verdict that confirmed the topic; >= 50 still stands on its own.
+    sql`(${news.score} >= ${SCORE_GATE} OR (${news.score} >= ${floor} AND ${news.metrics}->'judge'->>'onTopic' = 'true'))`,
   ];
   if (scienceOnly) {
     whereConditions.push(eq(news.isScience, true));
@@ -139,7 +153,7 @@ async function main() {
     .orderBy(desc(news.score), desc(news.publishedAt))
     .limit(Math.max(limit, budget));
 
-  const articles = applyDailyBudget(rows, budget);
+  const articles = applyDailyBudget(rows, budget, floor);
 
   const cycleId = `cycle-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}-manifest`;
 

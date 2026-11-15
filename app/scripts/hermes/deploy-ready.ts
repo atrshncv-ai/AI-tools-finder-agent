@@ -8,9 +8,11 @@
  * The publication stage is the LAST place the day's budget is enforced
  * (interfaces.md §1): a manifest can be edited by hand and save-summary can be
  * called directly, so a publication that would exceed DAILY_BUDGET is refused
- * with a reason instead of passing silently. One release per UTC day: after the
- * day's release is committed to `pipeline_state` (stage `published`), a second
- * run publishes nothing.
+ * with a reason instead of passing silently. The same is true of the score:
+ * nothing below PUBLISH_SCORE_FLOOR is published, while a judge-approved
+ * thematic material at 35..49 is not cut by the old 50-point gate. One release
+ * per UTC day: after the day's release is committed to `pipeline_state`
+ * (stage `published`), a second run publishes nothing.
  *
  * Output (one JSON line on stdout) is the loop's contract:
  *   { status, cycleId, budget, ready, publishedToday, planned, published,
@@ -32,6 +34,7 @@ import {
   countPublishedToday,
   dailyBudget,
   judgeConfidenceOf,
+  publishScoreFloor,
   readCycle,
   recordCycle,
   selectForPublication,
@@ -57,7 +60,8 @@ export interface ReadyArticle extends Candidate {
 export type PublicationRefusal =
   | "already-published-today"
   | "daily-budget-exhausted"
-  | "no-ready-articles";
+  | "no-ready-articles"
+  | "below-publish-floor";
 
 export interface PublicationPlan {
   allowed: boolean;
@@ -80,6 +84,8 @@ export function planPublication(input: {
   publishedToday: number;
   releaseCommitted: boolean;
   batchSize?: number;
+  /** Publication floor; the live release passes `PUBLISH_SCORE_FLOOR` (env). */
+  scoreFloor?: number;
 }): PublicationPlan {
   const budget = Number.isFinite(input.budget) ? Math.max(0, Math.floor(input.budget)) : 0;
   const publishedToday = Number.isFinite(input.publishedToday)
@@ -102,7 +108,16 @@ export function planPublication(input: {
       ? Math.floor(input.batchSize)
       : Number.POSITIVE_INFINITY;
   const limit = Math.min(remainingBudget, batchSize);
-  const items = selectForPublication(input.ready, limit);
+  const floor =
+    typeof input.scoreFloor === "number" && Number.isFinite(input.scoreFloor)
+      ? input.scoreFloor
+      : 0;
+  const items = selectForPublication(input.ready, limit, { floor });
+  if (items.length === 0) {
+    // Everything ready is below the floor: not a release, and the owner report
+    // must see why the day's queue produced nothing.
+    return { allowed: false, reason: "below-publish-floor", items: [], remainingBudget };
+  }
   return { allowed: true, reason: null, items, remainingBudget };
 }
 
@@ -147,6 +162,9 @@ async function main(): Promise<void> {
     publishedToday,
     releaseCommitted: cycle?.stage === CYCLE_STAGE.published,
     batchSize,
+    // The live release always applies the floor; the pure helper keeps a
+    // floorless default for callers that rank their own already-filtered rows.
+    scoreFloor: publishScoreFloor(),
   });
 
   if (!plan.allowed) {

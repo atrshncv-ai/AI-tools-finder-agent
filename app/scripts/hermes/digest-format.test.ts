@@ -157,6 +157,51 @@ describe("owner report (R17, R18)", () => {
   });
 });
 
+describe("owner report: token spend by stage and the day's remainder (R13)", () => {
+  it("prints judge, review and summary spend plus what is left of the daily budget", () => {
+    const usage = {
+      calls: 4,
+      inputTokens: 4_000,
+      outputTokens: 400,
+      judge: { calls: 1, inputTokens: 450, outputTokens: 50 },
+      review: { calls: 1, inputTokens: 560, outputTokens: 60 },
+      summary: { calls: 2, inputTokens: 2_990, outputTokens: 290 },
+    };
+    const report = buildOwnerReport(
+      {
+        collected: 10,
+        rejected: 2,
+        published: 1,
+        usage,
+        dailyTokenBudget: 800_000,
+      },
+      opts,
+    );
+
+    expect(report).toContain("По стадиям");
+    expect(report).toContain("судья 1 вызов");
+    expect(report).toContain("проверка 1 вызов");
+    expect(report).toContain("выжимка 2 вызова");
+    expect(report).toContain("Бюджет токенов: 4400 / 800000");
+    expect(report).toContain("остаток 795600");
+  });
+
+  it("keeps the old one-line token total when no stage split was recorded", () => {
+    const report = buildOwnerReport(
+      {
+        collected: 10,
+        rejected: 2,
+        published: 1,
+        usage: { calls: 3, inputTokens: 300, outputTokens: 30 },
+      },
+      opts,
+    );
+    expect(report).toContain("Токены за сутки: 3 вызова · вход 300 · выход 30");
+    expect(report).not.toContain("По стадиям");
+    expect(report).not.toContain("остаток");
+  });
+});
+
 describe("Telegram splitting", () => {
   it("starts the continuation with a card and never repeats the digest header", () => {
     const parts = splitTelegramText(GOLDEN_CLIENT_DIGEST, 800);

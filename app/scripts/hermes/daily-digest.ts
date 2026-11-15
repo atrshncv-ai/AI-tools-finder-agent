@@ -44,6 +44,7 @@ import { and, desc, eq, gte, isNotNull, ne, sql } from "drizzle-orm";
 import { pathToFileURL } from "node:url";
 import {
   cycleIdFor,
+  dailyTokenBudget,
   emptyCycleMetrics,
   readCycle,
   type CycleMetrics,
@@ -318,6 +319,10 @@ async function main() {
     envErrors.push("счётчики цикла недоступны");
   }
   const cycleFields = ownerStatsFromCycle(cycleMetrics);
+  // The hard limit is configuration, not ledger state: it may have changed
+  // since the cycle wrote its usage, and the report compares today's spend
+  // with today's number.
+  const tokenLimit = dailyTokenBudget();
 
   if (recipients.client.length === 0) {
     envErrors.push("нет клиентских chat_id — клиентский дайджест некому отправить");
@@ -331,6 +336,7 @@ async function main() {
     rejectedByJudge: cycleFields.rejectedByJudge,
     rejectedByReason,
     usage: cycleFields.usage,
+    dailyTokenBudget: tokenLimit,
     errors: [
       ...envErrors,
       ...cycleFields.providerErrors.map(

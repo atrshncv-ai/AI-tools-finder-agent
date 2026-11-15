@@ -29,9 +29,14 @@
  *   +20  High Altmetric score (>= 50) — proxy for active scientific discussion
  *   +15  Topic bonus: AI x chemistry/materials/biology/medicine/physics
  *
- * Gate: only articles with score >= SCORE_GATE reach the manifest queue.
+ * Gate: a score >= SCORE_GATE is approved on its own; a judge-confirmed topic
+ * is approved from PUBLISH_SCORE_FLOOR (35) up, so thematic 40-45 materials
+ * reach the manifest queue instead of being cut by a ranking number. Below the
+ * floor a material is rejected.
  * Budget: DAILY_BUDGET (5..10, default 8) is the hard publication budget, read
  * from the environment; this stage never downloads more pages than the budget.
+ * Paid LLM work is bounded twice: only the top JUDGE_MAX_CANDIDATES prefilter
+ * survivors are judged, and no new judge call starts after DAILY_TOKEN_BUDGET.
  *
  * Usage:
  *   npx tsx scripts/hermes/evaluate-news.ts --batch
@@ -57,10 +62,18 @@ import {
   CYCLE_STAGE,
   cycleIdFor,
   dailyBudget,
+  dailyTokenBudget,
   emptyCycleMetrics,
+  emptyStageUsage,
+  emptyUsage,
+  judgeMaxCandidates,
+  publishScoreFloor,
+  readCycle,
   recordCycle,
   selectForPublication,
+  tokenBudgetSpent,
   type CycleMetrics,
+  type StageUsage,
   type UsageTotals,
 } from "./publish-budget";
 import {
@@ -224,6 +237,10 @@ export interface EvaluationCycleResult {
   scored: number;
   /** Judge LLM calls actually made (reused verdicts cost nothing). */
   judgeCalls: number;
+  /** Token spend of this run, split by judge/review/summary (R13). */
+  usage: UsageTotals;
+  /** The day's hard token limit was reached: no further judge calls were made. */
+  tokenBudgetExceeded: boolean;
   /**
    * Error classes of provider calls that failed during this run. Non-empty
    * means the cycle cannot be trusted as a material decision and must exit
@@ -240,6 +257,14 @@ export interface EvaluationDeps {
   prefilter?: (input: PrefilterInput) => PrefilterResult;
   /** Expensive scoring; defaults to the real page-scoring `evaluate`. */
   score?: (candidate: EvaluationCandidate) => Promise<EvalResult>;
+  /** Day's hard token limit; defaults to `DAILY_TOKEN_BUDGET` (env). */
+  tokenBudget?: number;
+  /** Tokens the day has already spent before this run. */
+  spentTokens?: number;
+  /** Cap on paid judge candidates; defaults to `JUDGE_MAX_CANDIDATES` (env). */
+  judgeMaxCandidates?: number;
+  /** Publication floor; defaults to `PUBLISH_SCORE_FLOOR` (env). */
+  scoreFloor?: number;
 }
 
 // ─── HTTP utilities ─────────────────────────────────────────────────────────
@@ -783,6 +808,27 @@ function judgeRejectionReason(verdict: Judgement): string {
 }
 
 /**
+ * The review call has its own, differently framed prompt (judge.ts). The usage
+ * ledger needs to tell it from the verdict call so the owner sees the second
+ * check's cost separately; no provider API exposes a stage name.
+ */
+function isReviewPrompt(args: Parameters<CompleteJson>[0]): boolean {
+  return args.messages.some((message) => message.content.includes("Первый судья вынес вердикт"));
+}
+
+function tokenCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : 0;
+}
+
+function prefilterScoreOf(item: { prefilter: PrefilterResult }): number {
+  return typeof item.prefilter.score === "number" && Number.isFinite(item.prefilter.score)
+    ? item.prefilter.score
+    : Number.NEGATIVE_INFINITY;
+}
+
+/**
  * The whole cycle decision, free of DB and network of its own: every
  * dependency is injectable, which is what the ticket's fetch-count and
  * judge-call tests observe.
@@ -791,6 +837,12 @@ function judgeRejectionReason(verdict: Judgement): string {
  * fields) → day budget → page download and scoring. A page is never fetched
  * for a candidate the prefilter dropped, the judge rejected, or the budget did
  * not reach.
+ *
+ * Two hard stop-lines guard the paid stage: only the top `JUDGE_MAX_CANDIDATES`
+ * prefilter survivors by prefilter score are judged, and once the day's
+ * `DAILY_TOKEN_BUDGET` is reached no NEW judge call starts. Candidates that
+ * were skipped stay pending with a machine reason (`judge:token-budget` /
+ * `judge:candidate-cap`) instead of failing the cycle.
  */
 export async function runEvaluationCycle(input: {
   candidates: readonly EvaluationCandidate[];
@@ -806,6 +858,33 @@ export async function runEvaluationCycle(input: {
     deps.prefilter ?? ((candidate: PrefilterInput) => prefilterCandidate(candidate, { now }));
   const completeJson = deps.completeJson ?? null;
   const score = deps.score ?? scoreCandidate;
+  const scoreFloor =
+    typeof deps.scoreFloor === "number" && Number.isFinite(deps.scoreFloor)
+      ? deps.scoreFloor
+      : publishScoreFloor();
+  const tokenBudget =
+    typeof deps.tokenBudget === "number" && Number.isFinite(deps.tokenBudget)
+      ? Math.max(0, Math.floor(deps.tokenBudget))
+      : dailyTokenBudget();
+  const judgeLimit =
+    typeof deps.judgeMaxCandidates === "number" && Number.isFinite(deps.judgeMaxCandidates)
+      ? Math.max(0, Math.floor(deps.judgeMaxCandidates))
+      : judgeMaxCandidates();
+  let spentTokens =
+    typeof deps.spentTokens === "number" && Number.isFinite(deps.spentTokens)
+      ? Math.max(0, Math.floor(deps.spentTokens))
+      : 0;
+  let tokenBudgetSkipped = 0;
+
+  // The day's LLM spend, kept in the legacy totals and split by paid stage.
+  const judgeUsage: StageUsage = emptyStageUsage();
+  const reviewUsage: StageUsage = emptyStageUsage();
+  const usage: UsageTotals = {
+    ...emptyUsage(),
+    judge: judgeUsage,
+    review: reviewUsage,
+    summary: emptyStageUsage(),
+  };
 
   const counters = emptyCycleMetrics();
   counters.collected = input.candidates.length;
@@ -858,6 +937,19 @@ export async function runEvaluationCycle(input: {
         const result = await completeJson(args);
         meta.provider = result.provider;
         meta.model = result.model;
+
+        // Every paid answer lands in the day's ledger, split by stage. The
+        // reviewer call costs its own tokens and must not hide inside "judge".
+        const inputTokens = tokenCount(result.usage?.inputTokens);
+        const outputTokens = tokenCount(result.usage?.outputTokens);
+        usage.calls += 1;
+        usage.inputTokens += inputTokens;
+        usage.outputTokens += outputTokens;
+        const stageUsage = isReviewPrompt(args) ? reviewUsage : judgeUsage;
+        stageUsage.calls += 1;
+        stageUsage.inputTokens += inputTokens;
+        stageUsage.outputTokens += outputTokens;
+        spentTokens += inputTokens + outputTokens;
         return result;
       }
     : null;
@@ -867,8 +959,7 @@ export async function runEvaluationCycle(input: {
   const noteProviderFailure = (errorClass: ProviderErrorClass): void => {
     if (!providerErrors.includes(errorClass)) providerErrors.push(errorClass);
   };
-  /**
-   * A provider failure is not a judgement: the row keeps no `judge` block and
+  /** A provider failure is not a judgement: the row keeps no `judge` block and
    * no decision other than the cause, so it stays `pending` and is retried by
    * the next cycle. Reusing a stored verdict stays free, so it is still done.
    */
@@ -893,10 +984,50 @@ export async function runEvaluationCycle(input: {
     };
   };
 
+  /**
+   * A budget stop is not a rejection: the material stays `pending` and a later
+   * cycle can judge it once the day's allowance resets. `deferReason` names the
+   * actual stop so the owner report never guesses.
+   */
+  const deferredOutcome = (
+    item: { candidate: EvaluationCandidate; prefilter: PrefilterResult },
+    verdict: JudgeVerdict | null,
+    reason: "download-budget" | "token-budget" | "candidate-cap",
+  ): EvaluationOutcome => ({
+    candidate: item.candidate,
+    decision: "deferred-budget",
+    prefilter: item.prefilter,
+    verdict,
+    result: null,
+    metrics: {
+      ...baseMetrics(item.candidate),
+      prefilter: item.prefilter,
+      ...(verdict ? { judge: verdict } : {}),
+      evaluatedAt,
+      decision: "deferred-budget",
+      deferReason: reason,
+    },
+  });
+
+  // Only the best prefilter survivors may reach the paid judge. A stored
+  // verdict is free, so its row is processed even outside the top-N cap.
+  const judgeIds = new Set(
+    [...passed]
+      .sort((a, b) => prefilterScoreOf(b) - prefilterScoreOf(a))
+      .slice(0, judgeLimit)
+      .map((item) => item.candidate.id),
+  );
+
   const onTopic: { candidate: EvaluationCandidate; prefilter: PrefilterResult; verdict: JudgeVerdict }[] = [];
   let failedClass: ProviderErrorClass | null = null;
   for (const item of passed) {
     const stored = readStoredVerdict(item.candidate.metrics);
+    if (!stored && !judgeIds.has(item.candidate.id)) {
+      bump("judge:candidate-cap");
+      outcomes.push(deferredOutcome(item, null, "candidate-cap"));
+      continue;
+    }
+
     let verdict: JudgeVerdict;
     if (stored) {
       // The verdict was already paid for by a previous cycle: reuse it.
@@ -905,6 +1036,13 @@ export async function runEvaluationCycle(input: {
       // The provider is already known to be down: do not hammer it once per
       // candidate, but leave every affected row pending with the cause.
       outcomes.push(providerErrorOutcome(item, failedClass));
+      continue;
+    } else if (spentTokens >= tokenBudget) {
+      // DAILY_TOKEN_BUDGET is hard: stop starting new calls, keep the row
+      // pending and let the counters name the reason. This is not a crash.
+      tokenBudgetSkipped++;
+      bump("judge:token-budget");
+      outcomes.push(deferredOutcome(item, null, "token-budget"));
       continue;
     } else {
       judgeCalls++;
@@ -972,27 +1110,20 @@ export async function runEvaluationCycle(input: {
     if (!selectedIds.has(item.candidate.id)) {
       // On topic but outside the download budget: stays pending with its
       // verdict, so a later cycle can score it without paying the judge again.
-      outcomes.push({
-        candidate: item.candidate,
-        decision: "deferred-budget",
-        prefilter: item.prefilter,
-        verdict: item.verdict,
-        result: null,
-        metrics: {
-          ...baseMetrics(item.candidate),
-          prefilter: item.prefilter,
-          judge: item.verdict,
-          evaluatedAt,
-          decision: "deferred-budget",
-        },
-      });
+      outcomes.push(deferredOutcome(item, item.verdict, "download-budget"));
       continue;
     }
 
     scored++;
     try {
       const result = await score(item.candidate);
-      const decision: EvaluationDecision = result.score >= SCORE_GATE ? "approved" : "rejected-low-score";
+      // SCORE_GATE still means "important enough on its own"; the publish
+      // floor lets a judge-confirmed material through at 35..49, so the day's
+      // thematic news is not cut by a ranking number (owner complaint).
+      const scoreGatePassed = result.score >= SCORE_GATE;
+      const publishFloorPassed = item.verdict.onTopic && result.score >= scoreFloor;
+      const decision: EvaluationDecision =
+        scoreGatePassed || publishFloorPassed ? "approved" : "rejected-low-score";
       if (decision === "approved") counters.approved++;
       else bump("score:low-score");
       outcomes.push({
@@ -1007,6 +1138,8 @@ export async function runEvaluationCycle(input: {
           prefilter: item.prefilter,
           judge: item.verdict,
           scoreBreakdown: result.breakdown,
+          scoreGatePassed,
+          publishFloorPassed,
           evaluatedAt,
           // The day's download allowance is counted from this stamp: a retry
           // after a failure must not buy the same pages again.
@@ -1036,7 +1169,16 @@ export async function runEvaluationCycle(input: {
     }
   }
 
-  return { outcomes, counters, scored, judgeCalls, providerErrors };
+  counters.usage = usage;
+  return {
+    outcomes,
+    counters,
+    scored,
+    judgeCalls,
+    usage,
+    tokenBudgetExceeded: tokenBudgetSkipped > 0 || spentTokens >= tokenBudget,
+    providerErrors,
+  };
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -1142,6 +1284,8 @@ export function updateForOutcome(outcome: EvaluationOutcome): Record<string, unk
 async function main() {
   const { id, batch } = parseArgs();
   const budget = dailyBudget();
+  const tokenBudget = dailyTokenBudget();
+  const judgeLimit = judgeMaxCandidates();
   const now = new Date();
   const cycleId = cycleIdFor(now);
   const db = getDb();
@@ -1157,15 +1301,28 @@ async function main() {
       // Candidates the judge has not seen yet go first: a deferred-but-on-topic
       // backlog must never starve a fresh material out of the batch window.
       .orderBy(sql`(${news.metrics} -> 'judge') is null desc`, desc(news.createdAt))
-      .limit(200);
+      .limit(Math.max(200, judgeLimit));
   } else {
     targets = [];
   }
 
   if (targets.length === 0) {
     // Still write the day's ledger: the owner report must tell "nothing was
-    // collected" from "the cycle never ran".
-    await recordCycle(cycleId, emptyCycleMetrics(), CYCLE_STAGE.evaluated);
+    // collected" from "the cycle never ran". The zero stage split keeps the
+    // report's per-stage line present even on an empty day.
+    await recordCycle(
+      cycleId,
+      {
+        ...emptyCycleMetrics(),
+        usage: {
+          ...emptyUsage(),
+          judge: emptyStageUsage(),
+          review: emptyStageUsage(),
+          summary: emptyStageUsage(),
+        },
+      },
+      CYCLE_STAGE.evaluated,
+    );
     console.log(
       JSON.stringify({ status: "ok", cycleId, budget, collected: 0, approved: 0, rejected: 0 }),
     );
@@ -1185,29 +1342,36 @@ async function main() {
   const scoredToday = scoredTodayRow?.n ?? 0;
   const downloadBudget = id ? 1 : Math.max(0, budget - scoredToday);
 
+  // The token limit is per DAY too: the ledger already holds the spend of the
+  // previous runs of this cycle, and a retry must continue it instead of
+  // starting a fresh 800k allowance.
+  const priorCycle = await readCycle(cycleId);
+  const spentTokens = tokenBudgetSpent(priorCycle?.metrics.usage);
+
   console.error(
     `[evaluate-news] ${targets.length} candidates, day budget=${budget}, ` +
+      `judge cap=${judgeLimit}, tokens ${spentTokens}/${tokenBudget}, ` +
       `pages left today=${downloadBudget} (${scoredToday} already downloaded)`,
   );
 
   // Provider chain (GigaChat → OpenCode, error classification from task 02).
-  // Token usage is accumulated for the cycle ledger: it is never dropped.
-  const usage: UsageTotals = { calls: 0, inputTokens: 0, outputTokens: 0 };
+  // Usage is accumulated inside `runEvaluationCycle`, stage by stage, so the
+  // hard token stop can see the spend of the calls it just made.
   const { createProviderChain } = await import("../../api/ai/providers/chain");
-  const chain = createProviderChain({
-    usageSink: (record) => {
-      usage.calls++;
-      usage.inputTokens += record.inputTokens;
-      usage.outputTokens += record.outputTokens;
-    },
-  });
+  const chain = createProviderChain();
 
   const cycle = await runEvaluationCycle({
     candidates: targets.map(toCandidate),
     // A manual `--id` run is one article: it must not be blocked by the day's
     // download budget, but it still never fetches more than one page.
     budget: downloadBudget,
-    deps: { now, completeJson: chain.completeJson },
+    deps: {
+      now,
+      completeJson: chain.completeJson,
+      tokenBudget,
+      spentTokens,
+      judgeMaxCandidates: judgeLimit,
+    },
   });
 
   for (const outcome of cycle.outcomes) {
@@ -1222,18 +1386,23 @@ async function main() {
 
   const counters = await recordCycle(
     cycleId,
-    { ...cycle.counters, usage },
+    cycle.counters,
     CYCLE_STAGE.evaluated,
   );
 
   const deferred = cycle.outcomes.filter((o) => o.decision === "deferred-budget").length;
   const providerFailed = cycle.outcomes.filter((o) => o.decision === "provider-error").length;
+  const tokenBudgetSkipped = counters.rejectedByReason["judge:token-budget"] ?? 0;
   const output = {
     status: cycle.providerErrors.length > 0 ? "provider-error" : "ok",
     cycleId,
     budget,
     downloadBudget,
     scoredToday,
+    tokenBudget,
+    tokensSpent: tokenBudgetSpent(counters.usage),
+    tokenBudgetExceeded: cycle.tokenBudgetExceeded,
+    tokenBudgetSkipped,
     collected: counters.collected,
     prefiltered: counters.prefiltered,
     judged: counters.judged,
