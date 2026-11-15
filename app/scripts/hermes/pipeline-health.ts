@@ -8,7 +8,7 @@
  */
 
 import { getDb } from "../../api/queries/connection";
-import { instantParam, publishedAtSql } from "../../api/queries/newsDateRules";
+import { instantParam, platformPublishedAtSql } from "../../api/queries/newsDateRules";
 import { news, sources, sourceHealth, agentState } from "@db/schema";
 import { and, eq, gte, sql } from "drizzle-orm";
 
@@ -46,7 +46,7 @@ export async function collectPipelineStats(since: Date): Promise<PipelineStats> 
     .where(
       and(
         eq(news.status, "published"),
-        sql`${publishedAtSql()} >= ${instantParam(since)}`,
+        sql`${platformPublishedAtSql()} >= ${instantParam(since)}`,
       ),
     );
 

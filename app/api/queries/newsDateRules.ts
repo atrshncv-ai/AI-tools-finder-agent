@@ -1,4 +1,4 @@
-import { sql, type SQL } from "drizzle-orm";
+import { desc, sql, type SQL } from "drizzle-orm";
 import { news } from "@db/schema";
 
 export const FRESHNESS_HOURS: Record<string, number> = {
@@ -17,12 +17,18 @@ export function getFreshnessWindow(freshness: string | undefined, now = new Date
 }
 
 /**
- * Immutable publication instant of a news row: `platformPublishedAt` is written
- * once on release, `updatedAt` only covers rows published before that column
- * existed.
+ * Immutable instant the card itself was published on this platform: the date
+ * the dashboard shows, the date feed ordering uses and the date freshness
+ * windows count from. The source's own `publishedAt` only feeds the collection
+ * window and is never displayed.
  */
-export function publishedAtSql() {
-  return sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt})`;
+export function platformPublishedAtSql() {
+  return sql`${news.platformPublishedAt}`;
+}
+
+/** Newest card publication first; `id` keeps rows with the same instant stable. */
+export function newsFeedOrder() {
+  return [desc(news.platformPublishedAt), desc(news.id)];
 }
 
 /**

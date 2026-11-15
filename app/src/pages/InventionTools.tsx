@@ -40,7 +40,8 @@ export default function InventionTools() {
   const sphereOptions = (spheresData ?? []).map((s) => ({ slug: s, name: SPHERE_NAMES[s] || s }));
   const visible = filterInventionToolsByFreshness(catalogItems, freshness);
   const cards = [
-    ...(newsData?.items ?? []).map((article) => ({ kind: "news" as const, date: new Date(article.updatedAt).getTime(), article })),
+    // News sort by when the card was published, like every other news list.
+    ...(newsData?.items ?? []).map((article) => ({ kind: "news" as const, date: new Date(article.platformPublishedAt ?? article.updatedAt).getTime(), article })),
     ...visible.map((tool) => ({ kind: "tool" as const, date: inventionToolFreshnessDate(tool).getTime(), tool })),
   ].sort((a, b) => b.date - a.date);
   const total = cards.length;

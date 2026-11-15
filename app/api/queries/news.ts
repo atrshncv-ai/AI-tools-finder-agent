@@ -1,7 +1,7 @@
 import { getDb } from "./connection";
 import { news, categories, inventionTools } from "@db/schema";
-import { eq, inArray, desc, and, count, sql, getTableColumns } from "drizzle-orm";
-import { getFreshnessWindow, instantParam, publishedAtSql } from "./newsDateRules";
+import { eq, inArray, and, count, sql, getTableColumns } from "drizzle-orm";
+import { getFreshnessWindow, instantParam, newsFeedOrder, platformPublishedAtSql } from "./newsDateRules";
 
 // ─── Seed categories ───
 export async function seedCategories() {
@@ -59,13 +59,14 @@ export async function findAllNews(opts: {
     conditions.push(eq(news.classificationType, classificationType));
   }
 
-  // Freshness and ordering use the immutable platform publication date. The
-  // window is bound as a parameter (`timestamptz`), never as a naive string.
+  // Freshness and ordering count from the card's own publication instant. The
+  // source's `publishedAt` only feeds the collection window. The window edges
+  // are bound as parameters (`timestamptz`), never as naive strings.
   const freshnessWindow = getFreshnessWindow(freshness);
-  conditions.push(sql`${publishedAtSql()} <= ${instantParam(freshnessWindow.to)}`);
+  conditions.push(sql`${platformPublishedAtSql()} <= ${instantParam(freshnessWindow.to)}`);
   if (freshness && freshness !== "all") {
     if (freshnessWindow.from) {
-      conditions.push(sql`${publishedAtSql()} >= ${instantParam(freshnessWindow.from)}`);
+      conditions.push(sql`${platformPublishedAtSql()} >= ${instantParam(freshnessWindow.from)}`);
     }
   }
 
@@ -88,7 +89,7 @@ export async function findAllNews(opts: {
     .from(news)
     .leftJoin(categories, eq(news.categoryId, categories.id))
     .where(where)
-    .orderBy(desc(publishedAtSql()), desc(news.id))
+    .orderBy(...newsFeedOrder())
     .limit(limit)
     .offset(offset);
 

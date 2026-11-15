@@ -41,7 +41,7 @@ import "dotenv/config";
 import { pathToFileURL } from "node:url";
 import { and, desc, eq, isNotNull, ne, sql } from "drizzle-orm";
 import { agentState, news } from "@db/schema";
-import { instantParam, publishedAtSql } from "../../api/queries/newsDateRules";
+import { instantParam, platformPublishedAtSql } from "../../api/queries/newsDateRules";
 import { getDb } from "../../api/queries/connection";
 import {
   buildClientDigest,
@@ -396,11 +396,11 @@ export async function loadRecentDigestItems(db: Db, since: Date): Promise<Digest
     .where(
       and(
         eq(news.status, "published"),
-        sql`${publishedAtSql()} >= ${instantParam(since)}`,
+        sql`${platformPublishedAtSql()} >= ${instantParam(since)}`,
         nonEmptySummary,
       ),
     )
-    .orderBy(desc(publishedAtSql()));
+    .orderBy(desc(platformPublishedAtSql()));
   return rows;
 }
 

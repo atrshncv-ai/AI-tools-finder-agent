@@ -31,7 +31,7 @@
 import "dotenv/config";
 
 import { getDb } from "../../api/queries/connection";
-import { instantParam, publishedAtSql } from "../../api/queries/newsDateRules";
+import { instantParam, platformPublishedAtSql } from "../../api/queries/newsDateRules";
 import { collectPipelineStats, formatHealthLine, type PipelineStats } from "./pipeline-health";
 import {
   buildClientDigest,
@@ -254,8 +254,8 @@ async function main() {
       summary: news.summary,
     })
     .from(news)
-    .where(and(eq(news.status, "published"), sql`${publishedAtSql()} >= ${instantParam(since)}`, nonEmptySummary))
-    .orderBy(desc(publishedAtSql()));
+    .where(and(eq(news.status, "published"), sql`${platformPublishedAtSql()} >= ${instantParam(since)}`, nonEmptySummary))
+    .orderBy(desc(platformPublishedAtSql()));
 
   const items: DigestItem[] = [...recentItems];
   console.error(`[daily-digest] ${items.length} published in last ${DIGEST_WINDOW_HOURS}h`);
