@@ -87,6 +87,14 @@ export type CycleCounters = {
   judged: number;
   /** Candidates approved for the manifest queue (score gate or the judge-approved publish floor). */
   approved: number;
+  /**
+   * Approved cards whose material was a video description alone
+   * (`metrics.origin === "youtube-api"`): the official Data API gives no
+   * captions, so no transcript was ever fetched. Counted separately from
+   * `approved` (the card is still approved) so the owner sees how many cards of
+   * the day were built without a transcript.
+   */
+  descriptionOnly: number;
   /** Published articles of the day (absolute value, `max` across merges). */
   published: number;
   /** Machine reason → count: `prefilter:<reason>`, `judge:<reason>`, `score:<reason>`, `publish:<reason>`, `provider:<reason>`. */
@@ -245,6 +253,7 @@ export function emptyCycleMetrics(): CycleMetrics {
     prefiltered: 0,
     judged: 0,
     approved: 0,
+    descriptionOnly: 0,
     published: 0,
     rejectedByReason: {},
     usage: emptyUsage(),
@@ -362,6 +371,7 @@ export function normalizeCycleMetrics(raw: unknown): CycleMetrics {
     prefiltered: asCount(source.prefiltered),
     judged: asCount(source.judged),
     approved: asCount(source.approved),
+    descriptionOnly: asCount(source.descriptionOnly),
     published: asCount(source.published),
     rejectedByReason: normalizeReasons(source.rejectedByReason),
     usage: normalizeUsage(source.usage),
@@ -398,6 +408,7 @@ export function mergeCycleMetrics(base: unknown, delta: unknown): CycleMetrics {
     prefiltered: left.prefiltered + right.prefiltered,
     judged: left.judged + right.judged,
     approved: left.approved + right.approved,
+    descriptionOnly: left.descriptionOnly + right.descriptionOnly,
     published: Math.max(left.published, right.published),
     rejectedByReason,
     usage: normalizeUsage(usage),

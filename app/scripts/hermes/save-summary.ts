@@ -12,6 +12,13 @@
  * OpenCode only on quota/transient) for the Russian title + summary, saves the
  * result and adds the token spend to the day's ledger. Manual mode: saves
  * pre-computed summary and content directly.
+ *
+ * "Description-only" videos (`metrics.origin === "youtube-api"`, collected by
+ * youtube-api.ts) have neither a transcript nor a reachable page: youtube.com
+ * is blocked on the production host. Their card is written from the collected
+ * description, the prompt says the text is short and invention is forbidden,
+ * and a description under DESCRIPTION_ONLY_MIN_CHARS is refused
+ * (`description-too-short`) instead of being padded with guesses.
  * Exits with code 0 on success, 1 on error.
  */
 
@@ -29,6 +36,7 @@ import {
 } from "../../api/ai/providers/types";
 import { cycleIdFor, recordCycle, type UsageTotals } from "./publish-budget";
 import { isYoutubeUrl, fetchYoutubeTranscript } from "./youtube-transcript";
+import { isDescriptionOnlyVideo } from "./youtube-policy";
 import { ssrfCheck } from "../../api/lib/url-safety";
 import { extractArticleText } from "./article-content";
 import { isGarbageText, isUnusableExtractedContent } from "./content-quality";
@@ -36,6 +44,38 @@ import { resolveSection } from "../../api/lib/section-resolve";
 
 function normalizeSpace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
+}
+
+// ─── Description-only videos (official Data API origin) ─────────────────────
+//
+// A video ingested by youtube-api.ts has no transcript and no reachable page
+// (youtube.com is blocked on the production host), so its collected
+// description is the whole material. That is enough for a card ONLY if the
+// description actually says something: below this many characters a summary
+// could only be invented, so the material is refused instead of published.
+export const DESCRIPTION_ONLY_MIN_CHARS = 200;
+
+export type DescriptionOnlyMaterial =
+  | { ok: true; text: string; chars: number }
+  | { ok: false; reason: "description-too-short"; chars: number };
+
+/**
+ * The text a "description-only" card is summarized from: the video title plus
+ * the description saved at collection time (`news.summary`). The threshold is
+ * measured on the DESCRIPTION alone — a long title cannot compensate for an
+ * empty description.
+ */
+export function descriptionOnlyMaterial(input: {
+  title: string;
+  description: string;
+}): DescriptionOnlyMaterial {
+  const title = normalizeSpace(input.title ?? "");
+  const description = (input.description ?? "").trim();
+  const chars = description.length;
+  if (chars < DESCRIPTION_ONLY_MIN_CHARS) {
+    return { ok: false, reason: "description-too-short", chars };
+  }
+  return { ok: true, text: `${title}\n\n${description}`.trim(), chars };
 }
 
 /** A row the judge already accepted has its section decided (R07.1). */
@@ -110,6 +150,21 @@ const SUMMARY_SYSTEM_PROMPT =
 const SUMMARY_RETRY_SUFFIX =
   '\n\nОБЯЗАТЕЛЬНЫЙ формат ответа (никакого markdown, заголовков и пояснений):\n{"title_ru": "Заголовок на русском", "summary": "Текст саммари на русском."}';
 
+/**
+ * Added for a video whose material is only its description (Data API origin,
+ * no transcript). The model is told explicitly that the text is short and that
+ * invention is forbidden: a confident paragraph about a video nobody read is
+ * exactly the failure this path exists to avoid.
+ */
+const DESCRIPTION_ONLY_PROMPT =
+  "ВАЖНО: у этого материала НЕТ полного текста — есть только заголовок и описание видео. " +
+  "Текста мало, поэтому опирайся ИСКЛЮЧИТЕЛЬНО на них: не додумывай факты, цифры, даты, имена, " +
+  "результаты и цитаты, которых там нет, и не пересказывай то, что могло бы быть в видео. " +
+  "Если данных мало — выжимка будет короче, но только по этому тексту.";
+
+/** The prompt family: an article/transcript, or a description-only video. */
+export type SummaryMode = "article" | "description-only";
+
 export interface SummaryDraft {
   titleRu: string;
   summary: string;
@@ -149,9 +204,12 @@ function parseSummaryJson(raw: string): { titleRu: string; summary: string } | n
  * Ask the provider chain for the Russian title + summary. One retry with an
  * explicit format reminder, exactly like the old one-shot call; a provider
  * failure keeps its class and is never replaced by a silent placeholder.
+ *
+ * `mode: "description-only"` appends the short-text/no-invention note to the
+ * system prompt; the answer contract (`title_ru` + `summary`) is unchanged.
  */
 export async function summarizeWithChain(
-  input: { title: string; content: string; source: string },
+  input: { title: string; content: string; source: string; mode?: SummaryMode },
   completeJson: CompleteJson,
 ): Promise<SummaryDraft> {
   const content = truncateToTokens(input.content ?? "", SUMMARY_MAX_INPUT_TOKENS);
@@ -159,9 +217,14 @@ export async function summarizeWithChain(
     `Название: ${input.title}\nИсточник: ${input.source}\n\n` +
     `--- BEGIN ARTICLE (UNTRUSTED) ---\n${content}\n--- END ARTICLE ---`;
 
+  const basePrompt =
+    input.mode === "description-only"
+      ? `${SUMMARY_SYSTEM_PROMPT} ${DESCRIPTION_ONLY_PROMPT}`
+      : SUMMARY_SYSTEM_PROMPT;
+
   let last: ChatResult | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const system = attempt === 0 ? SUMMARY_SYSTEM_PROMPT : SUMMARY_SYSTEM_PROMPT + SUMMARY_RETRY_SUFFIX;
+    const system = attempt === 0 ? basePrompt : basePrompt + SUMMARY_RETRY_SUFFIX;
     const messages: ChatMessage[] = [
       { role: "system", content: system },
       { role: "user", content: userContent },
@@ -320,16 +383,66 @@ async function main() {
   let originalContent: string | null = null;
   let fetchFallbackInfo: Record<string, unknown> | null = null;
   let modelUsed: string | null = args.model;
+  /** Metrics patched onto the row (per-card provenance, never the URL). */
+  let metricsPatch: Record<string, unknown> | null = null;
+  /**
+   * True for a video collected by the official Data API: the description is the
+   * material, no transcript exists and no page can be fetched.
+   */
+  let descriptionOnly = false;
 
   if (args.auto) {
     // ── Auto mode: fetch → summarize via the provider chain → save ──
     console.error(`[save-summary] Auto mode: summarizing article #${args.id}...`);
     console.error(`[save-summary] Title: ${article.title.substring(0, 80)}`);
 
-    // Fetch content: YouTube videos go through yt-dlp transcript extraction,
-    // everything else through HTML fetch+clean.
+    // Fetch content. A description-only video is summarized from the
+    // description saved at collection time — never from the page and never
+    // through yt-dlp, which cannot reach youtube.com on the production host.
+    // Its card is written from the description, and a description that is too
+    // short to summarize is not published at all.
+    descriptionOnly = isDescriptionOnlyVideo(article.metrics);
     let text: string | null;
-    if (article.originalContent && article.originalContent.length >= 100) {
+    if (descriptionOnly) {
+      const material = descriptionOnlyMaterial({
+        title: article.title,
+        description: article.summary ?? "",
+      });
+      if (!material.ok) {
+        console.error(
+          `[save-summary] Description-only material is too short (${material.chars} < ${DESCRIPTION_ONLY_MIN_CHARS}) — refusing to publish`,
+        );
+        // The cause is a machine code on the row too, so the owner report shows
+        // it next to the other refusal reasons.
+        await db
+          .update(news)
+          .set({
+            status: "rejected",
+            updatedAt: new Date(),
+            metrics: {
+              ...((article.metrics as Record<string, unknown>) || {}),
+              decision: material.reason,
+              summarySource: "description",
+              descriptionChars: material.chars,
+            },
+          })
+          .where(eq(news.id, args.id!));
+        console.log(
+          JSON.stringify({
+            status: "rejected",
+            articleId: args.id,
+            reason: material.reason,
+            descriptionChars: material.chars,
+          }),
+        );
+        process.exit(0);
+      }
+      text = material.text;
+      metricsPatch = { summarySource: "description", descriptionChars: material.chars };
+      console.error(
+        `[save-summary] Description-only material: ${material.chars} chars (no transcript by design)`,
+      );
+    } else if (article.originalContent && article.originalContent.length >= 100) {
       text = article.originalContent;
       console.error(`[save-summary] Reusing ${text.length} chars from transcript preflight`);
     } else if (isYoutubeUrl(article.originalUrl)) {
@@ -381,7 +494,14 @@ async function main() {
     let draft: SummaryDraft;
     try {
       draft = await summarizeWithChain(
-        { title: article.title, content: text, source: article.source },
+        {
+          title: article.title,
+          content: text,
+          source: article.source,
+          // The model is told the text is only a description; the answer
+          // contract stays the same, so the parser below is unchanged.
+          ...(descriptionOnly ? { mode: "description-only" as const } : {}),
+        },
         chain.completeJson,
       );
     } catch (error) {
@@ -445,7 +565,15 @@ async function main() {
   if (modelUsed) updateData.modelUsed = modelUsed;
   if (originalContent) updateData.originalContent = originalContent;
   if (fetchFallbackInfo) {
-    updateData.metrics = { ...((article.metrics as Record<string, unknown>) || {}), fetchFallback: fetchFallbackInfo };
+    metricsPatch = { ...(metricsPatch ?? {}), fetchFallback: fetchFallbackInfo };
+  }
+  // Per-card provenance: the owner can tell a card written from a description
+  // (no transcript) from one written from a full article or transcript.
+  if (metricsPatch) {
+    updateData.metrics = {
+      ...((article.metrics as Record<string, unknown>) || {}),
+      ...metricsPatch,
+    };
   }
 
   // Final routing for rows the judge has NOT placed. A judged row keeps the
@@ -476,6 +604,9 @@ async function main() {
     titleRu,
     summaryLength: summary.length,
     model: modelUsed,
+    // Provenance of the card: "description" means the summary was written from
+    // a Data API video description, without a transcript.
+    ...(descriptionOnly ? { summarySource: "description" } : {}),
   }));
 
   process.exit(0);

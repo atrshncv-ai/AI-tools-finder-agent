@@ -12,6 +12,15 @@
  * The LLM is NOT qualified to judge "scientific value" — so it doesn't.
  * Stage B decides topic only; the score below is deterministic:
  *
+ * YouTube has two paths (see `evaluate`): legacy RSS/yt-dlp videos must prove a
+ * transcript before approval, while a video collected by the official Data API
+ * (`metrics.origin === "youtube-api"`) is judged and scored on its title +
+ * description — the API delivers no captions and youtube.com is blocked on the
+ * production host, so waiting for a transcript would reject the whole stream.
+ * Such a card is marked `metrics.transcript = "unavailable-description-only"`
+ * and counted separately (`counters.descriptionOnly`); ordinary videos keep the
+ * transcript requirement unchanged.
+ *
  * Tech scoring matrix (AI tools):
  *   +40  GitHub Trending Top-10   +25  GitHub Trending Top-50
  *   +30  GitHub stars > 10k       +20  GitHub stars > 1k
@@ -50,7 +59,12 @@ import { news } from "@db/schema";
 import { eq, and, isNull, desc, sql } from "drizzle-orm";
 import { fetchYoutubeTranscript } from "./youtube-transcript";
 import { DEDICATED_AI_YOUTUBE_SOURCES } from "./youtube-sources";
-import { scoreYoutubeCandidate } from "./youtube-policy";
+import {
+  DESCRIPTION_ONLY_TRANSCRIPT,
+  YOUTUBE_API_ORIGIN,
+  isDescriptionOnlyVideo,
+  scoreYoutubeCandidate,
+} from "./youtube-policy";
 import { resolveSection } from "../../api/lib/section-resolve";
 
 import { SCORE_GATE } from "./pipeline-config";
@@ -416,12 +430,112 @@ async function evaluate(article: {
   let redditUpsN = typeof prev.redditUps === "number" ? prev.redditUps : null;
   let hasOpenArtifact = false;
 
-  // ── YouTube scoring: verify a usable transcript BEFORE approval. This call
-  // uses native/automatic captions first and Whisper only as a configured
-  // fallback. Long-form 4–45 minute videos receive a ranking bonus; useful
-  // transcribed Shorts have no artificial daily quota.
-  const isYoutube = article.source.startsWith("youtube-") || prev.origin === "youtube-rss";
+  // ── YouTube: two paths share this branch.
+  //
+  //   1. `metrics.origin === "youtube-api"` — the video was ingested by the
+  //      official Data API (youtube-api.ts). On the production host youtube.com
+  //      is blocked by hostname while youtube.googleapis.com answers, so yt-dlp
+  //      can never reach the video and no transcript will ever arrive: the API
+  //      gives title, description and date, and that IS the material. The
+  //      candidate is judged and scored on it; yt-dlp is not called at all and
+  //      `metrics.transcript = "unavailable-description-only"` records the
+  //      absence as a state, never as a `transcript-unavailable` refusal.
+  //
+  //   2. legacy RSS/yt-dlp videos (origin `youtube-rss` or a `youtube-…`
+  //      source) — unchanged: a usable transcript is verified BEFORE approval,
+  //      native/automatic captions first and Whisper only as a configured
+  //      fallback. Long-form 4–45 minute videos receive a ranking bonus; useful
+  //      transcribed Shorts have no artificial daily quota.
+  const descriptionOnly = isDescriptionOnlyVideo(prev);
+  const isYoutube =
+    descriptionOnly || article.source.startsWith("youtube-") || prev.origin === "youtube-rss";
   if (isYoutube) {
+    if (descriptionOnly) {
+      const description = (article.lead ?? "").trim();
+      const aiRelevant = hasExplicitAiSignal(`${article.title} ${description}`);
+      const durationSeconds =
+        typeof prev.durationSeconds === "number" && Number.isFinite(prev.durationSeconds)
+          ? prev.durationSeconds
+          : null;
+      const checkedAt = new Date().toISOString();
+
+      // A state, not a rejection: the missing transcript is by design.
+      metrics.transcript = DESCRIPTION_ONLY_TRANSCRIPT;
+      metrics.youtubeDescription = description.slice(0, 500);
+      metrics.youtubeDescriptionChars = description.length;
+      if (durationSeconds !== null) metrics.youtubeDurationSeconds = durationSeconds;
+
+      // Owner mandate 2026-09-10: relevance is a REAL signal. The description
+      // is not exempt — no explicit AI term in title/description, no card.
+      if (!aiRelevant) {
+        metrics.youtubePreflight = {
+          eligible: false,
+          reason: "no-ai-signal",
+          origin: YOUTUBE_API_ORIGIN,
+          checkedAt,
+        };
+        breakdown.push({
+          criterion: "ai-relevance-gate",
+          points: 0,
+          evidence: "no explicit AI signal in title/description",
+        });
+        return { id: article.id, title: article.title, score: 0, breakdown, metrics };
+      }
+
+      const decision = scoreYoutubeCandidate({
+        hasTranscript: false,
+        descriptionOnly: true,
+        durationSeconds,
+        dedicatedChannel: DEDICATED_AI_YOUTUBE_SOURCES.has(article.source),
+        aiRelevant,
+      });
+
+      breakdown.push({
+        criterion: "youtube-curated-channel",
+        points: 45,
+        evidence: `source=${article.source}`,
+      });
+      breakdown.push({
+        criterion: "youtube-ai-topic",
+        points: 15,
+        evidence: "AI terms in title/description",
+      });
+      breakdown.push({
+        criterion: "youtube-description-only",
+        points: 0,
+        evidence: `no transcript by design (origin=youtube-api), ${description.length} chars of description`,
+      });
+      if (decision.longFormPriority) {
+        breakdown.push({
+          criterion: "youtube-long-form-priority",
+          points: 10,
+          evidence: `duration=${durationSeconds}s (4–45 min)`,
+        });
+      }
+      metrics.youtubePreflight = {
+        eligible: decision.eligible,
+        reason: "description-only",
+        origin: YOUTUBE_API_ORIGIN,
+        checkedAt,
+      };
+      // The description IS the material, so it is stored as `originalContent`
+      // the way a transcript is for the legacy path: ralph-loop.sh then skips
+      // `fetch-article.ts` ("preflight content OK") and never calls yt-dlp for
+      // this row. save-summary still writes the card from the description and
+      // refuses a description under 200 characters.
+      const material = `${article.title}\n\n${description}`.trim();
+      return {
+        id: article.id,
+        title: article.title,
+        score: decision.score,
+        breakdown,
+        metrics,
+        originalContent: material,
+        section,
+        sphereTags,
+      };
+    }
+
     const transcript = await fetchYoutubeTranscript(article.originalUrl);
     if (!transcript) {
       metrics.youtubePreflight = {
@@ -771,7 +885,11 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function isYoutubeCandidate(candidate: EvaluationCandidate): boolean {
-  return candidate.source.startsWith("youtube-") || asRecord(candidate.metrics).origin === "youtube-rss";
+  return (
+    candidate.source.startsWith("youtube-") ||
+    isDescriptionOnlyVideo(candidate.metrics) ||
+    asRecord(candidate.metrics).origin === "youtube-rss"
+  );
 }
 
 /** A verdict stored by a previous run is reused: the judge is paid per call. */
@@ -1124,8 +1242,12 @@ export async function runEvaluationCycle(input: {
       const publishFloorPassed = item.verdict.onTopic && result.score >= scoreFloor;
       const decision: EvaluationDecision =
         scoreGatePassed || publishFloorPassed ? "approved" : "rejected-low-score";
-      if (decision === "approved") counters.approved++;
-      else bump("score:low-score");
+      if (decision === "approved") {
+        counters.approved++;
+        // The card was built from a video description alone (no transcript):
+        // counted separately so the owner sees it in the day's ledger.
+        if (isDescriptionOnlyVideo(item.candidate.metrics)) counters.descriptionOnly++;
+      } else bump("score:low-score");
       outcomes.push({
         candidate: item.candidate,
         decision,
@@ -1407,6 +1529,8 @@ async function main() {
     prefiltered: counters.prefiltered,
     judged: counters.judged,
     approved: counters.approved,
+    // Cards whose material was a Data API video description (no transcript).
+    descriptionOnly: counters.descriptionOnly,
     deferred,
     rejected: cycle.outcomes.filter((o) => o.decision.startsWith("rejected")).length,
     judgeCalls: cycle.judgeCalls,
@@ -1422,7 +1546,8 @@ async function main() {
   console.log(JSON.stringify(output));
   console.error(
     `[evaluate-news] Done: collected=${counters.collected} prefiltered=${counters.prefiltered} ` +
-      `judged=${counters.judged} approved=${counters.approved} deferred=${deferred} ` +
+      `judged=${counters.judged} approved=${counters.approved} ` +
+      `descriptionOnly=${counters.descriptionOnly} deferred=${deferred} ` +
       `scored=${cycle.scored} judgeCalls=${cycle.judgeCalls}`,
   );
   if (cycle.providerErrors.length > 0) {

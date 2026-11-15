@@ -122,6 +122,8 @@ describe("cycle counters", () => {
       judged: 0,
       approved: 0,
       published: 0,
+      // Cards approved from a video description alone (origin=youtube-api).
+      descriptionOnly: 0,
       rejectedByReason: {},
       usage: { calls: 0, inputTokens: 0, outputTokens: 0 },
     });
@@ -145,6 +147,7 @@ describe("cycle counters", () => {
       judged: 12,
       approved: 9,
       published: 8,
+      descriptionOnly: 0,
       rejectedByReason: { "prefilter:no-ai-signal": 60, "judge:off-topic": 28 },
       usage: { calls: 0, inputTokens: 0, outputTokens: 0 },
     });
@@ -181,6 +184,18 @@ describe("cycle counters", () => {
     });
     // Token spend adds up so the report can show the day's cost.
     expect(merged.usage).toEqual({ calls: 14, inputTokens: 1100, outputTokens: 220 });
+  });
+
+  it("counts description-only cards separately from approvals, additively", () => {
+    const merged = mergeCycleMetrics(
+      { ...emptyCycleMetrics(), approved: 3, descriptionOnly: 1 },
+      { approved: 2, descriptionOnly: 2 },
+    );
+    expect(merged.approved).toBe(5);
+    expect(merged.descriptionOnly).toBe(3);
+    // jsonb may hold anything: a broken value degrades to zero, never NaN.
+    expect(normalizeCycleMetrics({ descriptionOnly: "2" }).descriptionOnly).toBe(0);
+    expect(normalizeCycleMetrics({ descriptionOnly: 4 }).descriptionOnly).toBe(4);
   });
 });
 
