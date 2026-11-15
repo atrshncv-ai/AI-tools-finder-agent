@@ -28,7 +28,16 @@ import { news, categories } from "@db/schema";
 import { eq } from "drizzle-orm";
 import { isDuplicate } from "./dedup";
 import { listChannelVideos } from "./youtube-transcript";
-import { YOUTUBE_SOURCES } from "./youtube-sources";
+import { YOUTUBE_SOURCES, type YoutubeSource } from "./youtube-sources";
+import {
+  YouTubeQuotaError,
+  listUploads,
+  listVideoDurations,
+  resolveChannel,
+  watchUrl,
+  youtubeApiKey,
+  type YouTubeUpload,
+} from "./youtube-api";
 import { ssrfCheck } from "../../api/lib/url-safety";
 import { classifyScience } from "../ensure-science-categories";
 import { resolveSection, type SectionResolution } from "../../api/lib/section-resolve";
@@ -58,7 +67,7 @@ function isFresh(publishedAt: Date | null | undefined, maxAgeMs = MAX_AGE_MS, mi
   return age <= maxAgeMs && age >= minAgeMs;
 }
 
-interface Candidate {
+export interface Candidate {
   title: string;
   url: string;
   source: string;
@@ -224,11 +233,164 @@ export const TECH_BLOG_FEEDS: FeedConfig[] = [
 ];
 
 /**
- * Curated English-language AI YouTube channels. YouTube exposes a standard
- * Atom feed per channel — no API key required. Videos are transcribed later
- * (youtube-transcript.ts via yt-dlp), never downloaded.
+ * Curated AI YouTube channels, ingested by one of two paths:
+ *   1. the official Data API (youtube-api.ts) when `YOUTUBE_API_KEY` is set —
+ *      the only path that works on the production host, where youtube.com is
+ *      blocked by hostname while youtube.googleapis.com answers;
+ *   2. the legacy Atom feed + yt-dlp tab crawl below — the no-key fallback and
+ *      the fallback when the API is unreachable or out of quota.
+ * Videos are transcribed later (youtube-transcript.ts via yt-dlp), never
+ * downloaded.
  */
+
+/** Per-channel API budget mirrors the tab crawl: `YOUTUBE_TAB_ITEMS` per tab. */
+function youtubeApiItemsPerChannel(source: YoutubeSource): number {
+  const tabItems = Math.max(1, parseInt(process.env.YOUTUBE_TAB_ITEMS || "3", 10) || 3);
+  return Math.min(50, tabItems * Math.max(1, source.tabs.length));
+}
+
+export interface YouTubeApiCollectDeps {
+  /** Health sink; injectable so tests never touch the database. */
+  recordHealth?: (
+    name: string,
+    url: string,
+    ok: boolean,
+    found: number,
+    error?: string,
+  ) => Promise<void>;
+  fetchImpl?: typeof fetch;
+}
+
+/**
+ * One API upload → collector candidate. `source` is the configured
+ * `youtube-<handle>` name (evaluate-news and prefilter key the whole YouTube
+ * branch off it), `url` is the canonical watch URL.
+ */
+export function buildYoutubeApiCandidate(
+  source: YoutubeSource,
+  upload: YouTubeUpload,
+  durationSeconds: number | null = null,
+): Candidate {
+  return {
+    title: upload.title.trim(),
+    url: watchUrl(upload.videoId),
+    source: source.name,
+    // A missing/unparseable date becomes epoch, so the Time Guard drops the
+    // item fail-closed exactly like an RSS item without a date.
+    publishedAt: upload.publishedAt ?? new Date(0),
+    language: source.language,
+    isScience: false,
+    scienceField: null,
+    description: upload.description.trim(),
+    metrics: {
+      origin: "youtube-api",
+      videoId: upload.videoId,
+      channelId: source.channelId,
+      ...(durationSeconds !== null ? { durationSeconds } : {}),
+    },
+  };
+}
+
+/**
+ * Collect every configured channel through the official API.
+ * Returns null when the API is not configured or unusable (no key, quota,
+ * every channel unreachable), so the caller keeps the legacy RSS/yt-dlp path.
+ */
+export async function collectYouTubeApi(
+  deps: YouTubeApiCollectDeps = {},
+): Promise<Candidate[] | null> {
+  if (!youtubeApiKey()) return null;
+
+  const recordHealth = deps.recordHealth ?? recordFeedHealth;
+  const options = deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {};
+  const out: Candidate[] = [];
+  let channelsReached = 0;
+
+  for (const source of YOUTUBE_SOURCES) {
+    const healthUrl = `https://youtube.googleapis.com/youtube/v3/channels?forHandle=${source.handle}`;
+    try {
+      const channel = await resolveChannel(source.handle, options);
+      if (!channel) {
+        console.error(`[collect] ${source.name}: API channel resolve failed`);
+        void recordHealth(
+          source.name,
+          healthUrl,
+          false,
+          0,
+          "channels.list returned no channel",
+        ).catch(() => {});
+        continue;
+      }
+      const uploads = await listUploads(
+        channel.uploadsPlaylistId,
+        youtubeApiItemsPerChannel(source),
+        options,
+      );
+      if (!uploads) {
+        console.error(`[collect] ${source.name}: API uploads failed`);
+        void recordHealth(source.name, healthUrl, false, 0, "playlistItems.list failed").catch(
+          () => {},
+        );
+        continue;
+      }
+      channelsReached++;
+
+      // Optional duration refinement for short lists: one extra quota unit and
+      // the 4–45 minute ranking signal survives even without a transcript.
+      const durations =
+        uploads.length > 0 && uploads.length <= 10
+          ? await listVideoDurations(
+              uploads.map((upload) => upload.videoId),
+              options,
+            )
+          : null;
+
+      for (const upload of uploads) {
+        out.push(
+          buildYoutubeApiCandidate(source, upload, durations?.get(upload.videoId) ?? null),
+        );
+      }
+      console.error(`[collect] ${source.name}: ${uploads.length} videos (api)`);
+      void recordHealth(source.name, healthUrl, true, uploads.length).catch(() => {});
+    } catch (err) {
+      if (err instanceof YouTubeQuotaError) {
+        // Hard stop: every further call would fail too, so hand the stream
+        // back to the legacy path instead of burning the rest of the run.
+        console.error(
+          `[collect] YouTube API quota exhausted, falling back to RSS/yt-dlp: ${err.message.slice(0, 160)}`,
+        );
+        return null;
+      }
+      console.error(
+        `[collect] ${source.name}: API failed (${(err as Error).message.slice(0, 120)})`,
+      );
+      void recordHealth(source.name, healthUrl, false, 0, (err as Error).message).catch(
+        () => {},
+      );
+    }
+  }
+
+  if (channelsReached === 0) {
+    console.error(
+      "[collect] YouTube API unreachable for every channel, falling back to RSS/yt-dlp",
+    );
+    return null;
+  }
+  console.error(
+    `[collect] youtube-api: ${out.length} videos from ${channelsReached}/${YOUTUBE_SOURCES.length} channels`,
+  );
+  return out;
+}
+
 async function collectYouTube(): Promise<Candidate[]> {
+  // Primary path: the official Data API (see the block above). It is skipped
+  // when no key is configured or when the API itself is unusable.
+  const viaApi = await collectYouTubeApi();
+  if (viaApi && viaApi.length > 0) return viaApi;
+  if (viaApi) {
+    console.error("[collect] YouTube API returned 0 videos, checking RSS/yt-dlp");
+  }
+
   const byUrl = new Map<string, Candidate>();
   const tabItems = Math.max(1, parseInt(process.env.YOUTUBE_TAB_ITEMS || "3", 10));
   for (const source of YOUTUBE_SOURCES) {
