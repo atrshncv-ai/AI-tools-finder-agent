@@ -23,9 +23,9 @@ export const users = pgTable("users", {
   avatar: text("avatar"),
   role: text("role").default("user").notNull(),
   tokenVersion: integer("tokenVersion").default(1).notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
-  lastSignInAt: timestamp("lastSignInAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true }).defaultNow().notNull(),
+  lastSignInAt: timestamp("lastSignInAt", { withTimezone: true }).defaultNow().notNull(),
 });
 
 export type User = typeof users.$inferSelect;
@@ -37,7 +37,7 @@ export const categories = pgTable("categories", {
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   type: text("type").default("general").notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
 });
 
 export type Category = typeof categories.$inferSelect;
@@ -63,22 +63,22 @@ export const news = pgTable(
     categorySlug: text("categorySlug"),
     tags: text("tags"),
     imageUrl: text("imageUrl"),
-    publishedAt: timestamp("publishedAt").notNull(),
+    publishedAt: timestamp("publishedAt", { withTimezone: true }).notNull(),
     isScience: boolean("isScience").default(false).notNull(),
     scienceField: text("scienceField"),
     classificationType: text("classificationType"),
     section: text("section").default("ai-news").notNull(),
     sphereTags: jsonb("sphereTags").$type<string[]>().default([]).notNull(),
-    digestArchiveSentAt: timestamp("digestArchiveSentAt"),
+    digestArchiveSentAt: timestamp("digestArchiveSentAt", { withTimezone: true }),
     // Immutable timestamp for the first publication on this platform.
-    platformPublishedAt: timestamp("platformPublishedAt"),
+    platformPublishedAt: timestamp("platformPublishedAt", { withTimezone: true }),
     language: text("language"),
     score: integer("score"),
     metrics: jsonb("metrics"),
     status: text("status").default("pending").notNull(),
     modelUsed: text("modelUsed"),
-    createdAt: timestamp("createdAt").defaultNow().notNull(),
-    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     index("idx_news_category_id").on(table.categoryId),
@@ -121,9 +121,9 @@ export const inventionTools = pgTable(
     description: text("description").notNull(),
     officialUrl: text("officialUrl").notNull(),
     docsUrl: text("docsUrl"),
-    lastVerifiedAt: timestamp("lastVerifiedAt"),
-    createdAt: timestamp("createdAt").defaultNow().notNull(),
-    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+    lastVerifiedAt: timestamp("lastVerifiedAt", { withTimezone: true }),
+    createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [index("idx_invention_tools_kind").on(table.kind)],
 );
@@ -142,7 +142,7 @@ export const favorites = pgTable(
     newsId: integer("newsId")
       .notNull()
       .references(() => news.id, { onDelete: "cascade" }),
-    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [uniqueIndex("uniq_favorites_user_news").on(table.userId, table.newsId)],
 );
@@ -162,8 +162,8 @@ export const readStatus = pgTable(
       .notNull()
       .references(() => news.id, { onDelete: "cascade" }),
     read: boolean("read").default(false).notNull(),
-    readAt: timestamp("readAt"),
-    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    readAt: timestamp("readAt", { withTimezone: true }),
+    createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     uniqueIndex("uniq_read_status_user_news").on(table.userId, table.newsId),
@@ -184,7 +184,7 @@ export const sources = pgTable(
     type: text("type").notNull(),
     config: jsonb("config"),
     enabled: boolean("enabled").default(true).notNull(),
-    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     index("idx_sources_enabled").on(table.enabled),
@@ -207,7 +207,7 @@ export const parsingLogs = pgTable(
     articlesFound: integer("articlesFound").default(0),
     articlesNew: integer("articlesNew").default(0),
     errorMessage: text("errorMessage"),
-    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     index("idx_parsing_logs_source_id").on(table.sourceId),
@@ -223,13 +223,13 @@ export const agentState = pgTable("agent_state", {
   id: serial("id").primaryKey(),
   agentId: text("agentId").notNull().unique(),
   status: text("status").default("idle").notNull(),
-  lastRun: timestamp("lastRun"),
+  lastRun: timestamp("lastRun", { withTimezone: true }),
   lastError: text("lastError"),
   runCount: integer("runCount").default(0).notNull(),
   successCount: integer("successCount").default(0).notNull(),
   failCount: integer("failCount").default(0).notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true }).defaultNow().notNull(),
 });
 
 export type AgentStateRow = typeof agentState.$inferSelect;
@@ -246,8 +246,8 @@ export const sourceHealth = pgTable(
       .references(() => sources.id, { onDelete: "cascade" }),
     sourceName: text("sourceName").notNull(),
     status: text("status").default("unknown").notNull(),
-    lastCheck: timestamp("lastCheck"),
-    lastSuccess: timestamp("lastSuccess"),
+    lastCheck: timestamp("lastCheck", { withTimezone: true }),
+    lastSuccess: timestamp("lastSuccess", { withTimezone: true }),
     lastError: text("lastError"),
     consecutiveFails: integer("consecutiveFails").default(0).notNull(),
     successRate: real("successRate").default(1).notNull(),
@@ -255,8 +255,8 @@ export const sourceHealth = pgTable(
     selectorWorks: boolean("selectorWorks").default(true).notNull(),
     runCount: integer("runCount").default(0).notNull(),
     successCount: integer("successCount").default(0).notNull(),
-    createdAt: timestamp("createdAt").defaultNow().notNull(),
-    updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [index("idx_source_health_status").on(table.status)],
 );
@@ -277,10 +277,10 @@ export const pipelineState = pgTable(
     // approved / published / rejectedByReason), written by the Hermes steps.
     // interfaces.md §10: no new columns on `news`; the cycle ledger lives here.
     metrics: jsonb("metrics"),
-    startedAt: timestamp("startedAt"),
-    completedAt: timestamp("completedAt"),
+    startedAt: timestamp("startedAt", { withTimezone: true }),
+    completedAt: timestamp("completedAt", { withTimezone: true }),
     errorMessage: text("errorMessage"),
-    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     index("idx_pipeline_cycle_id").on(table.cycleId),

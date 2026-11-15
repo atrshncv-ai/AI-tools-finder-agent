@@ -1,7 +1,7 @@
 import { getDb } from "./connection";
 import { news, categories, inventionTools } from "@db/schema";
 import { eq, inArray, desc, and, count, sql, getTableColumns } from "drizzle-orm";
-import { getFreshnessWindow } from "./newsDateRules";
+import { getFreshnessWindow, instantParam, publishedAtSql } from "./newsDateRules";
 
 // ─── Seed categories ───
 export async function seedCategories() {
@@ -59,11 +59,14 @@ export async function findAllNews(opts: {
     conditions.push(eq(news.classificationType, classificationType));
   }
 
-  // Freshness and ordering use the immutable platform publication date.
+  // Freshness and ordering use the immutable platform publication date. The
+  // window is bound as a parameter (`timestamptz`), never as a naive string.
   const freshnessWindow = getFreshnessWindow(freshness);
-  conditions.push(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt}) <= ${freshnessWindow.to.toISOString()}`);
+  conditions.push(sql`${publishedAtSql()} <= ${instantParam(freshnessWindow.to)}`);
   if (freshness && freshness !== "all") {
-    if (freshnessWindow.from) conditions.push(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt}) >= ${freshnessWindow.from.toISOString()}`);
+    if (freshnessWindow.from) {
+      conditions.push(sql`${publishedAtSql()} >= ${instantParam(freshnessWindow.from)}`);
+    }
   }
 
   if (search) {
@@ -85,7 +88,7 @@ export async function findAllNews(opts: {
     .from(news)
     .leftJoin(categories, eq(news.categoryId, categories.id))
     .where(where)
-    .orderBy(desc(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt})`), desc(news.id))
+    .orderBy(desc(publishedAtSql()), desc(news.id))
     .limit(limit)
     .offset(offset);
 

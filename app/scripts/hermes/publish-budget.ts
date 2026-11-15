@@ -14,6 +14,7 @@
 
 import "dotenv/config";
 import { getDb } from "../../api/queries/connection";
+import { instantParam, publishedAtSql } from "../../api/queries/newsDateRules";
 import { news, pipelineState } from "@db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import {
@@ -454,7 +455,7 @@ export async function countPublishedToday(now: Date = new Date()): Promise<numbe
     .where(
       and(
         eq(news.status, "published"),
-        sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt}) >= ${dayStart.toISOString()}`,
+        sql`${publishedAtSql()} >= ${instantParam(dayStart)}`,
       ),
     );
   return row?.n ?? 0;

@@ -14,8 +14,10 @@
  * Env:
  *   TELEGRAM_BOT_TOKEN — when absent the digest is only printed to stdout
  *     (stub mode, no sending).
- *   TELEGRAM_CLIENT_CHAT_IDS — comma-separated client recipients. Legacy
- *     TELEGRAM_CHAT_IDS / TELEGRAM_CHAT_ID are honoured as a client fallback.
+ *   TELEGRAM_CLIENT_CHAT_IDS — comma-separated client recipients, plus the
+ *     subscribers `telegram-subscribe.ts` stored in `agent_state` (they join
+ *     without duplicates). Legacy TELEGRAM_CHAT_IDS / TELEGRAM_CHAT_ID are
+ *     honoured as a client fallback.
  *   TELEGRAM_OWNER_CHAT_IDS — comma-separated owner recipients: a copy of the
  *     clean digest plus the service report. Missing owner address does not
  *     stop the client delivery.
@@ -29,16 +31,19 @@
 import "dotenv/config";
 
 import { getDb } from "../../api/queries/connection";
+import { instantParam, publishedAtSql } from "../../api/queries/newsDateRules";
 import { collectPipelineStats, formatHealthLine, type PipelineStats } from "./pipeline-health";
 import {
   buildClientDigest,
   buildEmptyClientDigest,
   buildOwnerReport,
   DIGEST_WINDOW_HOURS,
+  resolveRecipients,
   splitTelegramText,
   type CycleStats,
   type DigestItem,
 } from "./digest-format";
+import { loadSubscriptionState, type Subscriber } from "./telegram-subscribe";
 import { news } from "@db/schema";
 import { and, desc, eq, gte, isNotNull, ne, sql } from "drizzle-orm";
 import { pathToFileURL } from "node:url";
@@ -57,39 +62,11 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const PAYMENT_MANAGER_CHAT_ID = (process.env.PAYMENT_MANAGER_CHAT_ID || "").trim();
 const PAYMENT_DUE_AT = process.env.PAYMENT_DUE_AT || "2026-11-10";
 
-export interface DigestRecipients {
-  /** Client chat IDs — clean digest only. */
-  client: string[];
-  /** Owner chat IDs — the same digest as a copy plus the service report. */
-  owner: string[];
-}
-
-/**
- * Parse a comma-separated chat-id list. Surrounding quotes are stripped per id:
- * cron sources `.env` via bash (`set -a; . ./.env`), which — unlike dotenv —
- * keeps literal quotes, and a quoted id makes Telegram reject the chat
- * ("chat not found").
- */
-function parseChatIds(raw: string | undefined): string[] {
-  return (raw ?? "")
-    .split(",")
-    .map((s) => s.trim().replace(/^["']+|["']+$/g, ""))
-    .filter(Boolean);
-}
-
-/**
- * Client and owner recipients come from separate variables. The legacy shared
- * TELEGRAM_CHAT_IDS / TELEGRAM_CHAT_ID list stays a client fallback, so an
- * existing deployment keeps delivering; the owner copy is opt-in.
- */
-export function resolveRecipients(env: NodeJS.ProcessEnv = process.env): DigestRecipients {
-  return {
-    client: parseChatIds(
-      env.TELEGRAM_CLIENT_CHAT_IDS || env.TELEGRAM_CHAT_IDS || env.TELEGRAM_CHAT_ID,
-    ),
-    owner: parseChatIds(env.TELEGRAM_OWNER_CHAT_IDS || env.TELEGRAM_OWNER_CHAT_ID),
-  };
-}
+// Recipients are resolved in digest-format.ts: env lists plus the subscribers
+// the welcome flow (telegram-subscribe.ts) stored in `agent_state`. Re-exported
+// so existing callers keep the same entry point.
+export { resolveRecipients } from "./digest-format";
+export type { DigestRecipients } from "./digest-format";
 
 interface MetricsRecord {
   decision?: unknown;
@@ -277,15 +254,34 @@ async function main() {
       summary: news.summary,
     })
     .from(news)
-    .where(and(eq(news.status, "published"), sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt}) >= ${since.toISOString()}`, nonEmptySummary))
-    .orderBy(desc(sql`coalesce(${news.platformPublishedAt}, ${news.updatedAt})`));
+    .where(and(eq(news.status, "published"), sql`${publishedAtSql()} >= ${instantParam(since)}`, nonEmptySummary))
+    .orderBy(desc(publishedAtSql()));
 
   const items: DigestItem[] = [...recentItems];
   console.error(`[daily-digest] ${items.length} published in last ${DIGEST_WINDOW_HOURS}h`);
 
   const now = new Date();
-  const recipients = resolveRecipients();
   const envErrors: string[] = [];
+
+  // New subscribers live in `agent_state`, not in .env (that file is edited by
+  // hand and rewritten): they join the client list for every morning digest. A
+  // database failure must not stop the env recipients, but the owner has to see
+  // that the stored list was lost.
+  let subscribers: Subscriber[] = [];
+  try {
+    subscribers = (await loadSubscriptionState(db)).subscribers;
+  } catch (err) {
+    console.error(`[daily-digest] subscribers skipped: ${(err as Error).message.slice(0, 120)}`);
+    envErrors.push("подписчики недоступны");
+  }
+  const recipients = resolveRecipients(
+    process.env,
+    subscribers.map((subscriber) => subscriber.chatId),
+  );
+  console.error(
+    `[daily-digest] ${subscribers.length} subscriber(s) from agent_state; ` +
+      `clients ${recipients.client.length}, owners ${recipients.owner.length}`,
+  );
 
   let healthStats: PipelineStats | undefined;
   let healthLine: string | undefined;
