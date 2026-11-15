@@ -161,10 +161,98 @@ describe("judgeRelevance — confidence gate (fail-closed)", () => {
     const judgement = await judgeRelevance(BIOLOGY_ARTICLE, { completeJson });
 
     expect(judgement.onTopic).toBe(false);
-    expect(judgement.section).toBe("ai-news");
-    expect(judgement.direction).toBeNull();
+    // The model's own "no" is a verdict, not a broken answer: its claimed
+    // placement is kept as evidence (R07.1), and no review is paid for.
+    expect(judgement.section).toBe("science");
+    expect(judgement.direction).toBe("biology");
     expect(judgement.reason).toBe("это не про биологию");
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("judgeRelevance — a confident off-topic verdict keeps the model's reason", () => {
+  it("accepts section:null for onTopic:false and reports the model's reason", async () => {
+    const { completeJson, calls } = stub([
+      JSON.stringify({
+        onTopic: false,
+        section: null,
+        direction: null,
+        confidence: 0.8,
+        reason: "материал про энергосети, ИИ не тема",
+      }),
+    ]);
+    const judgement = await judgeRelevance(BIOLOGY_ARTICLE, { completeJson });
+
+    expect(judgement).toEqual({
+      onTopic: false,
+      section: "ai-news",
+      direction: null,
+      confidence: 0.8,
+      reason: "материал про энергосети, ИИ не тема",
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("keeps a valid section and direction on an off-topic verdict", async () => {
+    const { completeJson, calls } = stub([
+      JSON.stringify({
+        onTopic: false,
+        section: "science",
+        direction: "physics",
+        confidence: 0.8,
+        reason: "физика без ИИ",
+      }),
+    ]);
+    const judgement = await judgeRelevance(BIOLOGY_ARTICLE, { completeJson });
+
+    expect(judgement).toEqual({
+      onTopic: false,
+      section: "science",
+      direction: "physics",
+      confidence: 0.8,
+      reason: "физика без ИИ",
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("normalises unknown ids on an off-topic verdict to ai-news/null", async () => {
+    const unknownSection = stub([
+      JSON.stringify({
+        onTopic: false,
+        section: "robotics",
+        direction: null,
+        confidence: 0.8,
+        reason: "не наша тема",
+      }),
+    ]);
+    await expect(
+      judgeRelevance(BIOLOGY_ARTICLE, { completeJson: unknownSection.completeJson }),
+    ).resolves.toEqual({
+      onTopic: false,
+      section: "ai-news",
+      direction: null,
+      confidence: 0.8,
+      reason: "не наша тема",
+    });
+
+    const unknownDirection = stub([
+      JSON.stringify({
+        onTopic: false,
+        section: "science",
+        direction: "astrology",
+        confidence: 0.8,
+        reason: "не наша тема",
+      }),
+    ]);
+    await expect(
+      judgeRelevance(BIOLOGY_ARTICLE, { completeJson: unknownDirection.completeJson }),
+    ).resolves.toEqual({
+      onTopic: false,
+      section: "ai-news",
+      direction: null,
+      confidence: 0.8,
+      reason: "не наша тема",
+    });
   });
 });
 
@@ -249,6 +337,18 @@ describe("judgeRelevance — invalid answers never throw", () => {
     [
       "science without direction",
       JSON.stringify({ onTopic: true, section: "science", direction: null, confidence: 0.9, reason: "x" }),
+    ],
+    [
+      "science without a direction field",
+      JSON.stringify({ onTopic: true, section: "science", confidence: 0.9, reason: "x" }),
+    ],
+    [
+      "onTopic without a section",
+      JSON.stringify({ onTopic: true, section: null, direction: null, confidence: 0.9, reason: "x" }),
+    ],
+    [
+      "onTopic without a section field",
+      JSON.stringify({ onTopic: true, direction: "physics", confidence: 0.9, reason: "x" }),
     ],
     [
       "ai-news with a science direction",

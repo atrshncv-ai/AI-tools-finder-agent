@@ -13,9 +13,12 @@
  *
  * Any unparsable answer, unknown id, inconsistent section/direction, low
  * confidence or review disagreement is a rejection with a reason code, never
- * an exception ("лучше пропустить, чем промахнуться"). A rejected verdict is
- * normalised to the neutral shape (section "ai-news", no direction) so no
- * downstream stage ever sees a rejected card attributed to a science field.
+ * an exception ("лучше пропустить, чем промахнуться"). An on-topic answer must
+ * name a section and, for "science", a direction; an off-topic answer is
+ * allowed to leave the placement empty (`section: null`) — the model's own "no"
+ * then keeps its reason and confidence instead of becoming a generic
+ * "invalid-judgement". A rejection that is not the model's verdict is
+ * normalised to the neutral shape (section "ai-news", no direction).
  *
  * The prompt comes from topics.ts, so a new direction needs no edit here. The
  * module knows nothing about the DB, budgets or publication; the LLM is the
@@ -131,10 +134,18 @@ function isConfidence(value: unknown): value is number {
 }
 
 /**
- * Shape check: every field is required, ids must exist in the topics registry,
- * and section/direction must be consistent — "science" without a direction or
- * a direction attached to "ai-news" is a routing contradiction, i.e. a broken
- * answer, not a verdict to repair.
+ * Shape check. Every field is required, ids must exist in the topics registry.
+ *
+ * An on-topic verdict is strict: it must name a section, and section/direction
+ * must agree — "science" without a direction or a direction attached to
+ * "ai-news" is a routing contradiction, i.e. a broken answer, not a verdict to
+ * repair.
+ *
+ * An off-topic verdict is not strict about the placement: the model answers
+ * "no" and may leave it empty (live GigaChat 15.11 answered `section: null`).
+ * A registered section/direction is kept as the model's evidence; an
+ * unregistered one is normalised to the neutral shape so the answer still
+ * carries the model's own reason and confidence.
  */
 function parseVerdict(raw: unknown): ParsedVerdict | null {
   if (!isPlainObject(raw)) return null;
@@ -142,22 +153,42 @@ function parseVerdict(raw: unknown): ParsedVerdict | null {
   const { onTopic, section, direction, confidence, reason } = raw;
 
   if (typeof onTopic !== "boolean") return null;
-  if (typeof section !== "string" || !sectionById(section)) return null;
   if (!isConfidence(confidence)) return null;
   if (typeof reason !== "string" || reason.trim().length === 0) return null;
 
   let parsedDirection: DirectionId | null = null;
+  let directionIsValid = true;
   if (direction !== null && direction !== undefined) {
-    if (typeof direction !== "string" || !directionById(direction)) return null;
-    parsedDirection = direction as DirectionId;
+    if (typeof direction !== "string" || !directionById(direction)) {
+      directionIsValid = false;
+    } else {
+      parsedDirection = direction as DirectionId;
+    }
   }
 
-  const sectionId = section as SectionId;
+  const sectionId =
+    typeof section === "string" && sectionById(section) ? (section as SectionId) : null;
+
+  if (!onTopic) {
+    const normalizedReason = normalizeReason(reason);
+    if (sectionId === null || !directionIsValid) {
+      return rejected(confidence, normalizedReason);
+    }
+    return {
+      onTopic: false,
+      section: sectionId,
+      direction: parsedDirection,
+      confidence,
+      reason: normalizedReason,
+    };
+  }
+
+  if (sectionId === null || !directionIsValid) return null;
   if (sectionId === "science" && parsedDirection === null) return null;
   if (sectionId === "ai-news" && parsedDirection !== null) return null;
 
   return {
-    onTopic,
+    onTopic: true,
     section: sectionId,
     direction: parsedDirection,
     confidence,
@@ -295,7 +326,10 @@ export async function judgeRelevance(input: JudgeInput, deps: JudgeDeps = {}): P
 
   const verdict = parseVerdict(extractJsonObject(replyText));
   if (!verdict) return invalidJudgement();
-  if (!verdict.onTopic) return rejected(verdict.confidence, verdict.reason);
+  // The model's own "no" is a finished verdict, not a rejection to repair: it
+  // already carries its reason, its confidence and (validated) placement, and
+  // it never pays for the review call.
+  if (!verdict.onTopic) return verdict;
   if (verdict.confidence < JUDGE_CONFIDENCE_THRESHOLD) {
     return rejected(verdict.confidence, LOW_CONFIDENCE_REASON);
   }
