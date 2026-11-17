@@ -88,9 +88,10 @@ apt-get install -y -qq --no-install-recommends \
   ffmpeg fail2ban ufw rclone unzip openssl sudo gettext-base cron
 ok "packages installed"
 
-# The digest and the backup are scheduled in UTC; keep the host on UTC so the
-# runbook and the cron table mean the same thing.
-timedatectl set-timezone UTC 2>/dev/null || warn "cannot set the timezone to UTC (systemd not running?)"
+# The digest and the backup are scheduled in Moscow local time and cron reads the
+# host clock, so the host lives in Europe/Moscow; scripts/deploy/cron.sh warns if
+# it does not.
+timedatectl set-timezone Europe/Moscow 2>/dev/null || warn "cannot set the timezone to Europe/Moscow (systemd not running?)"
 ok "timezone: $(timedatectl show -p Timezone --value 2>/dev/null || echo unknown)"
 
 # ─── 2. Node.js 20 ───────────────────────────────────────────────────────────
@@ -258,7 +259,7 @@ systemctl enable "pm2-${APP_USER}" >/dev/null 2>&1 || warn "pm2 systemd unit pm2
 step "10/12 cron"
 APP_DIR="$APP_DIR" APP_USER="$APP_USER" bash "${APP_DIR}/scripts/deploy/cron.sh" \
   || die "cron installation failed"
-ok "daily digest (06:00 UTC) and offsite backup (03:30 UTC) scheduled"
+ok "daily digest (08:00 preview, 09:00 release — Moscow time) and offsite backup (03:30) scheduled"
 
 # ─── 11. nginx ───────────────────────────────────────────────────────────────
 step "11/12 nginx"

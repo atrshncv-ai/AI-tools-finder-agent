@@ -7,7 +7,7 @@
 # at 17:00); publication is capped by DAILY_BUDGET, scoring by the separate
 # SCORE_DAILY_CAP. A cycle that finds nothing to publish just pauses
 # LINEAR_WORKER_INTERVAL_MS (15 minutes by default) and collects again — the
-# morning Telegram digest stays the only daily job (cron, 06:00 UTC).
+# morning Telegram digest stays the only daily job (cron, 09:00 MSK).
 #
 # Response to "куча данных обрабатывалась впустую": evaluation downloads a page
 # only for the candidates that passed the cheap prefilter, the LLM judge and

@@ -25,7 +25,7 @@ OAuth — всего этого в коде нет.
 - PM2 по `ecosystem.config.cjs`: `news-agent-web` (`dist/boot.js`) и
   `hermes-ralph-loop` (`app/scripts/hermes/ralph-loop.sh`);
 - nginx + certbot для HTTPS, proxy на `127.0.0.1:3000`;
-- cron для дайджеста (06:00 UTC) и бэкапа (03:30 UTC);
+- cron для дайджеста (09:00 МСК) и бэкапа (03:30 МСК);
 - `app/.env` — единственный источник конфигурации, PM2 читает его сам.
 
 Скрипты и runbook: `scripts/deploy/install.sh`, `scripts/deploy/cron.sh`,

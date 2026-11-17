@@ -38,7 +38,7 @@
 источник → collect-dual.ts → news(pending) → префильтр → судья → бюджет дня
         → скачивание страницы и балл → manifest-gen → fetch-article
         → save-summary (русский заголовок + выжимка) → deploy-ready
-        → news(published) → daily-digest 06:00 UTC
+        → news(published) → daily-digest 09:00 МСК
                              ├→ клиент: чистый выпуск
                              └→ владелец: копия + служебный отчёт
 ```

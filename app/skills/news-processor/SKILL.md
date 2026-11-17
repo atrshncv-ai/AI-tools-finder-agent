@@ -37,7 +37,7 @@
 ```
 collect-dual.ts → evaluate-news.ts → manifest-gen.ts → fetch-article.ts
                 → save-summary.ts (1 вызов LLM) → deploy-ready.ts (1 публикация/сутки)
-                → daily-digest.ts (cron 06:00 UTC)
+                → daily-digest.ts (cron 09:00 МСК)
 ```
 
 Каждый шаг — отдельный процесс `npx tsx`, строго последовательно, без fan-out.
@@ -121,11 +121,21 @@ cd app && npx tsx scripts/hermes/deploy-ready.ts
   `platformPublishedAt` и счётчики. Отказ — с причиной
   (`already-published-today`, `daily-budget-exhausted`, `no-ready-articles`).
 
-### Шаг 7: дайджест (`daily-digest.ts`, cron 06:00 UTC)
+### Шаг 7: дайджест (`daily-digest.ts`, cron 08:00 предпросмотр / 09:00 МСК)
 
 ```bash
 cd app && npx tsx scripts/hermes/daily-digest.ts
 ```
+
+В 08:00 по Москве владелец получает предпросмотр за час до отправки — тот же
+текст клиентского выпуска, клиенту ничего не уходит:
+
+```bash
+cd app && npx tsx scripts/hermes/daily-digest.ts --preview
+```
+
+Сервер живёт в `Europe/Moscow`, cron срабатывает по местному времени, поэтому
+пара `0 8` / `0 9` — это 08:00 и 09:00 МСК, без пересчёта из UTC.
 
 Выборка — опубликованное за 24 часа. Клиент (`TELEGRAM_CLIENT_CHAT_IDS`) получает
 только чистый выпуск; владелец (`TELEGRAM_OWNER_CHAT_IDS`) — копию и служебный

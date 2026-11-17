@@ -86,7 +86,7 @@ Docker (`docker-compose.yml`, `Dockerfile`) — legacy-путь без конв�
          │ 72h Time Guard, дедуп        │ счётчики в pipeline_state.metrics │
          ▼                              ▼                                    ▼
       news (pending)               news.metrics.judge                 daily-digest.ts
-                                                                      06:00 UTC
+                                                                      08:00 и 09:00 МСК
                                                           ┌────────────┴────────────┐
                                                           ▼                         ▼
                                                    клиентский выпуск        служебный отчёт
@@ -249,7 +249,8 @@ content`, `ProviderError`).
 
 ## 9. Дайджест: клиент и владелец
 
-`daily-digest.ts` (`cron 06:00 UTC`):
+`daily-digest.ts` (`cron 08:00 — предпросмотр владельцу, 09:00 — выпуск; время
+московское, сервер в Europe/Moscow`):
 
 | Получатели | Переменная | Что получают |
 |---|---|---|
@@ -304,7 +305,8 @@ PostgreSQL 16, база `science_agent`, Drizzle ORM, миграции `app/db/m
    состоянием цикла (`pipeline_state.cycleId` + `stage`), а не счётчиком-переменной.
 
 Утренний дайджест и ночной бэкап — cron (`docs/DEPLOY.md` §8); PM2 владеет
-процессами, cron — часами.
+процессами, cron — часами. Время в расписании московское: сервер живёт в
+`Europe/Moscow`, cron запускает задания по системным часам.
 
 ---
 

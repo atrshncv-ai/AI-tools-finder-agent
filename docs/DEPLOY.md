@@ -25,8 +25,8 @@ Docker остался в репозитории как legacy-путь (`docker-
 |---|---|---|
 | `news-agent-web` | Hono + tRPC + собранный дашборд, `dist/boot.js`, порт 3000 | PM2 |
 | `hermes-ralph-loop` | конвейер: сбор → префильтр → судья → бюджет → выжимки → публикация, **один выпуск в сутки** | PM2 |
-| `daily-digest.ts` | утренний дайджест: клиентский и служебный выпуски | cron, 06:00 UTC |
-| `backup-offsite.sh` | дамп БД и выгрузка в S3-совместимое хранилище | cron, 03:30 UTC |
+| `daily-digest.ts` | утренний дайджест: предпросмотр владельцу, клиентский и служебный выпуски | cron, 08:00 и 09:00 (МСК) |
+| `backup-offsite.sh` | дамп БД и выгрузка в S3-совместимое хранилище | cron, 03:30 (МСК) |
 | PostgreSQL 16 | база `science_agent` | systemd |
 | nginx + certbot | HTTPS-вход на дашборд, редирект http→https | systemd |
 
@@ -95,8 +95,11 @@ echo 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.co
   | sudo tee /etc/apt/sources.list.d/nodesource.list
 sudo apt-get update && sudo apt-get install -y nodejs
 sudo npm install -g pm2
-sudo timedatectl set-timezone UTC
+sudo timedatectl set-timezone Europe/Moscow
 ```
+
+Часовой пояс обязателен: cron берёт системные часы, а расписание дайджеста
+записано по Москве (§8). `scripts/deploy/cron.sh` предупреждает, если пояс другой.
 
 Пользователь приложения и каталоги логов:
 
@@ -366,16 +369,19 @@ echo | openssl s_client -connect news.example.com:443 -servername news.example.c
 sudo env APP_DIR=/srv/news-agent APP_USER=deploy bash scripts/deploy/cron.sh
 ```
 
-Ставится `/etc/cron.d/news-agent` — два задания и `NODE_EXTRA_CA_CERTS`, если
-сертификаты установлены:
+Ставится `/etc/cron.d/news-agent` — расписание дайджеста, приём подписчиков и
+бэкап, плюс `NODE_EXTRA_CA_CERTS`, если сертификаты установлены.
 
-| Время (UTC) | Команда | Лог |
+**Время в таблице — московское.** Сервер живёт в `Europe/Moscow`, cron запускает
+задания по системным часам, поэтому запись `0 9` — это 09:00 МСК, без пересчёта.
+
+| Время (МСК) | Команда | Лог |
 |---|---|---|
-| 06:00 | `npx tsx scripts/hermes/daily-digest.ts` | `/var/log/news-agent/digest.log` |
+| 08:00 | `npx tsx scripts/hermes/daily-digest.ts --preview` — предпросмотр владельцу, клиенту ничего | `/var/log/news-agent/digest.log` |
+| 09:00 | `npx tsx scripts/hermes/daily-digest.ts` — выпуск клиенту и отчёт владельцу | `/var/log/news-agent/digest.log` |
 | 03:30 | `bash scripts/backup-offsite.sh` | `/var/log/news-agent/backup.log` |
 
-Сервер живёт в UTC (§3), поэтому 06:00 UTC = 09:00 МСК. Удалить расписание:
-`sudo bash scripts/deploy/cron.sh --remove`.
+Удалить расписание: `sudo bash scripts/deploy/cron.sh --remove`.
 
 Проверка дайджеста без отправки (stub-режим включается сам, когда нет токена или
 получателей):
