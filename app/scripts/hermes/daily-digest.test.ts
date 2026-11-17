@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  cycleReportIssues,
   isPaymentReminderDay,
+  ownerStatsFromCycle,
   paymentReminderText,
   planDigestDelivery,
   previewRequested,
   resolveRecipients,
   sendTelegram,
 } from "./daily-digest";
+import { emptyCycleMetrics } from "./publish-budget";
 import {
   buildClientDigest,
   buildEmptyClientDigest,
@@ -103,6 +106,59 @@ describe("payment reminders", () => {
     expect(isPaymentReminderDay(new Date("2026-12-10T12:00:00Z"), "2026-11-10")).toBe(true);
     expect(isPaymentReminderDay(new Date("2026-12-11T12:00:00Z"), "2026-11-10")).toBe(false);
     expect(paymentReminderText("2026-11-10")).toContain("2026-11-10");
+  });
+});
+
+describe("owner report issues: real errors vs single notes", () => {
+  const cycleOf = (overrides: Partial<ReturnType<typeof emptyCycleMetrics>> = {}) => ({
+    ...emptyCycleMetrics(),
+    ...overrides,
+  });
+
+  it("files two failed materials of seven as a note, not as an alarm", () => {
+    const metrics = cycleOf({
+      collected: 7,
+      prefiltered: 7,
+      judged: 5,
+      approved: 5,
+      published: 5,
+      rejectedByReason: { "provider:content": 2 },
+    });
+    const fields = ownerStatsFromCycle(metrics);
+    expect(fields.providerFailures).toBe(2);
+    expect(fields.checked).toBe(7);
+    expect(fields.providerErrors).toEqual(["content"]);
+
+    const issues = cycleReportIssues([], fields, metrics);
+    expect(issues.errors).toEqual([]);
+    expect(issues.notes).toEqual(["2 материала не обработаны, будут повторены"]);
+  });
+
+  it("keeps a missing environment error in the errors list beside the note", () => {
+    const metrics = cycleOf({
+      collected: 7,
+      prefiltered: 7,
+      approved: 5,
+      published: 5,
+      rejectedByReason: { "provider:content": 2 },
+    });
+    const env = "нет клиентских chat_id — клиентский дайджест некому отправить";
+    const issues = cycleReportIssues([env], ownerStatsFromCycle(metrics), metrics);
+    expect(issues.errors).toEqual([env]);
+    expect(issues.notes).toHaveLength(1);
+  });
+
+  it("escalates provider failures when ready cards were not published at all", () => {
+    const metrics = cycleOf({
+      collected: 7,
+      prefiltered: 7,
+      approved: 5,
+      published: 0,
+      rejectedByReason: { "provider:content": 2 },
+    });
+    const issues = cycleReportIssues([], ownerStatsFromCycle(metrics), metrics);
+    expect(issues.errors.length).toBeGreaterThan(0);
+    expect(issues.notes).toEqual([]);
   });
 });
 

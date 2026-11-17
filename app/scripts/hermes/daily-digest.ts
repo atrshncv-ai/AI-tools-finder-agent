@@ -7,7 +7,8 @@
  *   - clients get ONLY `buildClientDigest` output: the approved form, no
  *     pipeline-health line, no error codes, no funnel counters;
  *   - the owner gets a copy of the same clean digest plus a separate service
- *     report (`buildOwnerReport`) with counters, rejection reasons and errors.
+ *     report (`buildOwnerReport`) with counters, rejection reasons, real errors
+ *     and notes for the retried materials.
  * The owner report goes out first, so a broken release reaches the owner
  * before it reaches the client (R17).
  *
@@ -48,10 +49,12 @@ import {
   buildEmptyClientDigest,
   buildOwnerReport,
   buildPreviewDigest,
+  classifyCycleIssues,
   digestMaxPerSection,
   DIGEST_WINDOW_HOURS,
   resolveRecipients,
   splitTelegramText,
+  type CycleIssues,
   type CycleStats,
   type DigestItem,
   type DigestRecipients,
@@ -132,8 +135,9 @@ async function collectRejectionStats(
  * Funnel, rejection split, token spend and provider errors of the day's cycle,
  * read from `pipeline_state.metrics` (R13, R18). This is the ledger the cycle
  * itself wrote, so the report never invents numbers: the dead
- * `rejectedByPrefilter` / `rejectedByJudge` fields get real values, and every
- * `provider:<class>` counter becomes a named provider error for the owner.
+ * `rejectedByPrefilter` / `rejectedByJudge` fields get real values, every
+ * `provider:<class>` counter is summed and named, and `prefiltered` is the
+ * denominator the report uses to tell a systemic failure from a retried one.
  */
 export interface OwnerCycleFields {
   collected: number;
@@ -141,16 +145,22 @@ export interface OwnerCycleFields {
   rejectedByJudge: number;
   usage: UsageTotals;
   providerErrors: string[];
+  /** Materials the provider failed on (sum of every `provider:*` counter). */
+  providerFailures: number;
+  /** Materials checked this cycle (the denominator of the failure share). */
+  checked: number;
 }
 
 export function ownerStatsFromCycle(metrics: CycleMetrics): OwnerCycleFields {
   let rejectedByPrefilter = 0;
   let rejectedByJudge = 0;
+  let providerFailures = 0;
   const providerErrors: string[] = [];
   for (const [reason, count] of Object.entries(metrics.rejectedByReason)) {
     if (reason.startsWith("prefilter:")) rejectedByPrefilter += count;
     else if (reason.startsWith("judge:")) rejectedByJudge += count;
     else if (reason.startsWith("provider:")) {
+      providerFailures += count;
       const errorClass = reason.slice("provider:".length);
       if (!providerErrors.includes(errorClass)) providerErrors.push(errorClass);
     }
@@ -161,7 +171,31 @@ export function ownerStatsFromCycle(metrics: CycleMetrics): OwnerCycleFields {
     rejectedByJudge,
     usage: metrics.usage,
     providerErrors: providerErrors.sort(),
+    providerFailures,
+    checked: metrics.prefiltered,
   };
+}
+
+/**
+ * The cycle's report issues: missing env is always a real error, while provider
+ * failures become a note unless the failure is systemic (R17: the owner gets an
+ * alarm only when the cycle itself is in trouble). `approved` is how many cards
+ * the cycle made ready, `published` is what the owner's release actually shows:
+ * a low failure share still escalates when ready cards did not make it out.
+ */
+export function cycleReportIssues(
+  envErrors: readonly string[],
+  fields: OwnerCycleFields,
+  release: { approved: number; published: number },
+): CycleIssues {
+  return classifyCycleIssues({
+    envErrors,
+    providerFailures: fields.providerFailures,
+    checked: fields.checked,
+    ready: release.approved,
+    published: release.published,
+    providerErrorClasses: fields.providerErrors,
+  });
 }
 
 const SEND_MAX_ATTEMPTS = 3;
@@ -446,6 +480,12 @@ async function main() {
     envErrors.push("нет клиентских chat_id — клиентский дайджест некому отправить");
   }
 
+  // Ready cards come from the cycle ledger; "published" is the release the
+  // owner is reading, so a healthy release never escalates a retried material.
+  const issues = cycleReportIssues(envErrors, cycleFields, {
+    approved: cycleMetrics.approved,
+    published: items.length,
+  });
   const stats: CycleStats = {
     collected: cycleFields.collected > 0 ? cycleFields.collected : (healthStats?.collected ?? items.length),
     rejected,
@@ -459,12 +499,8 @@ async function main() {
     rejectedByReason,
     usage: cycleFields.usage,
     dailyTokenBudget: tokenLimit,
-    errors: [
-      ...envErrors,
-      ...cycleFields.providerErrors.map(
-        (errorClass) => `ошибка провайдера: ${errorClass} — кандидаты остались pending`,
-      ),
-    ],
+    errors: issues.errors,
+    notes: issues.notes,
   };
   const report = buildOwnerReport(stats, { date: now, dashboardUrl: DASHBOARD_URL, healthLine });
   const clientParts = splitTelegramText(

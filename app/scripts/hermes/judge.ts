@@ -2,7 +2,8 @@
  * judge.ts — the ONE place where "is this material about our topic?" is
  * decided by an LLM (R07.1, spec §3).
  *
- * Two calls, both fail-closed:
+ * Two judged stages, each fail-closed and each allowed one repeat when its
+ * answer cannot be parsed:
  *   1. verdict — strict JSON {onTopic, section, direction, confidence, reason}
  *      over title + lead only (the expensive page is never fetched — R18.1);
  *   2. review — an independent question about the *claimed* section/direction
@@ -11,11 +12,15 @@
  *      its own JSON, so a second, differently-framed answer decides. Only
  *      on-topic verdicts above the confidence threshold pay for this call.
  *
- * Any unparsable answer, unknown id, inconsistent section/direction, low
- * confidence or review disagreement is a rejection with a reason code, never
- * an exception ("лучше пропустить, чем промахнуться"). An on-topic answer must
- * name a section and, for "science", a direction; an off-topic answer is
- * allowed to leave the placement empty (`section: null`) — the model's own "no"
+ * Any unparsable answer is retried exactly once with a stricter system
+ * instruction (same call, same material, one JSON object, only the rubric's
+ * fields); a second unusable answer, unknown id, inconsistent section/direction,
+ * low confidence or review disagreement is a rejection with a reason code,
+ * never an exception ("лучше пропустить, чем промахнуться"). The retry exists
+ * because a rare GigaChat malformed answer must not look like an off-topic
+ * verdict and cost a real candidate (2 of 16 calls were lost that way). An
+ * on-topic answer must name a section and, for "science", a direction; an
+ * off-topic answer is allowed to leave the placement empty (`section: null`) — the model's own "no"
  * then keeps its reason and confidence instead of becoming a generic
  * "invalid-judgement". A rejection that is not the model's verdict is
  * normalised to the neutral shape (section "ai-news", no direction).
@@ -52,6 +57,9 @@ const REVIEW_MAX_TOKENS = 200;
 /** Deterministic verdicts: the same material must not flip between runs. */
 const JUDGE_TEMPERATURE = 0;
 const MAX_REASON_CHARS = 240;
+/** Required keys, quoted back to the model on the one retry. */
+const VERDICT_FIELDS = "onTopic, section, direction, confidence, reason";
+const REVIEW_FIELDS = "agree, confidence, reason";
 
 export interface Judgement {
   onTopic: boolean;
@@ -271,29 +279,80 @@ function reviewMessages(input: JudgeInput, verdict: ParsedVerdict): ChatMessage[
   ];
 }
 
+/**
+ * Stricter system line for the ONE repeat: same question, same material, but
+ * the output contract the parser enforces is spelled out. It is appended only
+ * on the retry, so a healthy answer never pays for it.
+ */
+function retryInstruction(fields: string): string {
+  return (
+    "ПОВТОР: предыдущий ответ не удалось разобрать как JSON. " +
+    "Верни строго один JSON-объект без markdown, без пояснений и без текста вокруг — " +
+    `ровно с полями из рубрики: ${fields}.`
+  );
+}
+
+type ParsedAnswer<T> = { ok: true; value: T } | { ok: false };
+
+/**
+ * One judged stage: the call, then — only when the *answer* cannot be parsed —
+ * exactly one repeat with the retry instruction in its system turn. A provider
+ * failure is not an answer: it is rethrown untouched with its class, so the
+ * cycle keeps the candidate pending (R14/R17) and the retry is never paid for.
+ * Any other exception stays fail-closed as before: it is not a JSON problem.
+ */
+async function askJsonWithOneRetry<T>(
+  completeJson: CompleteJson,
+  messages: ChatMessage[],
+  fields: string,
+  maxTokens: number,
+  parse: (raw: string) => T | null,
+): Promise<ParsedAnswer<T>> {
+  const attempts: ChatMessage[][] = [
+    messages,
+    messages.map((message, index) =>
+      index === 0 && message.role === "system"
+        ? { ...message, content: `${message.content}\n\n${retryInstruction(fields)}` }
+        : message,
+    ),
+  ];
+
+  for (const attempt of attempts) {
+    let replyText = "";
+    try {
+      const result = await completeJson({
+        messages: attempt,
+        maxTokens,
+        temperature: JUDGE_TEMPERATURE,
+      });
+      replyText = typeof result?.text === "string" ? result.text : "";
+    } catch (error) {
+      if (isProviderError(error)) throw error;
+      return { ok: false };
+    }
+
+    const parsed = parse(replyText);
+    if (parsed) return { ok: true, value: parsed };
+  }
+
+  return { ok: false };
+}
+
 async function reviewVerdict(
   input: JudgeInput,
   verdict: ParsedVerdict,
   completeJson: CompleteJson,
 ): Promise<ReviewDecision> {
-  let replyText = "";
-  try {
-    const result = await completeJson({
-      messages: reviewMessages(input, verdict),
-      maxTokens: REVIEW_MAX_TOKENS,
-      temperature: JUDGE_TEMPERATURE,
-    });
-    replyText = typeof result?.text === "string" ? result.text : "";
-  } catch (error) {
-    // A malformed *answer* is a fail-closed verdict; a provider failure is not
-    // a verdict at all. It travels up with its class so the cycle can keep the
-    // candidate pending and tell the owner what actually broke (R14/R17).
-    if (isProviderError(error)) throw error;
-    return { ok: false, reason: INVALID_REVIEW_REASON };
-  }
+  const answer = await askJsonWithOneRetry(
+    completeJson,
+    reviewMessages(input, verdict),
+    REVIEW_FIELDS,
+    REVIEW_MAX_TOKENS,
+    (text) => parseReview(extractJsonObject(text)),
+  );
+  if (!answer.ok) return { ok: false, reason: INVALID_REVIEW_REASON };
 
-  const review = parseReview(extractJsonObject(replyText));
-  if (!review) return { ok: false, reason: INVALID_REVIEW_REASON };
+  const review = answer.value;
   if (!review.agree || review.confidence < JUDGE_CONFIDENCE_THRESHOLD) {
     return { ok: false, reason: REJECTED_BY_REVIEW_REASON };
   }
@@ -308,24 +367,17 @@ export async function judgeRelevance(input: JudgeInput, deps: JudgeDeps = {}): P
   const lead = (input.lead ?? "").trim();
   if (!title && !lead) return invalidJudgement();
 
-  let replyText = "";
-  try {
-    const result = await completeJson({
-      messages: buildMessages(input),
-      maxTokens: JUDGE_MAX_TOKENS,
-      temperature: JUDGE_TEMPERATURE,
-    });
-    replyText = typeof result?.text === "string" ? result.text : "";
-  } catch (error) {
-    // A provider failure is the chain's business (retries, alerts) and is not
-    // a judgement: it is rethrown with its class, so `evaluate-news` keeps the
-    // candidate pending instead of rejecting it forever (R14, R17).
-    if (isProviderError(error)) throw error;
-    return invalidJudgement();
-  }
-
-  const verdict = parseVerdict(extractJsonObject(replyText));
-  if (!verdict) return invalidJudgement();
+  const verdictAnswer = await askJsonWithOneRetry(
+    completeJson,
+    buildMessages(input),
+    VERDICT_FIELDS,
+    JUDGE_MAX_TOKENS,
+    (text) => parseVerdict(extractJsonObject(text)),
+  );
+  // Both attempts unusable: the old fail-closed verdict, now with the retry
+  // already spent. It is still not the provider's failure.
+  if (!verdictAnswer.ok) return invalidJudgement();
+  const verdict = verdictAnswer.value;
   // The model's own "no" is a finished verdict, not a rejection to repair: it
   // already carries its reason, its confidence and (validated) placement, and
   // it never pays for the review call.

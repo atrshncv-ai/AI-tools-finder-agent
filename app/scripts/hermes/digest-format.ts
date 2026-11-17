@@ -8,7 +8,7 @@
  *     dashboard address in the footer. Nothing else: no health line, no error
  *     codes, no funnel counters.
  *   - `buildOwnerReport` — the owner-only service message with collected /
- *     rejected / published, top-3 rejection reasons and errors.
+ *     rejected / published, top-3 rejection reasons, real errors and notes.
  *   - `buildPreviewDigest` — the client text wrapped into the owner preview
  *     envelope (an hour-ahead warning and a "check it" line). It never alters
  *     the client message itself: the owner sees exactly what the client will.
@@ -188,8 +188,110 @@ export interface CycleStats {
   usage?: CycleUsage | null;
   /** Hard daily token limit, so the report can print what is left. */
   dailyTokenBudget?: number | null;
-  /** Errors that happened during the cycle, one line each. */
+  /** Real errors that happened during the cycle, one line each. */
   errors?: readonly string[];
+  /** Single remarks (a material to retry, not an alarm), one line each. */
+  notes?: readonly string[];
+}
+
+/** A provider-failure share of checked materials that always counts as an error. */
+export const PROVIDER_FAILURE_SHARE_LIMIT = 0.3;
+/** Absolute number of provider failures per cycle that always counts as an error. */
+export const PROVIDER_FAILURE_COUNT_LIMIT = 5;
+
+/** A finite non-negative integer, or 0 — a broken caller value must not crash the report. */
+function countOrZero(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
+/**
+ * Why a provider failure is a real error and not a note: it is systemic — the
+ * failed share of the checked materials is 30% or more, or there are five or
+ * more failures in one cycle, or nothing was published although ready cards
+ * existed. Anything smaller is retried by the next cycle and only noted.
+ */
+export function providerFailuresAreError(input: {
+  failures: number;
+  checked: number;
+  ready?: number;
+  published?: number;
+}): boolean {
+  const failures = countOrZero(input.failures);
+  if (failures === 0) return false;
+  const checked = countOrZero(input.checked);
+  const share = checked > 0 ? failures / checked : 0;
+  const blockedRelease = countOrZero(input.ready) > 0 && countOrZero(input.published) === 0;
+  return (
+    share >= PROVIDER_FAILURE_SHARE_LIMIT ||
+    failures >= PROVIDER_FAILURE_COUNT_LIMIT ||
+    blockedRelease
+  );
+}
+
+/** «2 материала не обработаны, будут повторены» with the right Russian plural. */
+function providerFailureNote(failures: number): string {
+  const singular = failures % 10 === 1 && failures % 100 !== 11;
+  return singular
+    ? `${failures} материал не обработан, будет повторён`
+    : `${failures} ${materialWord(failures)} не обработаны, будут повторены`;
+}
+
+/** Genitive after "из N": «из 1 материала», «из 20 материалов». */
+function materialsGenitive(count: number): string {
+  return count % 10 === 1 && count % 100 !== 11 ? "материала" : "материалов";
+}
+
+/** The error line, naming the provider classes and the failed share. */
+function providerFailureError(failures: number, checked: number, classes: readonly string[]): string {
+  const named = classes.length > 0 ? `: ${classes.join(", ")}` : "";
+  if (checked <= 0) return `ошибка провайдера${named} — не обработано материалов: ${failures}`;
+  // A stale ledger can report fewer checked materials than failures; never
+  // print the impossible "7 из 5".
+  const total = Math.max(checked, failures);
+  return `ошибка провайдера${named} — не обработано ${failures} из ${total} ${materialsGenitive(total)}`;
+}
+
+/** The report's two lists: real errors and remarks that need no alarm. */
+export interface CycleIssues {
+  errors: string[];
+  notes: string[];
+}
+
+export interface CycleIssueInput {
+  /** Missing or broken required env: always an error, never a note. */
+  envErrors?: readonly string[];
+  /** Materials the provider could not process this cycle. */
+  providerFailures?: number;
+  /** Materials checked this cycle — the denominator of the failure share. */
+  checked?: number;
+  /** Materials ready to publish and what the cycle actually published. */
+  ready?: number;
+  published?: number;
+  /** Provider error classes, named in a real error line. */
+  providerErrorClasses?: readonly string[];
+}
+
+/**
+ * Split the cycle's issues into real errors and notes. Missing required env is
+ * always an error; a provider failure is classified by
+ * `providerFailuresAreError`. Pure, so daily-digest only supplies the ledger
+ * numbers and the owner report stays decision-free.
+ */
+export function classifyCycleIssues(input: CycleIssueInput = {}): CycleIssues {
+  const errors = [...(input.envErrors ?? [])];
+  const notes: string[] = [];
+  const failures = countOrZero(input.providerFailures);
+  if (failures === 0) return { errors, notes };
+  const checked = countOrZero(input.checked);
+  if (providerFailuresAreError({ failures, checked, ready: input.ready, published: input.published })) {
+    const classes = [
+      ...new Set((input.providerErrorClasses ?? []).map((name) => name.trim()).filter(Boolean)),
+    ].sort();
+    errors.push(providerFailureError(failures, checked, classes));
+  } else {
+    notes.push(providerFailureNote(failures));
+  }
+  return { errors, notes };
 }
 
 /** Telegram legacy-Markdown escaping for dynamic text. */
@@ -399,7 +501,8 @@ function formatDailyLimits(stats: CycleStats): string | null {
 
 /**
  * Owner-only service report (R17, R18): funnel counters, top-3 rejection
- * reasons, errors and the pipeline health line. Never sent to a client.
+ * reasons, real errors, notes and the pipeline health line. Never sent to a
+ * client.
  */
 export function buildOwnerReport(stats: CycleStats, opts: OwnerReportOptions): string {
   const lines = [
@@ -441,10 +544,19 @@ export function buildOwnerReport(stats: CycleStats, opts: OwnerReportOptions): s
   }
   lines.push("");
   const errors = stats.errors ?? [];
-  if (errors.length > 0) {
-    lines.push("⚠️ Ошибки:", ...errors.map((error) => `• ${esc(error)}`));
-  } else {
+  const notes = stats.notes ?? [];
+  if (errors.length === 0 && notes.length === 0) {
     lines.push("Ошибок нет.");
+  } else {
+    if (errors.length > 0) {
+      lines.push("⚠️ Ошибки:", ...errors.map((error) => `• ${esc(error)}`));
+    }
+    // Notes are deliberately shown separately: "2 материала не обработаны"
+    // must not read like the alarm the owner used to get from a single hiccup.
+    if (notes.length > 0) {
+      if (errors.length > 0) lines.push("");
+      lines.push("ℹ️ Замечания:", ...notes.map((note) => `• ${esc(note)}`));
+    }
   }
   if (opts.healthLine) lines.push("", opts.healthLine);
   lines.push("", `📊 Дашборд: ${opts.dashboardUrl}`);

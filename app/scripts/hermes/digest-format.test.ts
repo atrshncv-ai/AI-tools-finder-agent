@@ -4,6 +4,7 @@ import {
   buildEmptyClientDigest,
   buildOwnerReport,
   buildPreviewDigest,
+  classifyCycleIssues,
   digestMaxPerSection,
   DIGEST_MAX_PER_SECTION_MAX,
   DIGEST_MAX_PER_SECTION_MIN,
@@ -253,6 +254,111 @@ describe("owner report (R17, R18)", () => {
     expect(report).toContain("⚠️ Публикаций нет");
     expect(report).toContain("Причины отказа: нет");
     expect(report).toContain("Ошибок нет.");
+  });
+});
+
+describe("owner report: real errors vs single notes", () => {
+  it("treats two provider failures out of twenty checked as a note, not an alarm", () => {
+    const issues = classifyCycleIssues({ providerFailures: 2, checked: 20 });
+    expect(issues.errors).toEqual([]);
+    expect(issues.notes).toEqual(["2 материала не обработаны, будут повторены"]);
+  });
+
+  it("treats seven provider failures out of ten as a real error", () => {
+    const issues = classifyCycleIssues({
+      providerFailures: 7,
+      checked: 10,
+      providerErrorClasses: ["content"],
+    });
+    expect(issues.notes).toEqual([]);
+    expect(issues.errors).toHaveLength(1);
+    expect(issues.errors[0]).toContain("ошибка провайдера");
+    expect(issues.errors[0]).toContain("content");
+    expect(issues.errors[0]).toContain("7 из 10");
+  });
+
+  it("counts five failures of a large cycle as a real error even below the share limit", () => {
+    const issues = classifyCycleIssues({ providerFailures: 5, checked: 100 });
+    expect(issues.notes).toEqual([]);
+    expect(issues.errors.length).toBeGreaterThan(0);
+  });
+
+  it("escalates a single failure when ready materials were not published at all", () => {
+    const issues = classifyCycleIssues({
+      providerFailures: 1,
+      checked: 20,
+      ready: 3,
+      published: 0,
+    });
+    expect(issues.errors.length).toBeGreaterThan(0);
+    expect(issues.notes).toEqual([]);
+  });
+
+  it("keeps a note when the rest of the cycle was published", () => {
+    const issues = classifyCycleIssues({
+      providerFailures: 1,
+      checked: 20,
+      ready: 3,
+      published: 5,
+    });
+    expect(issues.errors).toEqual([]);
+    expect(issues.notes).toEqual(["1 материал не обработан, будет повторён"]);
+  });
+
+  it("never demotes a missing environment variable to a note", () => {
+    const env = "нет клиентских chat_id — клиентский дайджест некому отправить";
+    const issues = classifyCycleIssues({
+      envErrors: [env],
+      providerFailures: 2,
+      checked: 20,
+    });
+    expect(issues.errors).toEqual([env]);
+    expect(issues.notes).toEqual(["2 материала не обработаны, будут повторены"]);
+  });
+
+  it("prints both sections when errors and notes coexist", () => {
+    const report = buildOwnerReport(
+      {
+        collected: 7,
+        rejected: 0,
+        published: 5,
+        errors: ["подписчики недоступны"],
+        notes: ["2 материала не обработаны, будут повторены"],
+      },
+      opts,
+    );
+    expect(report).toContain("⚠️ Ошибки:");
+    expect(report).toContain("• подписчики недоступны");
+    expect(report).toContain("ℹ️ Замечания:");
+    expect(report).toContain("• 2 материала не обработаны, будут повторены");
+    expect(report).not.toContain("Ошибок нет.");
+  });
+
+  it("prints only the notes section when there are no real errors", () => {
+    const report = buildOwnerReport(
+      {
+        collected: 7,
+        rejected: 0,
+        published: 5,
+        notes: ["2 материала не обработаны, будут повторены"],
+      },
+      opts,
+    );
+    expect(report).not.toContain("⚠️ Ошибки:");
+    expect(report).toContain("ℹ️ Замечания:");
+    expect(report).not.toContain("Ошибок нет.");
+  });
+
+  it("prints «Ошибок нет.» when both lists are empty", () => {
+    const issues = classifyCycleIssues({ providerFailures: 0, checked: 20 });
+    expect(issues).toEqual({ errors: [], notes: [] });
+    const report = buildOwnerReport(
+      { collected: 7, rejected: 0, published: 5, errors: [], notes: [] },
+      opts,
+    );
+    expect(report).toContain("Ошибок нет.");
+    expect(report).not.toContain("⚠️ Ошибки:");
+    expect(report).not.toContain("ℹ️ Замечания:");
   });
 });
 

@@ -7,7 +7,11 @@ import {
   REJECTED_BY_REVIEW_REASON,
   judgeRelevance,
 } from "./judge";
-import type { ChatMessage, CompleteJson } from "../../api/ai/providers/types";
+import {
+  ProviderError,
+  type ChatMessage,
+  type CompleteJson,
+} from "../../api/ai/providers/types";
 
 const BIOLOGY_ARTICLE = {
   title: "AlphaFold-like model rebuilt the ribosome protein structure",
@@ -34,6 +38,19 @@ function stub(replies: string[]): { completeJson: CompleteJson; calls: ChatMessa
     return { text: reply, ...PROVIDER_META };
   };
   return { completeJson, calls };
+}
+
+/** The review is the only call whose user turn quotes the first verdict. */
+function isReviewCall(messages: ChatMessage[]): boolean {
+  return messages.some((message) => message.content.includes("Первый судья вынес вердикт"));
+}
+
+function verdictCalls(calls: ChatMessage[][]): ChatMessage[][] {
+  return calls.filter((messages) => !isReviewCall(messages));
+}
+
+function reviewCalls(calls: ChatMessage[][]): ChatMessage[][] {
+  return calls.filter(isReviewCall);
 }
 
 const VALID_BIOLOGY_REPLY = JSON.stringify({
@@ -294,11 +311,12 @@ describe("judgeRelevance — independent review catches a plausible wrong answer
   });
 
   it("rejects the verdict when the reviewer answer is malformed", async () => {
-    const { completeJson } = stub([WRONG_BIOLOGY, "Не могу проверить."]);
+    const { completeJson, calls } = stub([WRONG_BIOLOGY, "Не могу проверить.", "Не могу проверить."]);
     const judgement = await judgeRelevance(BIOLOGY_ARTICLE, { completeJson });
 
     expect(judgement.onTopic).toBe(false);
     expect(judgement.reason).toBe(INVALID_REVIEW_REASON);
+    expect(reviewCalls(calls)).toHaveLength(2);
   });
 
   it("rejects the verdict when the review call fails", async () => {
@@ -373,7 +391,9 @@ describe("judgeRelevance — invalid answers never throw", () => {
   ];
 
   it.each(invalidReplies)("returns a fail-closed verdict for %s", async (_label, reply) => {
-    const { completeJson, calls } = stub([reply]);
+    // One retry is allowed, so the stub must answer both attempts; two unusable
+    // answers are still a rejection, never an exception.
+    const { completeJson, calls } = stub([reply, reply]);
     const judgement = await judgeRelevance(BIOLOGY_ARTICLE, { completeJson });
 
     expect(judgement).toEqual({
@@ -383,7 +403,8 @@ describe("judgeRelevance — invalid answers never throw", () => {
       confidence: 0,
       reason: INVALID_JUDGEMENT_REASON,
     });
-    expect(calls).toHaveLength(1);
+    expect(verdictCalls(calls)).toHaveLength(2);
+    expect(calls).toHaveLength(2);
   });
 
   it("fails closed when the model call throws", async () => {
@@ -397,6 +418,117 @@ describe("judgeRelevance — invalid answers never throw", () => {
     const judgement = await judgeRelevance(BIOLOGY_ARTICLE);
     expect(judgement.onTopic).toBe(false);
     expect(judgement.reason).toBe(INVALID_JUDGEMENT_REASON);
+  });
+});
+
+describe("judgeRelevance — exactly one retry for an unusable JSON answer", () => {
+  const BROKEN_VERDICT = '{"onTopic": true, "section": "science", "direction": "biology",';
+
+  it("accepts the verdict when the repeated verdict answer is valid", async () => {
+    const { completeJson, calls } = stub([BROKEN_VERDICT, VALID_BIOLOGY_REPLY, REVIEW_OK]);
+    const judgement = await judgeRelevance(BIOLOGY_ARTICLE, { completeJson });
+
+    expect(judgement.onTopic).toBe(true);
+    expect(judgement.section).toBe("science");
+    expect(judgement.direction).toBe("biology");
+    // Two verdict attempts, then a single review of the accepted verdict.
+    expect(verdictCalls(calls)).toHaveLength(2);
+    expect(reviewCalls(calls)).toHaveLength(1);
+
+    const retrySystem = calls[1][0];
+    expect(retrySystem.role).toBe("system");
+    expect(retrySystem.content).toContain(TOPIC_PROMPT_RU);
+    expect(retrySystem.content).toContain("ПОВТОР");
+    expect(retrySystem.content).toContain("один JSON-объект");
+    expect(retrySystem.content).toContain("onTopic");
+    expect(calls[0][0].content).not.toContain("ПОВТОР");
+    // Only the system turn gets stricter; the material is repeated untouched.
+    expect(calls[1][1].content).toBe(calls[0][1].content);
+  });
+
+  it("rejects with invalid-judgement when both verdict answers are unusable", async () => {
+    const { completeJson, calls } = stub([BROKEN_VERDICT, "Модель не смогла ответить."]);
+    const judgement = await judgeRelevance(BIOLOGY_ARTICLE, { completeJson });
+
+    expect(judgement).toEqual({
+      onTopic: false,
+      section: "ai-news",
+      direction: null,
+      confidence: 0,
+      reason: INVALID_JUDGEMENT_REASON,
+    });
+    expect(verdictCalls(calls)).toHaveLength(2);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("does not repeat a verdict that parsed on the first attempt", async () => {
+    const { completeJson, calls } = stub([VALID_BIOLOGY_REPLY, REVIEW_OK]);
+    await judgeRelevance(BIOLOGY_ARTICLE, { completeJson });
+
+    expect(verdictCalls(calls)).toHaveLength(1);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("repeats the review once and accepts the confirming repeat", async () => {
+    const { completeJson, calls } = stub([VALID_BIOLOGY_REPLY, "не JSON", REVIEW_OK]);
+    const judgement = await judgeRelevance(BIOLOGY_ARTICLE, { completeJson });
+
+    expect(judgement.onTopic).toBe(true);
+    expect(verdictCalls(calls)).toHaveLength(1);
+    expect(reviewCalls(calls)).toHaveLength(2);
+
+    const retrySystem = calls[2][0];
+    expect(retrySystem.role).toBe("system");
+    expect(retrySystem.content).toContain("ПОВТОР");
+    expect(retrySystem.content).toContain("agree");
+    expect(calls[1][0].content).not.toContain("ПОВТОР");
+  });
+
+  it("rejects with invalid-review when both review answers are unusable", async () => {
+    const { completeJson, calls } = stub([VALID_BIOLOGY_REPLY, "не JSON", '{"agree": true,']);
+    const judgement = await judgeRelevance(BIOLOGY_ARTICLE, { completeJson });
+
+    expect(judgement.onTopic).toBe(false);
+    expect(judgement.reason).toBe(INVALID_REVIEW_REASON);
+    expect(reviewCalls(calls)).toHaveLength(2);
+  });
+
+  it("does not repeat a provider failure and rethrows it", async () => {
+    const failure = new ProviderError("gigachat", "transient", "GigaChat 500");
+    const calls: ChatMessage[][] = [];
+    const completeJson: CompleteJson = async (args) => {
+      calls.push(args.messages);
+      throw failure;
+    };
+
+    await expect(judgeRelevance(BIOLOGY_ARTICLE, { completeJson })).rejects.toBe(failure);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("rethrows a provider failure on the repeat instead of rejecting the material", async () => {
+    const failure = new ProviderError("gigachat", "quota", "balance exhausted");
+    let calls = 0;
+    const completeJson: CompleteJson = async () => {
+      calls += 1;
+      if (calls === 1) return { text: "не JSON", ...PROVIDER_META };
+      throw failure;
+    };
+
+    await expect(judgeRelevance(BIOLOGY_ARTICLE, { completeJson })).rejects.toBe(failure);
+    expect(calls).toBe(2);
+  });
+
+  it("does not repeat a provider failure of the review", async () => {
+    const failure = new ProviderError("gigachat", "transient", "timeout");
+    let calls = 0;
+    const completeJson: CompleteJson = async () => {
+      calls += 1;
+      if (calls === 1) return { text: VALID_BIOLOGY_REPLY, ...PROVIDER_META };
+      throw failure;
+    };
+
+    await expect(judgeRelevance(BIOLOGY_ARTICLE, { completeJson })).rejects.toBe(failure);
+    expect(calls).toBe(2);
   });
 });
 
