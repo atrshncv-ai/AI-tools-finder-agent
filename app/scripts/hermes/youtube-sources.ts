@@ -221,6 +221,57 @@ export const YOUTUBE_SOURCES: YoutubeSource[] = [
     tabs: ["videos"],
     dedicatedAi: true,
   },
+  // Second wave, owner-verified through the YouTube Data API on 2026-11-23.
+  // Channel IDs were resolved from each public channel page (canonical link),
+  // because BOTH collection paths key off `channelId`, not the handle.
+  {
+    channelId: "UCvCLdSgYdSTpWcOgEJgi-ng",
+    handle: "@nature",
+    name: "youtube-nature",
+    language: "en",
+    tabs: ["videos"],
+    dedicatedAi: true,
+  },
+  {
+    channelId: "UCFe-pfe0a9bDvWy74Jd7vFg",
+    handle: "@MIT",
+    name: "youtube-mit",
+    language: "en",
+    tabs: ["videos"],
+    dedicatedAi: true,
+  },
+  {
+    channelId: "UCtYLUTtgS3k1Fg4y5tAhLbw",
+    handle: "@statquest",
+    name: "youtube-statquest",
+    language: "en",
+    tabs: ["videos"],
+    dedicatedAi: true,
+  },
+  {
+    channelId: "UC0KoEZJH__bnfKLFZ1gsk3Q",
+    handle: "@sangerinstitute",
+    name: "youtube-sanger-institute",
+    language: "en",
+    tabs: ["videos"],
+    dedicatedAi: true,
+  },
+  {
+    channelId: "UCHuiy8bXnmK5nisYHUd1J5g",
+    handle: "@nvidia",
+    name: "youtube-nvidia",
+    language: "en",
+    tabs: ["videos"],
+    dedicatedAi: true,
+  },
+  {
+    channelId: "UCrx4DqkACEdL_cV8eDQ-_7g",
+    handle: "@COMSOL",
+    name: "youtube-comsol",
+    language: "en",
+    tabs: ["videos"],
+    dedicatedAi: true,
+  },
 ];
 
 export type YoutubeSourceTier = 1 | 2 | 3;
@@ -244,6 +295,13 @@ export const YOUTUBE_SOURCE_TIERS: Record<string, YoutubeSourceTier> = {
   "youtube-chemistry-world": 2,
   "youtube-machine-learning-street-talk": 2,
   "youtube-ai-dot-engineer": 3,
+  // Second wave, owner-verified 2026-11-23:
+  "youtube-nature": 1,
+  "youtube-mit": 1,
+  "youtube-statquest": 2,
+  "youtube-sanger-institute": 2,
+  "youtube-nvidia": 2,
+  "youtube-comsol": 3,
 };
 
 /** Tier of a configured channel, or null for a legacy/untiered channel. */

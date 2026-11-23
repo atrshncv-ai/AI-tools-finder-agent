@@ -840,6 +840,89 @@ export const SCIENCE_FEEDS: ScienceFeed[] = [
     field: "ai-news",
     language: "en",
   },
+  // Second wave, owner-verified live on 2026-11-23: every URL answered HTTP 200
+  // and returned records. Same collectScience() path, so the 72h Time Guard,
+  // semantic dedup and section/scienceField routing are unchanged. `name` stays
+  // unique because it doubles as `news.source` and the source-health row; the
+  // authority tier is looked up by this name in prefilter.ts.
+  {
+    url: "https://medicalxpress.com/rss-feed/",
+    name: "medicalxpress",
+    field: "medicine",
+    language: "en",
+  },
+  {
+    url: "https://techxplore.com/rss-feed/",
+    name: "techxplore",
+    field: "engineering",
+    language: "en",
+  },
+  {
+    url: "https://www.sciencedaily.com/rss/matter_energy/biochemistry.xml",
+    name: "sciencedaily-biochemistry",
+    field: "biology",
+    language: "en",
+  },
+  {
+    url: "https://www.sciencedaily.com/rss/health_medicine/medical_imaging.xml",
+    name: "sciencedaily-medical-imaging",
+    field: "medicine",
+    language: "en",
+  },
+  {
+    url: "https://arstechnica.com/science/feed/",
+    name: "arstechnica-science",
+    field: "multidisciplinary",
+    language: "en",
+  },
+  {
+    url: "https://www.futurity.org/feed/",
+    name: "futurity",
+    field: "multidisciplinary",
+    language: "en",
+  },
+  {
+    url: "https://www.advancedsciencenews.com/feed/",
+    name: "advancedsciencenews",
+    field: "materials",
+    language: "en",
+  },
+  {
+    url: "https://news.mit.edu/rss/topic/artificial-intelligence2",
+    name: "mit-news-ai",
+    field: "ai-news",
+    language: "en",
+  },
+  {
+    url: "https://bair.berkeley.edu/blog/feed.xml",
+    name: "bair-berkeley",
+    field: "ai-news",
+    language: "en",
+  },
+  {
+    url: "https://aws.amazon.com/blogs/machine-learning/feed/",
+    name: "aws-machine-learning",
+    field: "ai-news",
+    language: "en",
+  },
+  {
+    url: "https://the-decoder.com/feed/",
+    name: "the-decoder",
+    field: "ai-news",
+    language: "en",
+  },
+  {
+    url: "https://www.unite.ai/feed/",
+    name: "unite-ai",
+    field: "ai-news",
+    language: "en",
+  },
+  {
+    url: "https://www.rdworldonline.com/feed/",
+    name: "rdworldonline",
+    field: "engineering",
+    language: "en",
+  },
 ];
 
 interface PubmedSummary {

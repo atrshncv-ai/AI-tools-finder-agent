@@ -64,6 +64,8 @@ const TIER1_SOURCES = new Set([
   // Owner-verified 2026-11-15:
   "npj-computational-materials",
   "quanta",
+  // Second wave, owner-verified 2026-11-23:
+  "mit-news-ai",
 ]);
 
 const TIER2_SOURCES = new Set([
@@ -80,6 +82,16 @@ const TIER2_SOURCES = new Set([
   "labiotech",
   "drugdiscoverytrends",
   "syncedreview",
+  // Second wave, owner-verified 2026-11-23:
+  "medicalxpress",
+  "techxplore",
+  "sciencedaily-biochemistry",
+  "sciencedaily-medical-imaging",
+  "arstechnica-science",
+  "advancedsciencenews",
+  "bair-berkeley",
+  "aws-machine-learning",
+  "rdworldonline",
 ]);
 
 const TIER3_SOURCES = new Set([
@@ -90,6 +102,10 @@ const TIER3_SOURCES = new Set([
   "marktechpost",
   "kdnuggets",
   "mozilla-ai",
+  // Second wave, owner-verified 2026-11-23:
+  "futurity",
+  "the-decoder",
+  "unite-ai",
 ]);
 
 /**
