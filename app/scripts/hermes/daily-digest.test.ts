@@ -7,12 +7,14 @@ import {
   planDigestDelivery,
   previewRequested,
   resolveRecipients,
+  sendParts,
   sendTelegram,
 } from "./daily-digest";
 import { emptyCycleMetrics } from "./publish-budget";
 import {
   buildClientDigest,
   buildEmptyClientDigest,
+  buildOwnerReport,
   PREVIEW_FOOTER,
   PREVIEW_HEADER,
   splitTelegramText,
@@ -248,23 +250,87 @@ describe("sendTelegram retry", () => {
     vi.restoreAllMocks();
   });
 
+  // No real waiting in tests; 0.5 keeps the backoff at its base values.
+  const fast = () => ({ sleep: vi.fn(async (_ms: number) => {}), random: () => 0.5 });
+
   it("returns true when a transient network failure is followed by success", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(Object.assign(new Error("fetch failed"), { cause: { code: "UND_ERR_CONNECT_TIMEOUT" } }))
       .mockResolvedValueOnce(new Response("ok", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    await expect(sendTelegram("hello", "123")).resolves.toBe(true);
+    await expect(sendTelegram("hello", "123", fast())).resolves.toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   }, 15_000);
 
-  it("returns false when every attempt fails at the network level", async () => {
+  it("returns false after five attempts when every attempt fails at the network level", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const fetchMock = vi.fn().mockRejectedValue(Object.assign(new Error("fetch failed"), { cause: { code: "ECONNRESET" } }));
     vi.stubGlobal("fetch", fetchMock);
-    await expect(sendTelegram("hello", "123")).resolves.toBe(false);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await expect(sendTelegram("hello", "123", fast())).resolves.toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   }, 20_000);
+});
+
+describe("sendParts: one broken recipient never blocks the rest", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("delivers to the second chat when the first is unreachable, one log line each", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body ?? "{}")) as { chat_id?: string };
+      if (String(payload.chat_id) === "111") {
+        throw Object.assign(new Error("fetch failed"), { cause: { code: "ECONNRESET" } });
+      }
+      return new Response("ok", { status: 200 });
+    });
+    const sleep = vi.fn(async (_ms: number) => {});
+
+    const result = await sendParts(["hello"], ["111", "222"], {
+      botToken: "TEST_TOKEN",
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      sleep,
+      random: () => 0.5,
+    });
+
+    expect(result.ok).toBe(1);
+    expect(result.total).toBe(2);
+    expect(result.recipients).toHaveLength(2);
+    expect(result.recipients[0]).toMatchObject({
+      chatId: "111",
+      ok: false,
+      attempts: 5,
+      errorClass: "network",
+    });
+    expect(result.recipients[0].error).toContain("fetch failed");
+    expect(result.recipients[1]).toEqual({ chatId: "222", ok: true, attempts: 1 });
+
+    const lines = errorLog.mock.calls.map((call) => call.join(" "));
+    expect(
+      lines.some(
+        (line) =>
+          line.includes("chat 111: FAILED") &&
+          line.includes("attempts 5") &&
+          line.includes("class network"),
+      ),
+    ).toBe(true);
+    expect(
+      lines.some((line) => line.includes("chat 222: sent") && line.includes("attempts 1")),
+    ).toBe(true);
+  });
+});
+
+describe("owner report delivery counter", () => {
+  it("states how many recipients got the release: доставка N из M", () => {
+    const report = buildOwnerReport(
+      { collected: 1, rejected: 0, published: 1, delivery: { ok: 1, total: 2 } },
+      { date: opts.date, dashboardUrl: opts.dashboardUrl },
+    );
+    expect(report).toContain("доставка: 1 из 2");
+  });
 });
 
 describe("digest markdown safety (Telegram parse_mode=Markdown)", () => {

@@ -1,12 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   PUBMED_QUERIES,
   PUBMED_RESULTS_PER_QUERY,
   SCIENCE_FEEDS,
   TECH_BLOG_FEEDS,
+  loadFeedItems,
   pubmedPublishedAt,
   pubmedSearchUrl,
 } from "./collect-dual";
+import { COLLECTOR_UA, resetFeedThrottle } from "./feed-fetch";
 
 /**
  * The "science" and "invention tools" sections were starving: one day brought
@@ -144,6 +146,95 @@ describe("targeted PubMed queries", () => {
       // is what actually yields fresh records.
       expect(url.searchParams.has("sort")).toBe(false);
     }
+  });
+});
+
+/**
+ * The collector no longer calls rss-parser's own downloader: every feed goes
+ * through feed-fetch.ts (UA ladder, Accept header, one retry, per-host pacing)
+ * and is parsed from the text it returns. A broken feed must never throw out of
+ * the loop — the next source still has to be collected.
+ */
+const FEED_XML =
+  `<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel>` +
+  `<title>Cell Systems</title><link>https://example.com</link><description>d</description>` +
+  `<item><title>Foundation model predicts protein interactions</title>` +
+  `<link>https://example.com/protein-model</link>` +
+  `<pubDate>Mon, 23 Nov 2026 08:00:00 GMT</pubDate>` +
+  `<description>A multimodal model for protein complexes.</description></item></channel></rss>`;
+
+function reply(status: number, body = ""): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => body,
+  } as unknown as Response;
+}
+
+afterEach(() => {
+  resetFeedThrottle();
+});
+
+describe("resilient feed loading", () => {
+  it("parses items after the collector UA is refused and the browser UA is accepted", async () => {
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      const ua = new Headers(init?.headers).get("user-agent");
+      return ua === COLLECTOR_UA ? reply(403) : reply(200, FEED_XML);
+    });
+
+    const loaded = await loadFeedItems("https://www.cell.com/cell-systems/current.rss", {
+      fetchImpl,
+      minIntervalMs: 0,
+      sleep: async () => {},
+      log: () => {},
+    });
+
+    expect(loaded.ok).toBe(true);
+    expect(loaded.strategy).toBe("browser-ua");
+    expect(loaded.items).toHaveLength(1);
+    expect(loaded.items[0].title).toBe("Foundation model predicts protein interactions");
+    expect(loaded.items[0].link).toBe("https://example.com/protein-model");
+  });
+
+  it("returns a skip result instead of throwing when every attempt is rejected", async () => {
+    const logs: string[] = [];
+    const fetchImpl = vi.fn(async () => reply(403, "BLOCK-PAGE-BODY"));
+
+    const loaded = await loadFeedItems("https://www.nature.com/nchem.rss", {
+      fetchImpl,
+      minIntervalMs: 0,
+      sleep: async () => {},
+      log: (message: string) => logs.push(message),
+    });
+
+    expect(loaded.ok).toBe(false);
+    expect(loaded.items).toEqual([]);
+    expect(loaded.error).toMatch(/403/);
+    expect(logs.join("\n")).not.toContain("BLOCK-PAGE-BODY");
+  });
+
+  it("reports a non-XML answer as a skipped feed, not a crash", async () => {
+    const fetchImpl = vi.fn(async () => reply(200, "<!doctype html><html><body>blocked</body></html>"));
+
+    const loaded = await loadFeedItems("https://deepmind.google/blog/rss.xml", {
+      fetchImpl,
+      minIntervalMs: 0,
+      sleep: async () => {},
+      log: () => {},
+    });
+
+    expect(loaded.ok).toBe(false);
+    expect(loaded.items).toEqual([]);
+    expect(loaded.error).toBeTruthy();
+  });
+});
+
+describe("broken DeepMind feed", () => {
+  it("is not configured: the URL answers with a non-XML page", () => {
+    expect(TECH_BLOG_FEEDS.map((feed) => feed.name)).not.toContain("deepmind-blog");
+    expect(TECH_BLOG_FEEDS.map((feed) => feed.url)).not.toContain(
+      "https://deepmind.google/blog/rss.xml",
+    );
   });
 });
 

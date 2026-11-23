@@ -192,6 +192,11 @@ export interface CycleStats {
   errors?: readonly string[];
   /** Single remarks (a material to retry, not an alarm), one line each. */
   notes?: readonly string[];
+  /**
+   * How many recipient chats got this release. Filled in after the sends, so
+   * the report can say `доставка: N из M` instead of leaving the owner guessing.
+   */
+  delivery?: { ok: number; total: number } | null;
 }
 
 /** A provider-failure share of checked materials that always counts as an error. */
@@ -512,6 +517,11 @@ export function buildOwnerReport(stats: CycleStats, opts: OwnerReportOptions): s
   ];
   const dailyLimits = formatDailyLimits(stats);
   if (dailyLimits) lines.push(dailyLimits);
+  if (stats.delivery) {
+    lines.push(
+      `доставка: ${countOrZero(stats.delivery.ok)} из ${countOrZero(stats.delivery.total)}`,
+    );
+  }
   if (stats.rejectedByPrefilter != null || stats.rejectedByJudge != null) {
     lines.push(
       `Отсеяно префильтром: ${stats.rejectedByPrefilter ?? "—"} · судьёй: ${stats.rejectedByJudge ?? "—"}`,

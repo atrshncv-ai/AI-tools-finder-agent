@@ -14,6 +14,12 @@
  *     AI papers, so the AI gate used to starve the «Наука» section
  *   - MIT Technology Review, arXiv API (categories + AI-filtered), Naked Science (ru)
  *
+ * Every feed is downloaded through feed-fetch.ts (UA ladder, XML Accept header,
+ * one paced retry, per-host interval) and parsed from the returned text: a
+ * publisher that blocks one UA or rate-limits a burst no longer drops the whole
+ * source from the run. A feed that fails every strategy is skipped, logged
+ * without its body and recorded in source health — the loop goes on.
+ *
  * Every candidate passes the Semantic Deduplication Guard (dedup.ts) BEFORE
  * insertion: exact URL check, then Levenshtein >= 0.85 against last 20 titles.
  * Inserted articles: status='pending', score=NULL (awaiting evaluate-news.ts).
@@ -46,14 +52,12 @@ import { classifyScience } from "../ensure-science-categories";
 import { resolveSection, type SectionResolution } from "../../api/lib/section-resolve";
 import { classifyInvention, buildInventionContext } from "../../api/lib/invention-classify";
 import { recordFeedHealth } from "./feed-health";
+import { BROWSER_UA, fetchFeed, type FeedFetchDeps, type FeedStrategy } from "./feed-fetch";
 
 const FETCH_TIMEOUT_MS = 20_000;
 const HN_MIN_POINTS = 100;
 const GITHUB_MIN_STARS = 300;
 const GITHUB_LOOKBACK_DAYS = 3;
-// Browser-like UA: some publishers (science.org, reddit) block bot UAs.
-const RSS_UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 const MAX_AGE_HOURS_DEFAULT = 72;
 const MAX_AGE_MS = MAX_AGE_HOURS_DEFAULT * 3600_000;
 
@@ -119,10 +123,7 @@ export function buildNewsRow(
   };
 }
 
-const rss = new Parser({
-  timeout: FETCH_TIMEOUT_MS,
-  headers: { "User-Agent": RSS_UA },
-});
+const rss = new Parser();
 
 function args() {
   const a = process.argv.slice(2);
@@ -147,12 +148,68 @@ async function fetchText(url: string): Promise<string | null> {
   try {
     const res = await fetch(url, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      headers: { "User-Agent": RSS_UA },
+      headers: { "User-Agent": BROWSER_UA },
     });
     if (!res.ok) return null;
     return await res.text();
   } catch {
     return null;
+  }
+}
+
+/**
+ * Outcome of one feed download+parse. `ok: false` carries a body-free reason so
+ * the caller can log it, skip the feed and keep the cycle running.
+ */
+export interface FeedLoadResult {
+  ok: boolean;
+  items: Parser.Item[];
+  status: number | null;
+  /** Which UA fetched it; null when no request succeeded. */
+  strategy: FeedStrategy | null;
+  error: string | null;
+}
+
+/**
+ * The only way the collector reads an RSS/Atom feed: feed-fetch.ts downloads it
+ * (UA ladder, Accept header, paced retry), rss-parser parses the text. Parse
+ * errors are contained here — a broken answer ("Non-whitespace before first
+ * tag" from an HTML block page) must not escape into the collection loop.
+ */
+export async function loadFeedItems(
+  url: string,
+  deps: FeedFetchDeps = {},
+): Promise<FeedLoadResult> {
+  const log = deps.log ?? ((message: string) => console.error(message));
+  const fetched = await fetchFeed(url, deps);
+  if (!fetched.ok || fetched.text === null) {
+    return {
+      ok: false,
+      items: [],
+      status: fetched.status,
+      strategy: fetched.strategy,
+      error: fetched.error ?? "feed unavailable",
+    };
+  }
+  try {
+    const parsed = await rss.parseString(fetched.text);
+    return {
+      ok: true,
+      items: parsed.items ?? [],
+      status: fetched.status,
+      strategy: fetched.strategy,
+      error: null,
+    };
+  } catch (err) {
+    const error = `parse: ${((err as Error).message || "invalid XML").slice(0, 120)}`;
+    log(`[collect] feed parse failed (${error})`);
+    return {
+      ok: false,
+      items: [],
+      status: fetched.status,
+      strategy: fetched.strategy,
+      error,
+    };
   }
 }
 
@@ -224,7 +281,12 @@ export const TECH_BLOG_FEEDS: FeedConfig[] = [
   // Anthropic releases are picked up via HN/GitHub trend sources instead.
   { url: "https://huggingface.co/blog/feed.xml", name: "huggingface-blog", field: "ai", language: "en" },
   { url: "https://blog.google/technology/ai/rss/", name: "google-ai-blog", field: "ai", language: "en" },
-  { url: "https://deepmind.google/blog/rss.xml", name: "deepmind-blog", field: "ai", language: "en" },
+  // REMOVED: deepmind-blog (https://deepmind.google/blog/rss.xml). From the
+  // production host it answers with a non-XML page and every run logged
+  // "Non-whitespace before first tag". A candidate replacement,
+  // https://blog.google/technology/google-deepmind/rss/, answered 200 with
+  // application/xml when probed, but it is unverified from the production host:
+  // re-add it only after a curl check there.
   // Second-priority Russian-language AI news: tagged `ru`, never translated at
   // collection time, so the existing language marker can down-weight it.
   {
@@ -407,8 +469,9 @@ async function collectYouTube(): Promise<Candidate[]> {
     let rssError: string | undefined;
     let tabFound = 0;
     try {
-      const parsed = await rss.parseURL(feedUrl);
-      for (const item of parsed.items.slice(0, 10)) {
+      const loaded = await loadFeedItems(feedUrl);
+      if (!loaded.ok) throw new Error(loaded.error ?? "feed unavailable");
+      for (const item of loaded.items.slice(0, 10)) {
         const c = fromRssItem(item, {
           name: source.name,
           isScience: false,
@@ -421,8 +484,8 @@ async function collectYouTube(): Promise<Candidate[]> {
         }
       }
       rssOk = true;
-      rssFound = parsed.items.length;
-      console.error(`[collect] ${source.name}: ${parsed.items.length} videos (rss)`);
+      rssFound = loaded.items.length;
+      console.error(`[collect] ${source.name}: ${loaded.items.length} videos (rss)`);
     } catch (err) {
       rssError = (err as Error).message;
       console.error(`[collect] ${source.name}: RSS failed (${rssError})`);
@@ -463,23 +526,24 @@ async function collectYouTube(): Promise<Candidate[]> {
 async function collectTechBlogs(): Promise<Candidate[]> {
   const out: Candidate[] = [];
   for (const feed of TECH_BLOG_FEEDS) {
-    try {
-      const parsed = await rss.parseURL(feed.url);
-      for (const item of parsed.items.slice(0, 10)) {
-        const c = fromRssItem(item, {
-          name: feed.name,
-          isScience: false,
-          scienceField: null,
-          language: feed.language,
-        });
-        if (c) out.push(c);
-      }
-      console.error(`[collect] ${feed.name}: ${parsed.items.length} items`);
-      void recordFeedHealth(feed.name, feed.url, true, parsed.items.length);
-    } catch (err) {
-      console.error(`[collect] ${feed.name}: FAILED (${(err as Error).message})`);
-      void recordFeedHealth(feed.name, feed.url, false, 0, (err as Error).message);
+    const loaded = await loadFeedItems(feed.url);
+    if (!loaded.ok) {
+      const error = loaded.error ?? "feed unavailable";
+      console.error(`[collect] ${feed.name}: FAILED (${error})`);
+      void recordFeedHealth(feed.name, feed.url, false, 0, error);
+      continue;
     }
+    for (const item of loaded.items.slice(0, 10)) {
+      const c = fromRssItem(item, {
+        name: feed.name,
+        isScience: false,
+        scienceField: null,
+        language: feed.language,
+      });
+      if (c) out.push(c);
+    }
+    console.error(`[collect] ${feed.name}: ${loaded.items.length} items`);
+    void recordFeedHealth(feed.name, feed.url, true, loaded.items.length);
   }
   return out;
 }
@@ -575,40 +639,14 @@ async function collectGithubTrending(): Promise<Candidate[]> {
 }
 
 /**
- * Reddit via public RSS (top/day). JSON API is blocked from datacenter IPs,
- * RSS still works with a browser UA. Note: RSS has no upvote counts, so
- * Reddit is a discovery source only — social scoring happens via HN points.
+ * Reddit is disabled by policy: the public JSON API is blocked from datacenter
+ * IPs and the RSS path carries no upvote counts, so it only added noise. The
+ * RSS implementation was removed with the switch to the shared feed downloader
+ * (feed-fetch.ts) — nothing here may bypass it.
  */
 async function collectReddit(): Promise<Candidate[]> {
   console.error("[collect] reddit: disabled by policy");
   return [];
-  const subs = ["MachineLearning", "artificial", "LocalLLaMA"];
-  const out: Candidate[] = [];
-  for (const sub of subs) {
-    try {
-      const parsed = await rss.parseURL(
-        `https://www.reddit.com/r/${sub}/top/.rss?t=day&limit=25`,
-      );
-      for (const item of parsed.items) {
-        const c = fromRssItem(item, {
-          name: `reddit-${sub.toLowerCase()}`,
-          isScience: false,
-          scienceField: null,
-          language: "en",
-        });
-        if (c) {
-          c.metrics = { origin: "reddit-rss" };
-          out.push(c);
-        }
-      }
-    } catch (err) {
-      console.error(`[collect] reddit-${sub}: FAILED (${(err as Error).message})`);
-    }
-    // Reddit rate-limits aggressively — throttle between subreddits.
-    await new Promise((r) => setTimeout(r, 3000));
-  }
-  console.error(`[collect] reddit: ${out.length} top posts`);
-  return out;
 }
 
 // ─── Science stream ──────────────────────────────────────────────────────────
@@ -983,33 +1021,34 @@ async function collectPubmed(): Promise<Candidate[]> {
 async function collectScience(): Promise<Candidate[]> {
   const out: Candidate[] = [];
   for (const feed of SCIENCE_FEEDS) {
-    try {
-      const parsed = await rss.parseURL(feed.url);
-      for (const item of parsed.items.slice(0, 15)) {
-        const c = fromRssItem(item, {
-          name: feed.name,
-          isScience: true,
-          scienceField: feed.field,
-          language: feed.language,
-        });
-        if (!c) continue;
-        // Keyword filter for arXiv category feeds: only keep items that look
-        // like AI-for-science tools or discoveries. Generic AI theory papers
-        // are dropped here to avoid flooding the queue.
-        if (feed.inventionOnly) {
-          const ctx = buildInventionContext(c.title, c.description);
-          if (!classifyInvention(ctx).isInvention) {
-            continue;
-          }
-        }
-        out.push(c);
-      }
-      console.error(`[collect] ${feed.name}: ${parsed.items.length} items`);
-      void recordFeedHealth(feed.name, feed.url, true, parsed.items.length);
-    } catch (err) {
-      console.error(`[collect] ${feed.name}: FAILED (${(err as Error).message})`);
-      void recordFeedHealth(feed.name, feed.url, false, 0, (err as Error).message);
+    const loaded = await loadFeedItems(feed.url);
+    if (!loaded.ok) {
+      const error = loaded.error ?? "feed unavailable";
+      console.error(`[collect] ${feed.name}: FAILED (${error})`);
+      void recordFeedHealth(feed.name, feed.url, false, 0, error);
+      continue;
     }
+    for (const item of loaded.items.slice(0, 15)) {
+      const c = fromRssItem(item, {
+        name: feed.name,
+        isScience: true,
+        scienceField: feed.field,
+        language: feed.language,
+      });
+      if (!c) continue;
+      // Keyword filter for arXiv category feeds: only keep items that look
+      // like AI-for-science tools or discoveries. Generic AI theory papers
+      // are dropped here to avoid flooding the queue.
+      if (feed.inventionOnly) {
+        const ctx = buildInventionContext(c.title, c.description);
+        if (!classifyInvention(ctx).isInvention) {
+          continue;
+        }
+      }
+      out.push(c);
+    }
+    console.error(`[collect] ${feed.name}: ${loaded.items.length} items`);
+    void recordFeedHealth(feed.name, feed.url, true, loaded.items.length);
   }
   out.push(...(await collectPubmed()));
   return out;

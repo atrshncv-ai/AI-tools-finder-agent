@@ -50,14 +50,13 @@ import {
   splitTelegramText,
   type DigestItem,
 } from "./digest-format";
+import { sendTelegramMessageDetailed, type TelegramSendOptions } from "./telegram-send";
 
 /** `agent_state.agentId` of the subscription row. */
 export const SUBSCRIBER_AGENT_ID = "telegram-subscribe";
 /** One `getUpdates` response is capped, the rest arrives on the next tick. */
 export const MAX_UPDATES_PER_RUN = 100;
 const API_TIMEOUT_MS = 10_000;
-const SEND_ATTEMPTS = 2;
-const SEND_RETRY_DELAY_MS = 1_000;
 
 /**
  * Two lines in the project's voice. It deliberately does not promise that a
@@ -271,7 +270,7 @@ export function planSubscriptions(input: PlanSubscriptionsInput): SubscriptionPl
   };
 }
 
-export interface TelegramApiOptions {
+export interface TelegramApiOptions extends TelegramSendOptions {
   botToken?: string;
   fetchImpl?: typeof fetch;
   dashboardUrl?: string;
@@ -325,15 +324,11 @@ export async function fetchTelegramUpdates(
   return Array.isArray(payload.result) ? payload.result : [];
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 /**
- * Send one Markdown message with the dashboard button. Same shape as the
- * morning digest, but only two attempts: the cron tick is short and a lost
- * welcome must never turn into a duplicate on the next run (the offset has
- * already moved past the chat).
+ * Send one Markdown message with the dashboard button through the shared
+ * retrying sender (5 attempts, network/429/5xx only). A failed welcome is
+ * logged and the loop continues with the next chat; the stored offset already
+ * moved, so it is never sent twice.
  */
 export async function sendTelegramMessage(
   text: string,
@@ -341,35 +336,16 @@ export async function sendTelegramMessage(
   options: TelegramApiOptions = {},
 ): Promise<boolean> {
   const token = requireBotToken(options);
-  const doFetch = options.fetchImpl ?? fetch;
   const dashboardUrl = (options.dashboardUrl ?? defaultDashboardUrl()).trim();
-  const payload = JSON.stringify({
-    chat_id: chatId,
-    text,
-    parse_mode: "Markdown",
-    disable_web_page_preview: true,
-    ...(dashboardUrl
-      ? { reply_markup: { inline_keyboard: [[{ text: "📊 Открыть дашборд", url: dashboardUrl }]] } }
-      : {}),
+  const outcome = await sendTelegramMessageDetailed(text, chatId, {
+    ...options,
+    botToken: token,
+    dashboardUrl,
+    // The welcome digest carries its own dashboard link.
+    appendDashboardUrl: false,
+    logPrefix: "[telegram-subscribe]",
   });
-  for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
-    const last = attempt === SEND_ATTEMPTS;
-    try {
-      const res = await doFetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: payload,
-        signal: AbortSignal.timeout(API_TIMEOUT_MS),
-      });
-      if (res.ok) return true;
-      const retryable = res.status === 429 || res.status >= 500;
-      if (!retryable || last) return false;
-    } catch {
-      if (last) return false;
-    }
-    await sleep(SEND_RETRY_DELAY_MS);
-  }
-  return false;
+  return outcome.ok;
 }
 
 const nonEmptySummary = and(isNotNull(news.summary), ne(news.summary, ""));

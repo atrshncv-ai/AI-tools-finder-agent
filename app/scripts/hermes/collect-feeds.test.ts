@@ -126,10 +126,6 @@ const VERIFIED_RSS_SOURCES = [
 
 const NEW_TECH_FEEDS = [
   {
-    url: "https://deepmind.google/blog/rss.xml",
-    name: "deepmind-blog",
-  },
-  {
     url: "https://habr.com/ru/rss/hub/artificial_intelligence/",
     name: "habr-ai",
     language: "ru",

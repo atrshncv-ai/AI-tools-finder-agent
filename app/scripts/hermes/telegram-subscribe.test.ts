@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   parseSubscriptionState,
   planSubscriptions,
   runSubscriptionCycle,
+  sendTelegramMessage,
   serializeSubscriptionState,
   WELCOME_TEXT,
   type SubscriptionDeps,
@@ -268,5 +269,24 @@ describe("welcome cycle (no real Telegram)", () => {
     // Both subscribers are stored before the sends: the failed chat is not
     // welcomed twice on the next five-minute tick.
     expect(saved()?.subscribers.map((subscriber) => subscriber.chatId)).toEqual(["42", "43"]);
+  });
+});
+
+describe("welcome sender: shared retry policy", () => {
+  it("gives up after five attempts instead of two when the network is down", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error("fetch failed"), { cause: { code: "ECONNRESET" } }));
+
+    const ok = await sendTelegramMessage("hello", "42", {
+      botToken: "TEST_TOKEN",
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      sleep: async () => {},
+      random: () => 0.5,
+      log: () => {},
+    });
+
+    expect(ok).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 });

@@ -9,8 +9,9 @@
  *   - the owner gets a copy of the same clean digest plus a separate service
  *     report (`buildOwnerReport`) with counters, rejection reasons, real errors
  *     and notes for the retried materials.
- * The owner report goes out first, so a broken release reaches the owner
- * before it reaches the client (R17).
+ * The owner copy goes out before the client release, so a broken release
+ * reaches the owner first (R17). The service report follows the sends: only
+ * then can its `доставка: N из M` line describe this run.
  *
  * Env:
  *   TELEGRAM_BOT_TOKEN — when absent the digest is only printed to stdout
@@ -60,6 +61,13 @@ import {
   type DigestRecipients,
 } from "./digest-format";
 import { loadSubscriptionState, type Subscriber } from "./telegram-subscribe";
+import {
+  describeTelegramOutcome,
+  sendTelegramMessageDetailed,
+  type TelegramErrorClass,
+  type TelegramFailure,
+  type TelegramSendOptions,
+} from "./telegram-send";
 import { news } from "@db/schema";
 import { and, desc, eq, gte, isNotNull, ne, sql } from "drizzle-orm";
 import { pathToFileURL } from "node:url";
@@ -198,94 +206,103 @@ export function cycleReportIssues(
   });
 }
 
-const SEND_MAX_ATTEMPTS = 3;
-// Backoff between attempts (after attempt 1, 2): a cold TLS connection from a
-// fresh cron process to api.telegram.org often fails once with a network-level
-// `fetch failed`/timeout while the API itself is healthy.
-const SEND_BACKOFF_MS = [2_000, 4_000];
 // Pacing between recipients/parts to avoid burst throttling (cron job, not
-// latency-sensitive).
+// latency-sensitive). Retries and their backoff live in telegram-send.ts.
 const SEND_PACE_MS = 500;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function causeCode(err: unknown): string | undefined {
-  const cause = (err as { cause?: unknown } | null)?.cause as { code?: unknown } | null | undefined;
-  return typeof cause?.code === "string" ? cause.code : undefined;
-}
-
-export async function sendTelegram(text: string, chatId: string): Promise<boolean> {
-  // Plain-text dashboard URL inside the body: inline keyboards can be
-  // missed at the bottom of long messages, but a tappable link in the text
-  // itself always works (client reported "no dashboard button").
-  const body = text.includes(DASHBOARD_URL) ? text : `${text}\n${DASHBOARD_URL}`;
-  const payload = JSON.stringify({
-    chat_id: chatId,
-    text: body,
-    parse_mode: "Markdown",
-    disable_web_page_preview: true,
-    reply_markup: {
-      inline_keyboard: [[{ text: "📊 Открыть дашборд", url: DASHBOARD_URL }]],
-    },
+/**
+ * Boolean facade kept for the payment reminder and the fatal-failure alert.
+ * The digest itself uses `sendParts`, which keeps the attempt/error details.
+ */
+export async function sendTelegram(
+  text: string,
+  chatId: string,
+  options: TelegramSendOptions = {},
+): Promise<boolean> {
+  const outcome = await sendTelegramMessageDetailed(text, chatId, {
+    botToken: BOT_TOKEN,
+    dashboardUrl: DASHBOARD_URL,
+    appendDashboardUrl: true,
+    logPrefix: "[daily-digest]",
+    ...options,
   });
-  for (let attempt = 1; attempt <= SEND_MAX_ATTEMPTS; attempt++) {
-    const last = attempt === SEND_MAX_ATTEMPTS;
-    try {
-      const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: payload,
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (res.ok) return true;
-      const retryable = res.status === 429 || res.status >= 500;
-      let snippet: string;
-      try {
-        snippet = (await res.text()).slice(0, 300);
-      } catch {
-        snippet = "<unreadable body>";
-      }
-      console.error(
-        `[daily-digest] Telegram attempt ${attempt}/${SEND_MAX_ATTEMPTS} for chat ${chatId} failed: HTTP ${res.status} ${snippet}${retryable && !last ? ` — retrying in ${SEND_BACKOFF_MS[attempt - 1]}ms` : ""}`,
-      );
-      // Non-retryable client errors (e.g. 400 bad request) fail fast.
-      if (!retryable || last) return false;
-    } catch (err) {
-      // Network-level failure (DNS, reset, timeout) — retry with backoff.
-      const msg = (err as Error)?.message ?? String(err);
-      const code = causeCode(err);
-      console.error(
-        `[daily-digest] Telegram attempt ${attempt}/${SEND_MAX_ATTEMPTS} to chat ${chatId} failed: ${msg}${code ? ` (cause ${code})` : ""}${!last ? ` — retrying in ${SEND_BACKOFF_MS[attempt - 1]}ms` : ""}`,
-      );
-      if (last) return false;
-    }
-    await sleep(SEND_BACKOFF_MS[attempt - 1] ?? 0);
-  }
-  return false;
+  return outcome.ok;
 }
 
-interface DeliveryResult {
+export interface RecipientDelivery {
+  chatId: string;
+  ok: boolean;
+  /** Attempts summed over all parts of this message. */
+  attempts: number;
+  /** Last error of the failed part; absent when the recipient got everything. */
+  error?: string;
+  errorClass?: TelegramErrorClass;
+}
+
+export interface DeliveryResult {
   ok: number;
   total: number;
+  recipients: RecipientDelivery[];
 }
 
-/** Send every part to every chat; one failing chat never blocks the others. */
-async function sendParts(parts: string[], chatIds: string[]): Promise<DeliveryResult> {
-  let okCount = 0;
+/**
+ * Send every part to every chat; one failing chat never blocks the others.
+ * Stops at the first failed part of a chat (sending the tail of a broken
+ * message is worse than stopping), and writes exactly one summary line per
+ * recipient: attempts, last error, class.
+ */
+export async function sendParts(
+  parts: string[],
+  chatIds: string[],
+  options: TelegramSendOptions = {},
+): Promise<DeliveryResult> {
+  const { log: logOption, ...sendOptions } = options;
+  const log = logOption ?? ((message: string) => console.error(message));
+  const pause = sendOptions.sleep ?? sleep;
+  const recipients: RecipientDelivery[] = [];
+
   for (let ci = 0; ci < chatIds.length; ci++) {
     const chatId = chatIds[ci];
+    let attempts = 0;
+    let failure: TelegramFailure | undefined;
     let ok = true;
     for (let pi = 0; pi < parts.length; pi++) {
-      ok = (await sendTelegram(parts[pi], chatId)) && ok;
-      if (pi < parts.length - 1) await sleep(SEND_PACE_MS);
+      const outcome = await sendTelegramMessageDetailed(parts[pi], chatId, {
+        botToken: BOT_TOKEN,
+        dashboardUrl: DASHBOARD_URL,
+        appendDashboardUrl: true,
+        logPrefix: "[daily-digest]",
+        ...sendOptions,
+        log: () => {},
+      });
+      attempts += outcome.attempts;
+      if (!outcome.ok) {
+        ok = false;
+        failure = outcome.failure;
+        break;
+      }
+      if (pi < parts.length - 1) await pause(SEND_PACE_MS);
     }
-    console.error(`[daily-digest] → chat ${chatId}: ${ok ? "sent" : "FAILED"}`);
-    if (ok) okCount++;
-    if (ci < chatIds.length - 1) await sleep(SEND_PACE_MS);
+
+    const recipient: RecipientDelivery = { chatId, ok, attempts };
+    if (failure) {
+      recipient.error = failure.message;
+      recipient.errorClass = failure.class;
+    }
+    recipients.push(recipient);
+    log(`[daily-digest] → ${describeTelegramOutcome(chatId, { ok, attempts, failure })}`);
+    if (ci < chatIds.length - 1) await pause(SEND_PACE_MS);
   }
-  return { ok: okCount, total: chatIds.length };
+
+  return {
+    ok: recipients.filter((recipient) => recipient.ok).length,
+    total: chatIds.length,
+    recipients,
+  };
 }
 
 /** One chat fan-out: who receives which parts. Empty `parts` means "nobody". */
@@ -531,25 +548,36 @@ async function main() {
       );
     }
   } else {
-    // Owner first: a broken release must reach the owner before the client (R17).
+    // The owner copy goes first: a broken release must reach the owner before
+    // the client (R17). The service report is written last because its
+    // `доставка: N из M` line can only be filled in after this run's sends.
+    const copyDelivery: DeliveryResult =
+      plan.ownerCopy.chatIds.length > 0
+        ? await sendParts(plan.ownerCopy.parts, plan.ownerCopy.chatIds)
+        : { ok: 0, total: 0, recipients: [] };
+
+    const clientDelivery: DeliveryResult =
+      plan.client.chatIds.length > 0
+        ? await sendParts(plan.client.parts, plan.client.chatIds)
+        : { ok: 0, total: 0, recipients: [] };
+
+    const delivery = {
+      ok: clientDelivery.ok + copyDelivery.ok,
+      total: clientDelivery.total + copyDelivery.total,
+    };
+    const finalReport = buildOwnerReport(
+      delivery.total > 0 ? { ...stats, delivery } : stats,
+      { date: now, dashboardUrl: DASHBOARD_URL, healthLine },
+    );
     const reportDelivery: DeliveryResult = plan.ownerReport
-      ? await sendParts(plan.ownerReport.parts, plan.ownerReport.chatIds)
-      : { ok: 0, total: 0 };
+      ? await sendParts(splitTelegramText(finalReport), plan.ownerReport.chatIds)
+      : { ok: 0, total: 0, recipients: [] };
     const reportOk = plan.ownerReport != null && reportDelivery.ok === reportDelivery.total;
     if (plan.ownerReport) {
       console.error(`[daily-digest] owner report → ${reportDelivery.ok}/${reportDelivery.total}`);
     } else if (!preview) {
       console.error("[daily-digest] no TELEGRAM_OWNER_CHAT_IDS — service report is not delivered");
     }
-
-    const clientDelivery: DeliveryResult =
-      plan.client.chatIds.length > 0
-        ? await sendParts(plan.client.parts, plan.client.chatIds)
-        : { ok: 0, total: 0 };
-    const copyDelivery: DeliveryResult =
-      plan.ownerCopy.chatIds.length > 0
-        ? await sendParts(plan.ownerCopy.parts, plan.ownerCopy.chatIds)
-        : { ok: 0, total: 0 };
 
     const clientOk = clientDelivery.total > 0 && clientDelivery.ok === clientDelivery.total;
     const ownerOk = plan.ownerReport ? reportOk && copyDelivery.ok === copyDelivery.total : true;
